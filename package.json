@@ -1,0 +1,15 @@
+{
+  "name": "xianxia-autobattler",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A Reverend Insanity-inspired cultivation autobattler / idle game (framework).",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "test": "node tests/run.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

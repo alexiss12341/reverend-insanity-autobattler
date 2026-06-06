@@ -1,0 +1,603 @@
+@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,500;1,600&family=Noto+Serif+SC:wght@400;600;900&family=Space+Mono:wght@400;700&display=swap');
+
+:root{
+  /* ---- core palette: blood · bone · ash (Demonic Path) ---- */
+  --bg:#0a0807; --bg2:#0f0c0b; --bg3:#16110f; --panel:#100d0b;
+  --line:rgba(208,186,160,0.13); --line-soft:rgba(208,186,160,0.06); --line-strong:rgba(208,186,160,0.26);
+  --bone:#e9e1d4; --bone-dim:#c4b8a6; --muted:#9c8f7b; --ink:#e9e1d4;
+  --blood:#9e1b27; --blood-bright:#c8313c; --blood-deep:#52101a;
+  --jade:#3f9e74; --jade-dim:#2c6f52; --stone:#c79a45; --brass:#b08b3e; --essence:#46b3cf;
+  /* tier colors (Gu / rarity) — warmed to sit on the bone palette */
+  --t1:#9aa39a; --t2:#74c0a0; --t3:#5aa7d8; --t4:#b07ad8; --t5:#d8a64a;
+  --t6:#e0673e; --t7:#e0463e; --t8:#e03e8a; --t9:#b03ee0; --t10:#f5e58a;
+  --mono:'Space Mono',ui-monospace,monospace;
+  --serif:'Cormorant Garamond',Georgia,serif;
+  --cjk:'Noto Serif SC',serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{
+  background:
+    radial-gradient(900px 620px at 82% -12%, rgba(158,27,39,0.10), transparent 70%),
+    radial-gradient(760px 560px at -8% 112%, rgba(47,125,91,0.06), transparent 70%),
+    var(--bg);
+  color:var(--bone); font-family:var(--serif); font-size:18px; line-height:1.45;
+  -webkit-font-smoothing:antialiased; overflow:hidden;
+}
+/* film grain + vignette (lifted from the design sheet) */
+body::before{
+  content:"";position:fixed;inset:0;z-index:9999;pointer-events:none;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.5'/%3E%3C/svg%3E");
+  opacity:0.035;mix-blend-mode:overlay;
+}
+body::after{
+  content:"";position:fixed;inset:0;z-index:9998;pointer-events:none;
+  background:radial-gradient(120% 82% at 50% -4%, transparent 56%, rgba(0,0,0,0.5) 100%);
+}
+
+/* ---------- typography helpers ---------- */
+.brush,.cjk{font-family:var(--cjk)}
+.mono{font-family:var(--mono)}
+.muted{color:var(--muted)} .small{font-size:14px} .tiny{font-size:11.5px}
+.blood-text{color:var(--blood-bright)} .jade-text{color:var(--jade)}
+.eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:0.34em;text-transform:uppercase;color:var(--muted)}
+.rule{height:1px;background:var(--line);border:0;margin:0}
+.row{display:flex;justify-content:space-between;align-items:center;gap:10px}
+.row.left{justify-content:flex-start} .row.start{align-items:flex-start}
+.wrap{flex-wrap:wrap} .gap{gap:10px} .right{text-align:right;margin-top:12px}
+
+/* ---------- buttons ---------- */
+button{
+  font-family:var(--mono);cursor:pointer;color:var(--bone-dim);
+  border:1px solid var(--line);background:linear-gradient(180deg,rgba(255,255,255,0.015),rgba(0,0,0,0.25));
+  padding:8px 15px;border-radius:2px;letter-spacing:0.16em;font-size:11px;text-transform:uppercase;
+  transition:.16s ease;
+}
+button:hover:not(:disabled){border-color:var(--line-strong);color:var(--bone);background:rgba(208,186,160,0.05)}
+button:disabled{opacity:.3;cursor:not-allowed}
+button.primary{border-color:rgba(200,49,60,0.55);color:#e7a7ad;background:linear-gradient(180deg,rgba(158,27,39,0.16),rgba(82,16,26,0.10))}
+button.primary:hover:not(:disabled){border-color:var(--blood-bright);color:#f3d3d6;background:rgba(158,27,39,0.22)}
+button.danger{border-color:var(--blood-dim);color:var(--bone-dim)}
+button.danger:hover:not(:disabled){border-color:var(--blood-bright);color:var(--blood-bright)}
+button.mini{font-size:10px;padding:3px 8px;min-width:0;letter-spacing:0.1em}
+.hidden{display:none!important}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-thumb{background:#241c17;border-radius:0}
+::-webkit-scrollbar-track{background:transparent}
+
+/* ---------- title / save slots ---------- */
+#title{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;position:relative}
+#title::after{content:"魔道";position:absolute;font-family:var(--cjk);font-weight:900;font-size:440px;color:rgba(233,225,212,0.022);z-index:0;pointer-events:none;letter-spacing:.1em}
+#title .sub{color:var(--muted);letter-spacing:.4em;font-size:12px;text-transform:uppercase;font-family:var(--mono);z-index:1}
+#title h1{font-family:var(--cjk);font-weight:900;font-size:96px;color:var(--bone);line-height:1;z-index:1;
+  text-shadow:0 0 50px rgba(158,27,39,0.35),0 4px 0 #000}
+#title h1 .accent{color:var(--blood-bright)}
+.slots{display:flex;flex-direction:column;gap:12px;width:480px;margin-top:30px;z-index:1}
+.slot{border:1px solid var(--line);background:var(--bg2);padding:16px 18px;display:flex;justify-content:space-between;align-items:center;gap:12px;transition:.16s}
+.slot:hover{border-color:var(--line-strong)}
+.slot .meta{font-size:12px;color:var(--muted);font-family:var(--mono);letter-spacing:.04em;margin-top:3px}
+.slot .nm{font-family:var(--serif);font-weight:600;font-size:18px;letter-spacing:.08em;color:var(--bone)}
+.slot .acts{display:flex;gap:8px}
+
+/* ---------- layout: topbar + nav + content ---------- */
+#game{height:100%;display:grid;grid-template-rows:auto 1fr}
+#topbar{display:flex;align-items:center;gap:26px;padding:12px 26px;border-bottom:1px solid var(--line);
+  background:linear-gradient(180deg,rgba(22,17,15,0.9),rgba(10,8,7,0.6))}
+#topbar .logo{font-family:var(--cjk);font-weight:900;font-size:30px;color:var(--blood-bright);text-shadow:0 2px 10px rgba(158,27,39,0.4);transform:translateY(-1px)}
+.stat{display:flex;flex-direction:column;line-height:1.15;gap:2px}
+.stat .lbl{font-size:9.5px;letter-spacing:.22em;color:var(--muted);text-transform:uppercase;font-family:var(--mono)}
+.stat .val{font-size:19px;font-family:var(--mono);color:var(--bone);letter-spacing:.02em}
+.stat .val.stone{color:var(--stone)} .stat .val.jade{color:var(--jade)}
+#topbar .spacer{flex:1}
+#main{display:grid;grid-template-columns:208px 1fr;min-height:0}
+#nav{border-right:1px solid var(--line);padding:18px 12px;display:flex;flex-direction:column;gap:3px;background:rgba(8,6,5,0.5)}
+#nav button{text-align:left;background:transparent;border:1px solid transparent;border-left:2px solid transparent;
+  padding:11px 14px;font-size:11px;letter-spacing:.14em;color:var(--bone-dim);border-radius:0}
+#nav button{position:relative}
+#nav button:hover{background:rgba(208,186,160,0.04);color:var(--bone)}
+#nav button.active{border-left-color:var(--blood-bright);background:linear-gradient(90deg,rgba(158,27,39,0.12),transparent);color:var(--bone)}
+/* nav notification badge (e.g. fighters with unspent attribute points) */
+.navbadge{display:none}
+.navbadge.on{display:grid;place-items:center;position:absolute;right:11px;top:50%;transform:translateY(-50%);
+  min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:var(--blood-bright);color:#f3e9da;
+  font-family:var(--mono);font-weight:700;font-size:10px;line-height:1;letter-spacing:0;
+  box-shadow:0 0 0 3px rgba(200,49,60,0.16);animation:navpulse 1.8s ease-in-out infinite}
+@keyframes navpulse{0%,100%{box-shadow:0 0 0 3px rgba(200,49,60,0.16)}50%{box-shadow:0 0 0 6px rgba(200,49,60,0.0)}}
+#content{overflow:auto;padding:0 38px 90px;min-height:0;position:relative}
+
+/* ---------- page header (per tab) ---------- */
+.pagehead{display:grid;grid-template-columns:auto 1fr;gap:26px;align-items:center;
+  padding:30px 0 24px;border-bottom:1px solid var(--line);margin-bottom:30px}
+.pagehead .seal{
+  width:74px;height:74px;flex:none;display:grid;place-items:center;
+  background:linear-gradient(160deg,var(--blood) 0%,var(--blood-deep) 100%);
+  color:#f3e9da;font-family:var(--cjk);font-weight:900;font-size:42px;line-height:1;
+  border:1px solid rgba(243,233,218,0.22);transform:rotate(-3deg);
+  box-shadow:0 0 0 5px rgba(158,27,39,0.08),0 14px 30px -16px rgba(158,27,39,0.7);
+  text-shadow:0 2px 6px rgba(0,0,0,0.45);
+}
+.pagehead .ph-eyebrow{font-family:var(--mono);font-size:10.5px;letter-spacing:0.3em;text-transform:uppercase;color:var(--muted);margin-bottom:7px}
+.pagehead h1{font-family:var(--serif);font-weight:600;font-size:38px;letter-spacing:0.16em;text-transform:uppercase;color:var(--bone);line-height:1}
+.pagehead .ph-sub{font-family:var(--serif);font-size:17px;color:var(--bone-dim);margin-top:9px;max-width:120ch;line-height:1.5}
+
+/* ---------- section header (CJK numeral) ---------- */
+.sec-head{display:flex;align-items:baseline;gap:16px;margin:38px 0 18px;flex-wrap:wrap}
+.sec-head .sec-num{font-family:var(--cjk);font-weight:900;font-size:26px;color:var(--blood);line-height:1}
+.sec-head .sec-title{font-family:var(--serif);font-weight:600;font-size:23px;letter-spacing:0.16em;text-transform:uppercase;color:var(--bone);white-space:nowrap}
+.sec-head .sec-meta{margin-left:auto;font-family:var(--mono);font-size:10.5px;letter-spacing:0.18em;text-transform:uppercase;color:var(--muted);white-space:nowrap}
+.sec-head::after{content:"";flex:0 0 100%;height:1px;background:var(--line);margin-top:-8px;order:5}
+/* legacy in-card heading */
+.sec{font-family:var(--serif);font-weight:600;color:var(--bone);font-size:16px;letter-spacing:.12em;text-transform:uppercase;margin:16px 0 8px}
+.ptitle{font-family:var(--serif);font-weight:600;font-size:26px;letter-spacing:.1em;text-transform:uppercase;color:var(--bone);margin-bottom:6px}
+.psub{color:var(--bone-dim);margin-bottom:18px;max-width:120ch}
+
+/* ---------- cards / pills / tags ---------- */
+.grid{display:grid;gap:14px} .cards{grid-template-columns:repeat(auto-fill,minmax(340px,1fr))}
+.card{border:1px solid var(--line);background:linear-gradient(170deg,var(--bg2),var(--panel));padding:17px 18px;position:relative}
+.body{font-size:16px;line-height:1.6;color:var(--bone-dim)}
+.big{font-family:var(--serif);font-weight:600;font-size:17px;letter-spacing:.04em}
+.uname{font-family:var(--serif);font-weight:600} .uname.big{font-size:19px;letter-spacing:.05em;color:var(--bone)}
+.pill{display:inline-block;font-size:10px;font-family:var(--mono);letter-spacing:.12em;text-transform:uppercase;
+  padding:3px 9px;border-radius:2px;border:1px solid var(--line);color:var(--bone-dim);vertical-align:middle}
+.pill.unique{color:var(--t10);border-color:var(--t10);margin-left:6px}
+.pill.glow{color:var(--jade);border-color:var(--jade-dim);box-shadow:0 0 10px rgba(63,158,116,0.3)}
+.tag{font-size:10px;font-family:var(--mono);letter-spacing:.16em;padding:4px 10px;border-radius:2px;border:1px solid var(--line);color:var(--bone-dim);text-transform:uppercase}
+.tag.on{color:var(--jade);border-color:var(--jade-dim)}
+.tag.blood{border-color:rgba(200,49,60,0.5);color:#e7a7ad;background:rgba(158,27,39,0.08)}
+.tag.auto{color:var(--blood-bright);border-color:rgba(200,49,60,0.65);background:rgba(158,27,39,0.12);animation:autopulse 1.4s ease-in-out infinite}
+@keyframes autopulse{0%,100%{opacity:1}50%{opacity:.55}}
+.tierbadge{font-family:var(--mono);font-weight:700;border:1px solid;padding:1px 7px;border-radius:2px;font-size:11px;letter-spacing:.04em}
+.rar{font-family:var(--mono);font-size:10.5px;letter-spacing:.2em;text-transform:uppercase}
+
+/* ---------- battle controls + arena ---------- */
+.ctl{display:flex;gap:10px;align-items:center;margin-bottom:18px;flex-wrap:wrap}
+.ctl .ctl-sep{flex:1 1 auto}
+/* arena stacked over a full-width combat feed (feed occupies the lower half) */
+.battle-stack{display:flex;flex-direction:column;gap:16px}
+.feedwrap{display:flex;flex-direction:column;gap:8px}
+.feed-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px}
+.arena{border:1px solid var(--line);background:radial-gradient(70% 90% at 50% 30%,rgba(158,27,39,0.06),transparent 70%),var(--bg2);
+  padding:30px 40px;min-height:380px;display:flex;align-items:flex-start;justify-content:center;gap:30px;position:relative;overflow:hidden}
+.arena::before{content:"戦";position:absolute;font-family:var(--cjk);font-weight:900;font-size:340px;color:rgba(233,225,212,0.022);pointer-events:none;z-index:0}
+/* each side fills half the arena; teams hug the outer edges and face across the central battlefield */
+.bside{flex:1 1 0;min-width:0;display:flex;flex-direction:column;gap:12px;position:relative;z-index:1}
+.bside.ally{align-items:flex-start} .bside.foe{align-items:flex-end}
+.bvs{flex:none;font-family:var(--cjk);color:var(--blood);font-size:40px;align-self:center;opacity:.45;z-index:1}
+.bgrid{display:grid;grid-template-columns:repeat(2,minmax(150px,196px));grid-template-rows:repeat(5,minmax(62px,auto));gap:10px}
+/* "Wave X of Y" badge, centred along the arena's bottom edge */
+.wave-indicator{position:absolute;left:50%;bottom:14px;transform:translateX(-50%);z-index:2;
+  font-family:var(--mono);font-size:11px;letter-spacing:.22em;text-transform:uppercase;color:var(--bone-dim);
+  background:rgba(8,6,5,0.72);border:1px solid var(--line);padding:6px 16px;white-space:nowrap}
+.side-lbl{font-family:var(--mono);font-size:10px;letter-spacing:.24em;color:var(--muted);text-transform:uppercase}
+/* per-side "Auras & Traits" panel under each team's grid — who carries what, and the team auras + sources */
+.trait-panel{width:100%;display:flex;flex-direction:column;gap:2px;margin-top:6px;
+  border-top:1px solid var(--line);padding-top:8px}
+.bside.foe .trait-panel{text-align:right}
+.trait-panel .tp-h{font-family:var(--mono);font-size:9px;letter-spacing:.2em;text-transform:uppercase;color:var(--muted);margin:7px 0 2px}
+.trait-panel .tp-h:first-child{margin-top:0}
+.tp-row{display:flex;align-items:flex-start;gap:7px;line-height:1.3}
+.bside.foe .tp-row{flex-direction:row-reverse}
+.tp-seal{flex:none;font-family:var(--cjk);font-weight:700;font-size:12px;line-height:1;width:18px;height:18px;
+  display:flex;align-items:center;justify-content:center;border:1px solid;border-radius:2px;background:rgba(8,6,5,0.6);margin-top:1px}
+.tp-body{min-width:0}
+.tp-body b{font-family:var(--serif);font-weight:600;font-size:11.5px;color:var(--bone)}
+.tp-aura .tp-body b{color:var(--brass)}
+.tp-src{font-family:var(--mono);font-size:9.5px;color:var(--bone-dim)}
+.tp-eff{display:block;font-family:var(--mono);font-size:9.5px;color:var(--muted);letter-spacing:.02em}
+.tp-empty{font-family:var(--mono);font-size:10px;color:var(--muted)}
+/* per-cultivator block: trait row + its equipped-Gu list (name + effect) */
+.tp-unit{padding:6px 0;border-bottom:1px solid rgba(233,225,212,0.05)}
+.tp-unit:last-child{border-bottom:none}
+/* Gu flow HORIZONTALLY (each Gu = a name-over-effect column) and wrap across the panel's width,
+   so a loadout reads as a compact row instead of a tall stack. */
+.tp-gu{list-style:none;margin:5px 0 0;padding:0 0 0 25px;display:flex;flex-flow:row wrap;gap:5px 22px}
+.bside.foe .tp-gu{padding:0 25px 0 0;justify-content:flex-end}
+.tp-gu li{display:flex;flex-direction:column;gap:1px;line-height:1.3;min-width:0;max-width:240px}
+.tp-gu li b{font-family:var(--serif);font-weight:600;font-size:11.5px;color:var(--bone-dim)}
+.tp-gueff{font-family:var(--mono);font-size:9px;color:var(--muted);letter-spacing:.02em}
+.tp-nogu{font-family:var(--mono);font-size:9px;color:var(--muted);padding:2px 0 0 25px;opacity:.7}
+.bside.foe .tp-nogu{padding:2px 25px 0 0}
+/* archetype-line bonuses (combat lines fold a personal stat bag into the unit; support lines hint to the aura) */
+.tp-lineeff{font-family:var(--mono);font-size:9px;letter-spacing:.02em;line-height:1.4;padding:3px 0 1px 25px}
+.bside.foe .tp-lineeff{padding:3px 25px 1px 0}
+.tp-lineeff.muted{color:var(--muted)}
+.side{margin-bottom:14px}
+
+/* arena unit blocks (ATB) */
+.ublock{position:relative;border:1px solid var(--line);background:var(--bg3);padding:10px 12px;display:flex;flex-direction:column;justify-content:center;transition:transform .11s ease,opacity .25s,filter .15s}
+.ublock.enemy{border-color:#3a1c1a;background:#160d0c}
+.ublock.back{border-style:dashed;opacity:.82}
+.ublock.ub-cult{border-color:rgba(176,139,62,0.5)} .ublock.enemy.ub-cult{border-color:rgba(176,107,62,0.6)}
+.ublock.dead{opacity:.2;filter:grayscale(1)}
+.ublock .ub-name{font-family:var(--serif);font-weight:600;font-size:14.5px;line-height:1.2;margin-bottom:8px;color:var(--bone);
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;word-break:break-word;padding-right:20px}
+/* corner TRAIT SEAL — the unit's archetype-line glyph, top-right; reserves a gutter via the paddings above/below */
+.ub-trait{position:absolute;top:6px;right:8px;z-index:2;font-family:var(--cjk);font-weight:700;font-size:13px;line-height:1;
+  width:18px;height:18px;display:flex;align-items:center;justify-content:center;border:1px solid;border-radius:2px;background:rgba(8,6,5,0.72)}
+/* active-status badge row across the top of a unit block */
+.ub-status{display:flex;flex-wrap:wrap;gap:3px;margin-bottom:6px;min-height:14px;align-content:flex-start;padding-right:20px}
+.ub-status:empty{margin:0;min-height:0}
+.ust{font-family:var(--mono);font-size:8px;font-weight:700;letter-spacing:.06em;line-height:1.4;padding:0 3px;
+  border:1px solid;border-radius:0;background:rgba(0,0,0,0.32)}
+.ust>b{font-weight:700;margin-left:2px;opacity:.85}
+.ub-bar{height:7px;background:#1d1611;overflow:hidden;margin-top:4px}
+.ub-bar>i{display:block;height:100%;width:100%}
+/* HP / Essence bars carry their current value overlaid at the right edge */
+.ub-bar.val{height:14px;position:relative}
+.ub-bar.val>i{position:absolute;left:0;top:0;height:100%}
+.ub-num{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:2;pointer-events:none;
+  font-family:var(--mono);font-weight:700;font-size:9px;line-height:1;color:#f3ecdf;letter-spacing:.02em;
+  text-shadow:0 1px 2px #000,0 0 3px #000}
+.ub-bar.hp>i{background:linear-gradient(90deg,var(--jade-dim),var(--jade));transition:width .18s ease}
+.ublock.enemy .ub-bar.hp>i{background:linear-gradient(90deg,var(--blood-deep),var(--blood-bright))}
+.ub-bar.ess>i{background:linear-gradient(90deg,#235d72,var(--essence));transition:width .18s ease}
+.ub-bar.chg>i{width:0;background:linear-gradient(90deg,#5a4a86,#9a86c8);transition:width .18s linear}
+.ublock.full .ub-bar.chg>i{background:linear-gradient(90deg,var(--brass),#fff0bd)}
+.ublock.atk-a{transform:translateX(14px)} .ublock.atk-f{transform:translateX(-14px)}
+/* a lunging actor (and its whole side) ride above the rest of the board while it strikes across the arena */
+.ublock.lunging{z-index:5}
+.bside.lunge-active{z-index:6}
+.ublock.hit{animation:ubhit .2s}
+@keyframes ubhit{0%{filter:none}30%{filter:brightness(2.4)}100%{filter:none}}
+.dmgpop{position:absolute;left:50%;top:0;transform:translateX(-50%);font-family:var(--mono);font-weight:700;font-size:13px;color:#ff9d8a;pointer-events:none;text-shadow:0 1px 2px #000;animation:dmgrise .72s ease-out forwards;z-index:3}
+.dmgpop.crit{color:var(--stone);font-size:16px}
+.dmgpop.crit.lucky{color:#b79bff;font-size:18px;text-shadow:0 0 6px rgba(157,123,255,0.67),0 1px 2px #000}
+.dmgpop.miss{color:var(--muted);font-weight:400}
+.dmgpop.dot{color:#c97bff;font-size:12px}
+/* distinct DoT tick numbers — Burn / Poison / Bleed */
+.dmgpop.dot-burn{color:#ff7a3c} .dmgpop.dot-poison{color:#7bdc5a} .dmgpop.dot-bleed{color:#ff5a6a}
+.dmgpop.stun{color:var(--stone);font-size:11px;letter-spacing:.08em}
+.dmgpop.stun.frozen{color:#8fd9ff;text-shadow:0 0 6px rgba(143,217,255,0.53),0 1px 2px #000}
+.dmgpop.status{color:#7fe0ff;font-size:11px;font-weight:400;letter-spacing:.04em}
+/* inflicted-status labels, coloured per status (match the on-block badges) */
+.dmgpop.status-burn{color:#ff7a3c} .dmgpop.status-poison{color:#7bdc5a} .dmgpop.status-bleed{color:#ff5a6a}
+.dmgpop.status-slow{color:#5aa9e6} .dmgpop.status-weaken{color:#b79bff} .dmgpop.status-sunder{color:#e0a23c}
+.dmgpop.status-frail{color:#ef82c6} .dmgpop.status-stun{color:#e8c777} .dmgpop.status-frozen{color:#8fd9ff}
+@keyframes dmgrise{0%{opacity:0;transform:translate(-50%,6px)}20%{opacity:1}100%{opacity:0;transform:translate(-50%,-24px)}}
+
+/* combat feed */
+.log{border:1px solid var(--line);background:rgba(8,6,5,0.6);padding:12px 15px;height:44vh;min-height:280px;overflow:auto;
+  font-family:var(--mono);font-size:12.5px;line-height:1.7;font-variant-numeric:tabular-nums}
+.log .l{display:flex;justify-content:space-between;align-items:baseline;gap:16px;padding:3px 0;border-bottom:1px solid var(--line-soft);color:var(--bone-dim)}
+.log .l .l-msg{min-width:0;flex:1}
+.log .l .l-time{flex:none;color:var(--muted);font-weight:400;font-size:10.5px;letter-spacing:.04em;white-space:nowrap;opacity:.85}
+.log .l.win{color:var(--jade);font-weight:700} .log .l.lose{color:var(--blood-bright)} .log .l.loot{color:var(--stone)}
+.log .l.rare{color:#e0a36e;font-weight:700;letter-spacing:.01em}
+
+/* ---------- team: formation board ---------- */
+.member{position:relative}
+.formation{margin-bottom:8px}
+.fmboard{display:grid;grid-template-columns:auto 1fr;gap:8px;align-items:center;margin-top:14px;max-width:600px}
+.fmrowlbl{font-family:var(--mono);font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);text-align:right;padding-right:8px}
+.fmrow{display:grid;grid-template-columns:repeat(5,1fr);gap:6px}
+.fmtile{border:1px dashed var(--line);min-height:60px;display:flex;align-items:center;justify-content:center;padding:5px;background:rgba(12,9,8,0.5);transition:border-color .12s,background .12s}
+.fmtile.on{border-style:solid;background:var(--bg3)}
+.fmtile.drop{border-color:var(--jade);background:rgba(47,125,91,0.12)}
+.fmunit{position:relative;display:flex;flex-direction:column;gap:2px;align-items:center;width:100%;cursor:grab}
+.fmunit:active{cursor:grabbing}
+.fmunit .uname{font-family:var(--serif);font-weight:600;font-size:13px;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.fmunit .fmrealm{font-family:var(--mono);font-size:9px;letter-spacing:.03em;color:var(--bone-dim);text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.fmbench .teamctl{margin:10px 0 14px}
+.fmx{position:absolute;top:-8px;right:-6px;padding:0 5px;font-size:10px;line-height:1.6}
+.fmbench{margin-top:16px}
+.fmbenchrow{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+.fmbench .fmunit{width:auto;border:1px solid var(--line);padding:8px 12px;background:var(--bg3)}
+
+/* ---------- team member card ---------- */
+.member.clickable{cursor:pointer;transition:border-color .15s,transform .12s}
+.member.clickable:hover{border-color:var(--line-strong);transform:translateY(-2px)}
+/* active-team slots (6) on the Team page */
+.teamslots{margin-bottom:8px}
+.teamslot.empty{border-style:dashed;display:grid;place-items:center;text-align:center;min-height:200px}
+.teamslot .uname.big:hover{color:var(--blood-bright)}
+/* "points to allocate" indicator + card accent */
+.alloc-note{margin-top:10px;font-family:var(--mono);font-size:10.5px;letter-spacing:.04em;text-transform:uppercase;
+  color:var(--stone);border:1px solid rgba(199,154,69,0.4);background:rgba(199,154,69,0.08);padding:6px 10px;cursor:pointer;transition:.14s}
+.alloc-note:hover{border-color:var(--stone);background:rgba(199,154,69,0.16);color:#e8c777}
+.member.has-alloc,.teamslot.has-alloc{border-color:rgba(199,154,69,0.5);box-shadow:0 0 0 1px rgba(199,154,69,0.12) inset}
+.statline{display:flex;gap:16px;font-size:13px;color:var(--muted);margin-top:10px;flex-wrap:wrap;font-family:var(--mono)}
+.statline b{color:var(--bone);font-weight:700} .statline.big{font-size:14px}
+.derived{margin-top:6px;line-height:1.5;font-family:var(--mono);font-size:11px}
+.cult{color:var(--jade);font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;margin-top:3px}
+.active-mark{position:absolute;top:14px;right:16px;font-size:10px;color:var(--jade);font-family:var(--mono);letter-spacing:.1em}
+.xpbar{height:5px;background:#1d1611;overflow:hidden;margin-top:9px}
+.xpbar>i{display:block;height:100%;background:linear-gradient(90deg,var(--jade-dim),var(--jade))}
+
+/* attribute allocation panel */
+.attrs{margin-top:12px;padding:11px 12px;border:1px solid var(--line);background:rgba(0,0,0,0.15)}
+.attrs .row.between{display:flex;justify-content:space-between;align-items:center}
+.steprow{display:flex;gap:5px;margin:9px 0}
+.attrgrid{display:grid;grid-template-columns:1fr 1fr;gap:6px 14px}
+.attrrow{display:flex;align-items:center;gap:7px}
+.attrrow .ak{font-family:var(--mono);font-size:10px;letter-spacing:.1em;color:var(--muted);width:28px}
+.attrrow .av{color:var(--bone);font-size:15px;min-width:36px;text-align:right;font-family:var(--mono)}
+.attrrow .apts{flex:1;font-family:var(--mono)}
+.attrrow button.plus{margin-left:auto}
+
+/* Gu slot chips */
+.slot-row{display:flex;gap:6px;margin-top:12px;flex-wrap:wrap}
+.slot-row .slot{border:1px dashed var(--line);padding:7px 10px;font-size:12px;min-width:96px;text-align:center;color:var(--muted);cursor:pointer;font-family:var(--mono);letter-spacing:.04em;background:rgba(12,9,8,0.4);transition:.13s;display:block;justify-content:unset;align-items:unset}
+.slot-row .slot.filled{border-style:solid;color:var(--bone)} .slot-row .slot:hover{border-color:var(--jade-dim);color:var(--bone)}
+
+/* ---------- character sheet (the hero view) ---------- */
+.sheet{max-width:1180px;margin:0 auto}
+.cs-metabar{display:flex;justify-content:space-between;align-items:center;gap:24px;padding:16px 0 13px;border-bottom:1px solid var(--line);
+  font-family:var(--mono);font-size:10.5px;letter-spacing:.2em;text-transform:uppercase;color:var(--muted)}
+.cs-metabar b{color:var(--blood-bright);font-weight:400} .cs-metabar .c{color:var(--bone-dim);letter-spacing:.26em}
+.cs-back{margin:20px 0 0;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+.cs-nav{display:flex;align-items:center;gap:8px}
+.cs-nav-pos{font-family:var(--mono);font-size:11px;letter-spacing:.16em;color:var(--bone-dim);min-width:52px;text-align:center}
+
+.cs-ident{display:grid;grid-template-columns:auto 1fr auto;gap:40px;align-items:center;padding:40px 0 36px;border-bottom:1px solid var(--line)}
+.cs-seal{width:118px;height:118px;flex:none;display:grid;place-items:center;
+  font-family:var(--cjk);font-weight:900;font-size:64px;line-height:1;color:#f3e9da;
+  background:linear-gradient(160deg,var(--blood) 0%,var(--blood-deep) 100%);
+  border:1px solid rgba(243,233,218,0.25);transform:rotate(-3deg);
+  box-shadow:0 0 0 6px rgba(158,27,39,0.10),0 18px 40px -18px rgba(158,27,39,0.7);text-shadow:0 2px 6px rgba(0,0,0,0.45)}
+.cs-ident-main{min-width:0}
+.cs-name{font-family:var(--serif);font-weight:700;font-size:46px;letter-spacing:.06em;color:var(--bone);line-height:1;margin-bottom:8px}
+.cs-realm{font-family:var(--cjk);font-weight:600;font-size:22px;color:var(--blood-bright);margin-bottom:4px}
+.cs-sub{font-family:var(--serif);font-size:18px;color:var(--bone-dim)}
+.cs-tags{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}
+.cs-aside{text-align:right;font-family:var(--mono);font-size:11px;line-height:2.1;color:var(--muted);letter-spacing:.06em}
+.cs-aside b{display:block;color:var(--bone);font-weight:400;font-size:14px;letter-spacing:.1em;font-family:var(--serif)}
+.cs-aside .k{font-size:9.5px;letter-spacing:.2em}
+
+/* portrait + at-a-glance */
+.cs-glance{display:grid;grid-template-columns:300px 1fr;gap:30px;align-items:stretch;margin-top:30px}
+.cs-portrait{position:relative;border:1px solid var(--line);min-height:300px;display:grid;place-items:center;overflow:hidden;
+  background:radial-gradient(62% 76% at 50% 40%,rgba(158,27,39,0.16),transparent 72%),#0c0a09}
+.cs-portrait .glyph{font-family:var(--cjk);font-weight:900;font-size:200px;color:var(--bone);opacity:.9;text-shadow:0 18px 50px rgba(0,0,0,0.6);line-height:1}
+.cs-portrait .pcap{position:absolute;bottom:0;left:0;right:0;border-top:1px solid var(--line);padding:11px 14px;display:flex;justify-content:space-between;
+  font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);background:rgba(8,6,5,0.55)}
+.cs-portrait .pcap b{color:var(--blood-bright);font-weight:400}
+.cs-vitals{display:grid;grid-template-columns:repeat(2,1fr);gap:1px;background:var(--line);border:1px solid var(--line)}
+.vital{background:var(--bg2);padding:18px 20px;display:flex;flex-direction:column;justify-content:center;gap:5px}
+.vital .vk{font-family:var(--mono);font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:var(--muted)}
+.vital .vv{font-family:var(--mono);font-size:30px;color:var(--bone);line-height:1;letter-spacing:.01em}
+.vital .vv.hp{color:var(--jade)} .vital .vv.atk{color:var(--blood-bright)}
+
+/* spec rows (dt/dd) */
+.spec{border-top:1px solid var(--line)}
+.spec-row{display:grid;grid-template-columns:170px 1fr;gap:20px;padding:13px 2px;border-bottom:1px solid var(--line-soft)}
+.spec-row dt{font-family:var(--mono);font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--muted);padding-top:4px}
+.spec-row dd{margin:0;font-family:var(--serif);font-size:18px;color:var(--bone);letter-spacing:.02em}
+.spec-row dd .cjk{color:var(--blood-bright);margin-left:6px;font-size:15px}
+.spec-row dd .mono{font-family:var(--mono);font-size:15px}
+
+/* attribute board on the sheet */
+.cs-attrs{display:grid;grid-template-columns:repeat(5,1fr);gap:1px;background:var(--line);border:1px solid var(--line)}
+.cs-attr{background:var(--bg2);padding:18px 16px;text-align:center;position:relative}
+.cs-attr .an{font-family:var(--mono);font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:var(--muted)}
+.cs-attr .av{font-family:var(--mono);font-size:38px;color:var(--bone);line-height:1.1;margin:6px 0 2px}
+.cs-attr .apts{font-family:var(--mono);font-size:10px;color:var(--bone-dim);letter-spacing:.06em}
+.cs-attr .ad{font-family:var(--serif);font-size:12.5px;color:var(--muted);margin-top:7px;line-height:1.45;min-height:34px}
+.cs-attr .av .stg{font-size:14px;color:var(--stone);margin-left:5px;vertical-align:middle}
+.cs-attr.staged{box-shadow:inset 0 0 0 1px var(--stone)}
+.cs-step{display:flex;align-items:center;justify-content:center;gap:8px;margin-top:10px}
+.cs-step button.step{width:34px;padding:5px 0;font-size:15px;line-height:1}
+.cs-step .step-amt{font-family:var(--mono);font-size:13px;color:var(--bone);min-width:40px;text-align:center}
+.staged-pill{border-color:var(--stone)!important;background:rgba(199,154,69,0.14)!important;color:#e8c777!important}
+.cs-alloc{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px}
+
+/* stat grid on the sheet */
+.cs-statgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line);border:1px solid var(--line)}
+.cs-stat{background:var(--bg2);padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.cs-stat .sk{font-family:var(--mono);font-size:9.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted)}
+.cs-stat .sv{font-family:var(--mono);font-size:19px;color:var(--bone)}
+
+/* Gu cards on the sheet + refinery grid */
+.gu-card{border:1px solid var(--line);background:linear-gradient(170deg,var(--bg2),var(--panel));padding:18px 18px 16px;position:relative;overflow:hidden}
+.gu-card::before{content:"";position:absolute;right:-40px;top:-40px;width:130px;height:130px;border-radius:50%;
+  background:radial-gradient(circle,rgba(63,158,116,0.12),transparent 70%);pointer-events:none}
+.gu-card.empty{border-style:dashed;cursor:pointer;display:grid;place-items:center;min-height:150px;color:var(--muted);font-family:var(--mono);font-size:12px;letter-spacing:.1em;text-transform:uppercase}
+.gu-card.empty:hover{border-color:var(--jade-dim);color:var(--bone-dim)}
+.gu-cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:14px}
+.gu-top{display:flex;justify-content:space-between;align-items:center;font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);position:relative;z-index:1}
+.gu-glyph{font-family:var(--cjk);font-weight:600;font-size:40px;line-height:1;margin:12px 0 2px;position:relative;z-index:1}
+.gu-name{font-family:var(--serif);font-weight:600;font-size:19px;color:var(--bone);position:relative;z-index:1}
+.gu-eff{font-family:var(--mono);font-size:11px;color:var(--bone-dim);line-height:1.7;margin-top:9px;position:relative;z-index:1}
+/* per-Gu essence channel cost (cyan, distinct from the ✦ Immortal Essence currency) */
+.gu-ess{font-family:var(--mono);font-size:10.5px;color:var(--essence);letter-spacing:.04em;line-height:1.6}
+.gu-card .gu-ess{display:block;margin-top:7px;position:relative;z-index:1}
+.gu-foot{margin-top:13px;padding-top:11px;border-top:1px solid var(--line);font-family:var(--mono);font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--jade);position:relative;z-index:1}
+/* Gu TAGS — a Gu's effect kinds; refinement fodder must cover these between them */
+.gu-tags{display:flex;flex-wrap:wrap;gap:4px;margin-top:7px;position:relative;z-index:1}
+.gu-tag{font-family:var(--mono);font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--bone-dim);border:1px solid var(--line);border-radius:2px;padding:1px 6px;white-space:nowrap}
+.gurow-tags{display:flex;flex-wrap:wrap;align-items:center;gap:4px;font-family:var(--mono);font-size:10px;letter-spacing:.04em;color:var(--muted);line-height:1.5;margin:2px 0}
+
+/* dao / comprehension rows */
+.markwrap{margin-top:10px;display:flex;flex-direction:column;gap:6px}
+.markrow{display:flex;justify-content:space-between;align-items:center;border:1px solid var(--line);padding:8px 12px;font-size:14px;background:rgba(0,0,0,0.12)}
+.markrow button{padding:4px 9px}
+.compbar{height:5px;background:#1d1611;overflow:hidden;margin-top:6px;width:140px}
+.compbar>i{display:block;height:100%;background:linear-gradient(90deg,var(--jade-dim),var(--jade))}
+
+/* ---------- recruit ---------- */
+.pulls{display:grid;grid-template-columns:repeat(auto-fill,minmax(168px,1fr));gap:12px;margin-top:22px}
+.pull{border:1px solid var(--line);padding:18px 14px;text-align:center;background:var(--bg2);animation:rise .4s ease both;position:relative;overflow:hidden}
+.pull .pglyph{font-family:var(--cjk);font-weight:900;font-size:54px;opacity:.12;position:absolute;top:-6px;right:4px;line-height:1}
+@keyframes rise{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+
+/* ---------- gu refinery / inventory ---------- */
+.pathsec{margin-bottom:26px}
+.pathhdr{display:flex;align-items:center;gap:12px;margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+.pathhdr.clickable{cursor:pointer;user-select:none;transition:border-color .15s}
+.pathhdr.clickable:hover{border-bottom-color:var(--ink)}
+.pathhdr.clickable:hover .pname{text-decoration:underline}
+.pathhdr .gucaret{font-size:12px;width:14px;color:var(--muted);flex:0 0 auto}
+.pathhdr .pglyph{font-family:var(--cjk);font-weight:900;font-size:24px;line-height:1}
+.pathhdr .pname{font-family:var(--serif);font-weight:600;font-size:19px;letter-spacing:.06em}
+.viewtoggle{display:inline-flex;margin:0 0 16px}
+.viewtoggle.wrap{flex-wrap:wrap;margin:0}
+.viewtoggle button{font-size:10px;padding:6px 13px;border-radius:0}
+.viewtoggle button:not(:first-child){border-left:none}
+.teamctl{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:0 0 18px}
+.teamctl .viewtoggle{margin:0}
+.teamctl select{background:var(--bg3);color:var(--bone);border:1px solid var(--line);border-radius:0;padding:7px 10px;font-size:11px;font-family:var(--mono);letter-spacing:.08em;cursor:pointer;text-transform:uppercase}
+.teamctl input.searchbox{background:var(--bg3);color:var(--bone);border:1px solid var(--line);border-radius:0;padding:7px 10px;font-size:11px;font-family:var(--mono);letter-spacing:.08em;min-width:190px}
+.teamctl input.searchbox::placeholder{color:var(--muted);text-transform:uppercase;letter-spacing:.1em}
+.teamctl input.searchbox:focus{outline:none;border-color:var(--stone)}
+.gulist,.reslist{display:flex;flex-direction:column;gap:6px}
+.gurow,.resrow{display:flex;align-items:center;justify-content:space-between;gap:12px;border:1px solid var(--line);padding:9px 13px;background:var(--bg2)}
+.gurow{align-items:center}
+.gurow.locked{opacity:.85;border-style:dashed} /* still readable: the missing-ingredients line must be legible */
+.gurow-main{display:flex;flex-direction:column;gap:5px;min-width:0;flex:1}
+.gurow-top{display:flex;align-items:center;gap:9px;flex-wrap:wrap;min-width:0}
+.gurow-recipe{font-family:var(--mono);font-size:11px;color:var(--bone-dim);letter-spacing:.02em;line-height:1.5}
+.gurow-need{font-family:var(--mono);font-size:11px;color:var(--blood-bright);letter-spacing:.02em;line-height:1.5}
+.gurow>button{flex:none}
+.resrow .rq{font-family:var(--mono);color:var(--bone);white-space:nowrap}
+
+/* inventory grid */
+.resgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(158px,1fr));gap:9px}
+.restile{border:1px solid var(--line);border-left:3px solid var(--line);padding:10px 12px;background:var(--bg2);min-width:0}
+.restile .rn{font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:7px;color:var(--bone)}
+.restile .rrow{display:flex;justify-content:space-between;align-items:center;gap:6px}
+.restile .rq{font-family:var(--mono);font-size:15px;color:var(--bone)}
+.restile.clk{cursor:pointer;transition:border-color .15s,transform .12s,background .15s}
+.restile.clk:hover{border-color:var(--blood-bright);transform:translateY(-1px);background:var(--bg3)}
+
+/* ---------- floors ---------- */
+.floorgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:9px}
+.floor{border:1px solid var(--line);padding:13px;background:var(--bg2);cursor:pointer;text-align:center;transition:.13s}
+.floor:hover{border-color:var(--line-strong)} .floor.locked{opacity:.3;cursor:not-allowed}
+.floor.boss{border-color:var(--blood-dim)}
+.floor.farming{border-color:var(--stone);box-shadow:0 0 0 1px var(--stone) inset}
+.floor .fnum{font-family:var(--mono);font-size:17px;color:var(--bone);letter-spacing:.02em}
+.floor .muted{font-family:var(--mono);font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;margin-top:4px}
+
+/* ---------- modal & toast ---------- */
+#overlay{position:fixed;inset:0;background:rgba(0,0,0,0.72);display:flex;align-items:center;justify-content:center;z-index:50;backdrop-filter:blur(2px)}
+.modal{width:540px;max-height:82vh;overflow:auto;border:1px solid var(--line-strong);background:var(--bg2);padding:24px;
+  box-shadow:0 30px 80px -30px rgba(0,0,0,0.9)}
+.modal.wide{width:min(1180px,94vw)}
+.modal h3{font-family:var(--serif);font-weight:600;font-size:20px;letter-spacing:.1em;text-transform:uppercase;color:var(--bone);margin-bottom:14px}
+.pickrow{display:flex;justify-content:space-between;align-items:center;padding:9px 12px;border:1px solid var(--line);margin-bottom:7px;font-size:14px}
+/* equip-Gu picker rows: multi-line info column (tier · name · path · effect · essence) + right button */
+.pickrow.gu-pick{align-items:flex-start;gap:14px}
+.gu-pick .gp-info{flex:1;min-width:0}
+.gp-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.gp-name{font-family:var(--serif);font-weight:600;font-size:15px;color:var(--bone)}
+.gp-path{font-family:var(--mono);font-size:10px;letter-spacing:.06em;color:var(--muted)}
+.gu-pick .gu-eff{margin-top:6px}
+.gu-pick > button{flex:none;align-self:center}
+/* toast stack: host is fixed bottom-centre, toasts flow as a column (newest at the bottom) */
+#toast-host{position:fixed;bottom:26px;left:50%;transform:translateX(-50%);z-index:80;
+  display:flex;flex-direction:column;gap:8px;align-items:center;pointer-events:none}
+.toast{background:var(--bg3);border:1px solid var(--blood-dim);color:#e7a7ad;pointer-events:auto;max-width:84vw;text-align:center;
+  padding:11px 20px;font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;animation:rise .3s both;
+  box-shadow:0 12px 30px -16px rgba(0,0,0,0.8)}
+.toast.out{animation:toastout .42s ease forwards}
+@keyframes toastout{to{opacity:0;transform:translateY(10px)}}
+/* realm-up (ascension) toast — jade/stone, distinct from the default blood toast */
+.toast.ascend{border-color:var(--jade-dim);color:var(--jade);background:linear-gradient(180deg,rgba(47,125,91,0.14),var(--bg3))}
+/* first-visit tab tip — a readable sentence (not the uppercase mono action toast), jade accent */
+.toast.tip{border-color:var(--jade-dim);color:var(--bone);background:linear-gradient(180deg,rgba(47,125,91,0.12),var(--bg3));
+  text-transform:none;letter-spacing:.01em;font-family:var(--serif);font-size:15px;line-height:1.45;text-align:left;max-width:400px;padding:13px 18px}
+
+/* ---------- announcement banner: a floating, self-fading milestone notice across the TOP of the screen ---------- */
+#banner-host{position:fixed;top:0;left:50%;transform:translateX(-50%);z-index:90;
+  display:flex;flex-direction:column;gap:10px;align-items:center;padding-top:22px;pointer-events:none}
+.banner{pointer-events:auto;display:flex;align-items:center;gap:16px;max-width:90vw;
+  padding:14px 30px;background:linear-gradient(180deg,var(--bg3),var(--panel));
+  border:1px solid var(--line-strong);border-top:2px solid var(--essence);
+  box-shadow:0 22px 60px -22px rgba(0,0,0,0.9),0 0 34px -10px rgba(70,179,207,0.28);
+  animation:bannerin .5s cubic-bezier(.2,.9,.3,1.2) both}
+.banner.out{animation:bannerout .7s ease forwards}
+.banner .b-seal{font-size:30px;line-height:1;color:var(--essence);text-shadow:0 0 16px rgba(70,179,207,0.45)}
+.banner .b-text{display:flex;flex-direction:column;gap:3px}
+.banner .b-text b{font-family:var(--serif);font-size:19px;letter-spacing:.04em;color:var(--bone)}
+.banner .b-sub{font-family:var(--mono);font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--bone-dim)}
+.banner .b-sub .essence{color:var(--essence)}
+@keyframes bannerin{from{opacity:0;transform:translateY(-26px)}to{opacity:1;transform:none}}
+@keyframes bannerout{to{opacity:0;transform:translateY(-20px)}}
+
+/* ---------- onboarding: First-Steps floating widget (sits below modals + toasts) ---------- */
+#onboard-host{position:fixed;right:22px;bottom:22px;z-index:40;pointer-events:none}
+.onboard-widget{pointer-events:auto;width:312px;max-width:calc(100vw - 44px);
+  border:1px solid var(--line-strong);background:linear-gradient(170deg,var(--bg3),var(--panel));
+  box-shadow:0 24px 60px -24px rgba(0,0,0,0.9),0 0 0 4px rgba(158,27,39,0.05);animation:rise .3s both}
+.ob-head{display:flex;align-items:center;gap:9px;padding:12px 14px;border-bottom:1px solid var(--line);
+  background:linear-gradient(90deg,rgba(158,27,39,0.12),transparent)}
+.ob-seal{font-family:var(--cjk);font-weight:900;font-size:22px;color:var(--blood-bright);line-height:1}
+.ob-title{font-family:var(--serif);font-weight:600;font-size:15px;letter-spacing:.14em;text-transform:uppercase;color:var(--bone)}
+.ob-prog{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--stone);letter-spacing:.06em}
+.ob-x{min-width:0;padding:2px 7px;font-size:11px;letter-spacing:0;border-color:transparent;color:var(--muted)}
+.ob-x:hover:not(:disabled){color:var(--blood-bright);border-color:var(--blood-dim);background:transparent}
+.ob-steps{padding:8px 14px 13px}
+.onboard-step{display:flex;align-items:center;gap:9px;padding:5px 0;font-family:var(--serif);font-size:15px}
+.ob-mark{font-family:var(--mono);font-size:13px;width:16px;text-align:center;flex:none}
+.ob-label{flex:1;line-height:1.3}
+.onboard-step.done{color:var(--muted)}
+.onboard-step.done .ob-mark{color:var(--jade)}
+.onboard-step.done .ob-label{text-decoration:line-through;text-decoration-color:var(--jade-dim)}
+.onboard-step.pending{color:var(--bone-dim)} .onboard-step.pending .ob-mark{color:var(--muted)}
+.onboard-step.current{color:var(--bone)} .onboard-step.current .ob-mark{color:var(--blood-bright)}
+.ob-go{min-width:0;padding:3px 10px;font-size:10px;letter-spacing:.08em}
+.ob-hint{font-family:var(--mono);font-size:11px;line-height:1.5;color:var(--muted);margin:0 0 6px 25px;padding-left:9px;border-left:1px solid var(--line)}
+.ob-foot{margin-top:9px;padding-top:10px;border-top:1px solid var(--line)}
+.ob-guide{width:100%;padding:7px 10px;font-size:10px;letter-spacing:.1em;border-color:rgba(63,158,116,0.4);color:var(--jade)}
+.ob-guide:hover:not(:disabled){border-color:var(--jade);color:var(--jade);background:rgba(63,158,116,0.08)}
+
+/* ---------- Codex / beginner's guide ---------- */
+.cdx-onboard{display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap;
+  border:1px solid rgba(63,158,116,0.3);background:linear-gradient(170deg,rgba(47,125,91,0.08),var(--panel));
+  padding:13px 16px;margin-bottom:14px;font-size:15px;color:var(--bone-dim)}
+.cdx-onboard button{flex:none}
+.cdx-toc{display:flex;flex-wrap:wrap;gap:7px;margin:-2px 0 6px}
+.cdx-tab{font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;text-decoration:none;
+  color:var(--bone-dim);border:1px solid var(--line);border-radius:2px;padding:4px 10px;transition:.16s}
+.cdx-tab:hover{border-color:var(--blood-dim);color:var(--bone);background:rgba(208,186,160,0.04)}
+section[id^="cdx-"]{scroll-margin-top:14px}
+.cdx-list{list-style:none;margin:11px 0 4px;padding:0;display:flex;flex-direction:column;gap:6px}
+.cdx-list li{font-size:15.5px;line-height:1.4;padding-left:14px;position:relative}
+.cdx-list li::before{content:"·";position:absolute;left:2px;color:var(--blood-bright);font-weight:700}
+
+/* ---------- new-game starter pickers (Dao path → first Gu) ---------- */
+.starter-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;margin-top:4px}
+.starter-grid.gu{grid-template-columns:repeat(auto-fill,minmax(240px,1fr))}
+.starter-path,.starter-gu{display:flex;flex-direction:column;border:1px solid var(--line);background:linear-gradient(170deg,var(--bg2),var(--panel));padding:13px 14px;cursor:pointer;transition:.16s}
+.starter-path:hover,.starter-gu:hover{border-color:var(--blood-dim);background:rgba(208,186,160,0.04)}
+.sp-head{display:flex;align-items:center;gap:8px}
+.sp-seal{font-family:var(--cjk);font-weight:900;font-size:24px;line-height:1}
+.sp-name{font-family:var(--serif);font-weight:600;font-size:17px;color:var(--bone);letter-spacing:.04em;flex:1}
+.sp-blurb{font-size:13.5px;color:var(--bone-dim);line-height:1.4;margin:7px 0}
+.sp-excel,.sp-grants,.sp-inflicts{font-family:var(--mono);font-size:10.5px;letter-spacing:.04em;color:var(--bone-dim);line-height:1.6;margin-top:3px}
+.sp-inflicts{display:flex;flex-wrap:wrap;align-items:center;gap:5px}
+.sp-k{color:var(--muted);text-transform:uppercase;letter-spacing:.12em;margin-right:5px}
+.statchip{font-family:var(--mono);font-size:10px;letter-spacing:.06em;border:1px solid var(--line);border-radius:2px;padding:1px 6px;cursor:help}
+.sp-sig{font-family:var(--mono);font-size:10.5px;color:var(--muted);line-height:1.5;margin-top:7px;padding-top:7px;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:2px}
+.sp-arsenal{margin-top:9px;padding-top:8px;border-top:1px solid var(--line)}
+.sp-gulist{list-style:none;margin:6px 0 0;padding:0;display:flex;flex-direction:column;gap:5px}
+.sp-gulist li{display:flex;flex-direction:column;gap:1px;line-height:1.35}
+.sp-gulist li b{font-family:var(--serif);font-size:13px;letter-spacing:.02em}
+.sp-gulist li.cap b{font-size:13.5px}
+.sp-gulist li.cap{padding-bottom:5px;margin-bottom:2px;border-bottom:1px dashed var(--line)}
+.sg-head{display:flex;align-items:center;gap:9px}
+.sg-name{font-family:var(--serif);font-weight:600;font-size:16px;color:var(--bone)}
+
+/* archetype picker (step 4): one card per line, each showing its FULL rarity ladder. --acc = per-line hue */
+.starter-grid.arch{grid-template-columns:repeat(auto-fill,minmax(340px,1fr))}
+.starter-arch{display:flex;flex-direction:column;border:1px solid var(--line);background:linear-gradient(170deg,var(--bg2),var(--panel));padding:13px 14px;cursor:pointer;transition:.16s}
+.starter-arch:hover{border-color:var(--acc);background:rgba(208,186,160,0.04)}
+.arch-ladder{margin-top:9px;padding-top:8px;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:2px}
+.arch-row{display:flex;align-items:baseline;gap:9px;font-family:var(--mono);font-size:10.5px;line-height:1.45;padding:2px 6px;border-left:2px solid transparent}
+.arch-rar{flex:none;width:72px;letter-spacing:.07em;text-transform:uppercase}
+.arch-eff{flex:1;color:var(--bone-dim)}
+.arch-row.you{background:rgba(158,27,39,0.09);border-left-color:var(--blood-bright)}
+.arch-row.you .arch-eff{color:var(--bone)}
+.arch-you{flex:none;font-size:8px;letter-spacing:.16em;text-transform:uppercase;color:var(--blood-bright);border:1px solid var(--blood-dim);border-radius:2px;padding:0 5px;align-self:center}
+
+@media (max-width:560px){
+  .starter-grid{grid-template-columns:1fr}
+  #onboard-host{left:12px;right:12px;bottom:12px} .onboard-widget{width:auto}
+}
+
+@media (max-width:1080px){
+  #content{padding:0 20px 70px}
+  .cs-ident{grid-template-columns:1fr;gap:22px} .cs-aside{text-align:left}
+  .cs-glance{grid-template-columns:1fr} .cs-attrs{grid-template-columns:repeat(2,1fr)}
+  .cs-statgrid{grid-template-columns:repeat(2,1fr)}
+  .pagehead{grid-template-columns:1fr}
+}

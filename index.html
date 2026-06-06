@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>蛊 · Demon's Ascension</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- Title / save-slot screen -->
+  <div id="title">
+    <div class="sub">Reverend Insanity · Cultivation Autobattler</div>
+    <h1><span class="accent">蛊</span> Demon's Ascension</h1>
+    <div class="slots" id="slots"></div>
+  </div>
+
+  <!-- Main game -->
+  <div id="game" class="hidden">
+    <div id="topbar">
+      <span class="logo">蛊</span>
+      <div class="stat"><span class="lbl">Primeval Stones</span><span class="val stone" id="t-stones">0</span></div>
+      <div class="stat"><span class="lbl">Immortal Essence</span><span class="val jade" id="t-essence">0</span></div>
+      <div class="stat"><span class="lbl">Frontier</span><span class="val" id="t-frontier">Floor 1</span></div>
+      <div class="stat"><span class="lbl">Cultivators</span><span class="val" id="t-roster">1</span></div>
+      <div class="stat"><span class="lbl">Unique Gu</span><span class="val" id="t-unique">0</span></div>
+      <span class="spacer"></span>
+      <button onclick="G.toTitle()">Save &amp; Title</button>
+    </div>
+    <div id="main">
+      <div id="nav">
+        <button data-tab="battle" class="active" onclick="G.setTab('battle')">⚔ Battle</button>
+        <button data-tab="char" onclick="G.openCharTab()">己 Character</button>
+        <button data-tab="team" onclick="G.setTab('team')">人 Team<span class="navbadge" id="team-alert"></span></button>
+        <button data-tab="formation" onclick="G.setTab('formation')">阵 Formation</button>
+        <button data-tab="recruit" onclick="G.setTab('recruit')">召 Recruit</button>
+        <button data-tab="gu" onclick="G.setTab('gu')">蛊 Gu Refinery</button>
+        <button data-tab="dao" onclick="G.setTab('dao')">道 Dao</button>
+        <button data-tab="attainment" onclick="G.setTab('attainment')">悟 Attainment</button>
+        <button data-tab="shop" onclick="G.setTab('shop')">市 Market</button>
+        <button data-tab="inv" onclick="G.setTab('inv')">囊 Inventory</button>
+        <button data-tab="almanac" onclick="G.setTab('almanac')">谱 Almanac</button>
+        <button data-tab="floors" onclick="G.setTab('floors')">塔 Floors</button>
+        <button data-tab="codex" onclick="G.setTab('codex')">典 Guide</button>
+      </div>
+      <div id="content"></div>
+    </div>
+  </div>
+
+  <div id="toast-host"></div>
+  <div id="banner-host"></div>
+  <div id="onboard-host"></div>
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>
