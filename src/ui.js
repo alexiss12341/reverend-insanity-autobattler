@@ -457,7 +457,7 @@ function traitRow(u) {
   if (lineNm) tags.push(lineNm);
   if (aff.length) tags.push(aff.join(' / '));
   const gu = u.guInfo || [];
-  if (!tags.length && !gu.length) return ''; // nothing notable to show for this unit
+  // Always render the cultivator (even with no line/affinity/Gu) so every team member is listed.
   let glyph = '·', color = 'var(--muted)';
   if (u.line && LINE_UI[u.line]) { glyph = LINE_UI[u.line].glyph; color = LINE_UI[u.line].color; }
   else if (u.affinity && u.affinity[0]) { glyph = pathCjk(u.affinity[0]); color = pathColor(u.affinity[0]); }
