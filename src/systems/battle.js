@@ -382,7 +382,7 @@ export function resolveEncounter(encounter, onLog, opts = {}) {
     guInfo: u.ch ? guInfoFor(u.ch) : (u.guInfo || []), // equipped Gu (name + effect) for the traits panel
     essMax: u.essMax != null ? u.essMax : (u.essencePool || 0),
     rarity: u.ch ? u.ch.rarity : u.rarity, line: u.ch ? u.ch.line : u.line,
-    realm: u.ch ? u.ch.realm : u.realm,
+    realm: u.ch ? u.ch.realm : u.realm, imprint: u.ch ? (u.ch.imprint || 0) : (u.imprint || 0),
     affinity: u.ch ? affinityPaths(u.ch) : (u.daoPath ? [u.daoPath] : []) });
   const timeline = rec ? {
     allies: allies.map(snap),

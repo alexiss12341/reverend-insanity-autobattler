@@ -306,6 +306,11 @@ button.mini{font-size:10px;padding:3px 8px;min-width:0;letter-spacing:0.1em}
   padding:7px 11px;border-color:rgba(176,139,62,0.35)}
 .dup-chip:hover:not(:disabled){border-color:var(--brass);background:rgba(176,139,62,0.12);color:var(--bone)}
 .dup-chip .cjk{font-size:15px} .dup-chip .tiny{font-family:var(--mono)}
+/* Soul-Imprint level shown as compact gold stars — used on every character representation */
+.imp-stars{color:var(--brass);font-size:10px;letter-spacing:.5px;line-height:1;white-space:nowrap;
+  text-shadow:0 1px 1px rgba(0,0,0,.55);vertical-align:baseline}
+/* arena unit-block variant: its own tight line under the name, never crowding the bars */
+.ub-imp{display:block;margin:-4px 0 7px;font-size:9px;letter-spacing:0}
 .statline{display:flex;gap:16px;font-size:13px;color:var(--muted);margin-top:10px;flex-wrap:wrap;font-family:var(--mono)}
 .statline b{color:var(--bone);font-weight:700} .statline.big{font-size:14px}
 .derived{margin-top:6px;line-height:1.5;font-family:var(--mono);font-size:11px}

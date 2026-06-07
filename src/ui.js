@@ -389,6 +389,13 @@ const statusChip = (s) => {
   const lbl = STATUS[s.t] ? STATUS[s.t].label : s.t;
   return `<span class="ust" style="color:${ui.color};border-color:${ui.color}66" title="${esc(lbl)}${s.n > 1 ? ' ×' + s.n : ''}">${ui.abbr}${s.n > 1 ? '<b>' + s.n + '</b>' : ''}</span>`;
 };
+// Soul-Imprint level as compact gold stars (魂印 Lv 1..10). Empty at Lv 0 so it only appears where
+// relevant — reused on every character representation (roster, team slots, formation, arena, sheet).
+function imprintStars(level, cls = '') {
+  const n = level | 0;
+  if (n <= 0) return '';
+  return `<span class="imp-stars${cls ? ' ' + cls : ''}" title="Soul Imprint Lv ${n} — +${n * 5}% attributes · +${(0.1 * n).toFixed(1)} aptitude">${'★'.repeat(n)}</span>`;
+}
 function unitBlock(u, side, idx) {
   const row = u.row || 'front';
   const cult = u.kind === 'cultivator';
@@ -407,6 +414,7 @@ function unitBlock(u, side, idx) {
     ${traitSeal(u)}
     <div class="ub-status">${stBadges}</div>
     <div class="ub-name"${nameStyle}>${cult ? '◆ ' : ''}${u.name}</div>
+    ${imprintStars(u.imprint, 'ub-imp')}
     <div class="ub-bar hp val"><i style="width:${pctHp(u.hp, u.max)}%"></i><b class="ub-num">${compact(Math.max(0, u.hp))}</b></div>
     ${essBar}
     <div class="ub-bar chg"><i style="width:0%"></i></div></div>`;
@@ -481,7 +489,7 @@ function traitRow(u) {
   return `<div class="tp-unit">
     <div class="tp-row tp-trait">
       <span class="tp-seal" style="color:${color};border-color:${color}66">${glyph}</span>
-      <span class="tp-body"><b>${esc(u.name)}</b>${tags.length ? `<span class="tp-eff">${esc(tags.join(' · '))}</span>` : ''}</span>
+      <span class="tp-body"><b>${esc(u.name)}</b>${(u.imprint || 0) > 0 ? ' ' + imprintStars(u.imprint) : ''}${tags.length ? `<span class="tp-eff">${esc(tags.join(' · '))}</span>` : ''}</span>
     </div>
     ${lineEffHtml}
     ${guHtml}
@@ -694,7 +702,7 @@ function activeSlotCard(c) {
       <span class="uname big" style="cursor:pointer" onclick="G.openChar('${c.id}')"><span class="cjk" style="color:${rc};margin-right:6px">${charGlyph(c)}</span>${c.name}</span>
       <span class="rar" style="color:var(--jade);white-space:nowrap">● ${rowOf(c) === 'back' ? 'BACK' : 'FRONT'} L${laneOf(c) + 1}</span>
     </div>
-    <div class="cult">${realmName(c.realm)} · ${c.rarity}</div>
+    <div class="cult">${realmName(c.realm)} · ${c.rarity}${(c.imprint || 0) > 0 ? ` · ${imprintStars(c.imprint)}` : ''}</div>
     <div class="statline"><span>HP <b>${compact(s.maxHp)}</b></span><span>ATK <b>${compact(s.atk)}</b></span><span>DEF <b>${compact(s.def)}</b></span><span>SPD <b>${s.spd}</b></span></div>
     ${unspent > 0 ? `<div class="alloc-note" title="Open ${esc(c.name)}'s sheet to allocate" onclick="G.openChar('${c.id}')">▲ ${compact(unspent)} attribute point${unspent === 1 ? '' : 's'} to allocate</div>` : ''}
     <div class="side-lbl" style="margin-top:12px">Gu Loadout — click a slot to equip/unequip</div>
@@ -728,7 +736,7 @@ function dupBanner() {
     return `<button class="dup-chip" onclick="G.openChar('${keeper.id}')" title="Open ${esc(keeper.name)}'s sheet to Soul Imprint">
       <span class="cjk" style="color:${rc}">${charGlyph(keeper) || '魂'}</span>
       <span>${esc(keeper.name)} <b>×${g.length}</b></span>
-      <span class="muted tiny">${realmName(keeper.realm)}${lvl ? ` · 魂印 ${lvl}` : ''}</span>
+      <span class="muted tiny">${realmName(keeper.realm)}</span>${lvl ? ' ' + imprintStars(lvl) : ''}
     </button>`;
   }).join('');
   const sets = groups.length;
@@ -772,7 +780,7 @@ function fmUnit(c) {
   const rc = rarityColor(c.rarity);
   return `<div class="fmunit" draggable="true" ondragstart="G.dragStart(event,'${c.id}')" title="${esc(c.name)} — ${c.rarity} · ${realmName(c.realm)} · HP ${s.maxHp} · ATK ${s.atk} · DEF ${s.def} · SPD ${s.spd}">
     <span class="uname" style="color:${rc}">${c.name}</span>
-    <span class="fmrealm">${realmName(c.realm)}</span>
+    <span class="fmrealm">${realmName(c.realm)}${(c.imprint || 0) > 0 ? ' ' + imprintStars(c.imprint) : ''}</span>
     <span class="muted tiny">A ${compact(s.atk)} · H ${compact(s.maxHp)} · S ${s.spd}</span>
     ${c.isPlayer ? '' : `<button class="fmx" title="Bench" onclick="G.benchChar('${c.id}')">×</button>`}
   </div>`;
@@ -846,7 +854,7 @@ function memberCard(c) {
     <div class="row start"><span class="uname big">${charGlyph(c) ? `<span class="cjk" style="color:${rc};margin-right:8px">${charGlyph(c)}</span>` : ''}${c.name}</span>
       <span class="rar" style="color:${rc}">${c.rarity}</span></div>
     <div class="cult">${realmName(c.realm)}</div>
-    <div class="muted small">${realmClass(c.realm)} · ${apertureGrade(apertureCapacity(effAptitude(c))).grade}-grade aperture${(c.imprint || 0) > 0 ? ` · <span class="cjk">魂印</span> ${c.imprint}` : ''}</div>
+    <div class="muted small">${realmClass(c.realm)} · ${apertureGrade(apertureCapacity(effAptitude(c))).grade}-grade aperture${(c.imprint || 0) > 0 ? ` · ${imprintStars(c.imprint)}` : ''}</div>
     ${breakthroughChip(c)}
     <div class="statline"><span>HP <b>${compact(s.maxHp)}</b></span><span>ATK <b>${compact(s.atk)}</b></span><span>DEF <b>${compact(s.def)}</b></span><span>SPD <b>${s.spd}</b></span></div>
     ${unspent > 0 ? `<div class="alloc-note" onclick="event.stopPropagation();G.openChar('${c.id}')">▲ ${compact(unspent)} attribute point${unspent === 1 ? '' : 's'} to allocate</div>` : ''}
@@ -1107,7 +1115,7 @@ export function viewCharacter(id) {
           ${lineTag}
           ${affTag}
           ${statusTag}
-          ${(c.imprint || 0) > 0 ? `<span class="tag" title="Soul Imprint Lv ${c.imprint} — +${Math.round((imprintAttrMult(c) - 1) * 100)}% attributes · +${(0.1 * c.imprint).toFixed(1)} aptitude"><span class="cjk">魂印</span> ${c.imprint}</span>` : ''}
+          ${(c.imprint || 0) > 0 ? `<span class="tag" title="Soul Imprint Lv ${c.imprint} — +${Math.round((imprintAttrMult(c) - 1) * 100)}% attributes · +${(0.1 * c.imprint).toFixed(1)} aptitude"><span class="cjk">魂印</span> ${c.imprint} ${imprintStars(c.imprint)}</span>` : ''}
           ${pathTags}
         </div>
       </div>
@@ -1751,7 +1759,7 @@ function daoCard(c) {
   const immortal = isImmortalRealm(c.realm);
   const head = `<div class="row start"><span class="uname big"><span class="cjk" style="color:${rarityColor(c.rarity)};margin-right:8px">${charGlyph(c)}</span>${c.name}</span>
     <span class="rar" style="color:${rarityColor(c.rarity)}">${realmName(c.realm)}</span></div>
-    <div class="muted small">${realmClass(c.realm)}${(c.wounds || []).length ? ` · <span style="color:var(--blood-bright)">${c.wounds.length} Dao Wound(s)</span>` : ''}</div>`;
+    <div class="muted small">${realmClass(c.realm)}${(c.imprint || 0) > 0 ? ` · ${imprintStars(c.imprint)}` : ''}${(c.wounds || []).length ? ` · <span style="color:var(--blood-bright)">${c.wounds.length} Dao Wound(s)</span>` : ''}</div>`;
 
   if (!immortal) {
     if (canAscend(c)) {
@@ -1825,7 +1833,7 @@ function attainmentCard(c, rows) {
   const head = `<div class="row start">
       <span class="uname big" style="cursor:pointer" onclick="G.openChar('${c.id}')"><span class="cjk" style="color:${rc};margin-right:8px">${charGlyph(c)}</span>${c.name}</span>
       <span class="rar" style="color:${rc}">${realmName(c.realm)}</span></div>
-    <div class="muted small">${realmClass(c.realm)} · Comprehension cap ${cap}${immortal ? ` · Aperture ${apertureUsed(c).toLocaleString()}/${apertureCap(c.realm).toLocaleString()}` : ''}</div>`;
+    <div class="muted small">${realmClass(c.realm)} · Comprehension cap ${cap}${immortal ? ` · Aperture ${apertureUsed(c).toLocaleString()}/${apertureCap(c.realm).toLocaleString()}` : ''}${(c.imprint || 0) > 0 ? ` · ${imprintStars(c.imprint)}` : ''}</div>`;
   const body = rows.length
     ? `<div class="markwrap">${rows.map(({ p, comp, mk, att }) => {
         const col = pathColor(p);
