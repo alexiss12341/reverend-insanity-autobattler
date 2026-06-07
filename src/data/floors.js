@@ -291,7 +291,7 @@ function enemyUnit(floor, name, { boss = false, difficulty = 0, kind = 'beast', 
   // they're the same across tiers — aptitude (by rarity) still caps the usable fraction, like allies.
   const essencePool = Math.round((base.essencePool + apBase) * essenceQualityByRank(rank - 1) * apertureCapacity(apt) * (1 + essPoolPct));
   const essenceRegen = base.essenceRegen * apertureRegenFactor(apt) * (1 + essRcvPct);
-  const CAP = { lifesteal: 0.9, crit: 0.95, dodge: 0.95, critResist: 0.95, statusResist: 0.95, armorPen: 0.95, thorns: 0.6, extra_turn: 0.5 };
+  const CAP = { lifesteal: 0.9, crit: 0.95, critResist: 0.95, statusResist: 0.95, armorPen: 0.95, thorns: 0.6, extra_turn: 0.5 }; // dodge UNCAPPED (parity with allies)
 
   // Aggregate the Gu-derived modifiers for a loadout PREFIX (resonance recomputed from the prefix's
   // same-path count, exactly like the ally subset path), with the prefix's cumulative channel cost.

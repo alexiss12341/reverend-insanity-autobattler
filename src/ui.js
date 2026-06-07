@@ -313,10 +313,19 @@ export function viewBattle() {
   <div class="ctl" id="battle-ctl">${battleControls()}</div>
   <div class="battle-stack">
     <div class="arena">
-      <div class="bside ally"><span class="side-lbl">Your Team</span><div class="bgrid ally" id="side-A"></div><div class="trait-panel ally" id="traits-A"></div></div>
-      <div class="bvs">⚔</div>
-      <div class="bside foe"><span class="side-lbl">Enemies</span><div class="bgrid foe" id="side-B"></div><div class="trait-panel foe" id="traits-B"></div></div>
-      <div class="wave-indicator" id="wave-ind">Wave 1 of 1</div>
+      <div class="arena-top">
+        <div class="bside ally"><span class="side-lbl">Your Team</span><div class="bgrid ally" id="side-A"></div></div>
+        <div class="bvs">⚔</div>
+        <div class="bside foe"><span class="side-lbl">Enemies</span><div class="bgrid foe" id="side-B"></div></div>
+      </div>
+      <div class="arena-meta">
+        <span class="arena-floor" id="arena-floor">塔 Floor 1</span>
+        <span class="wave-indicator" id="wave-ind">Wave 1 of 1</span>
+      </div>
+      <div class="arena-panels">
+        <div class="trait-panel ally" id="traits-A"></div>
+        <div class="trait-panel foe" id="traits-B"></div>
+      </div>
     </div>
     <div class="feedwrap">
       <div class="feed-head"><span class="side-lbl">Combat Feed</span><span class="muted tiny">newest at the top · scroll for history</span></div>
@@ -421,10 +430,17 @@ function unitBlock(u, side, idx) {
 }
 export function setArena(allies, foes) { liveArena = { allies, foes }; renderArena(); }
 export function clearArena() { liveArena = null; }
-// "Wave X of Y" badge at the middle-bottom of the arena (Y=1 for single-wave encounters).
+// "Wave X of Y" badge in the arena meta bar (Y=1 for single-wave encounters).
 function setWaveIndicator(cur, total) {
   const el = $('wave-ind'); if (!el) return;
   el.textContent = `Wave ${cur} of ${Math.max(1, total)}`;
+}
+// Which floor the arena is currently showing — the farm floor for the idle preview, or the floor of the
+// fight being animated (set via playTimeline's ctx). Sits beside the wave badge in the meta bar.
+function setArenaFloor(floor, isBoss) {
+  const el = $('arena-floor'); if (!el || floor == null) return;
+  el.textContent = `塔 Floor ${floor}${isBoss ? ' · BOSS' : ''}`;
+  el.classList.toggle('boss', !!isBoss);
 }
 export function renderArena() {
   const a = $('side-A'), b = $('side-B'); if (!a || !b) return;
@@ -445,6 +461,7 @@ export function renderArena() {
   b.innerHTML = foeUnits.map((u, i) => unitBlock(u, 'foe', i)).join('');
   renderTraitPanels(allyUnits, allyAurasFor(allyUnits), foeUnits, enemyWaveAura(enc.waves[0]));
   setWaveIndicator(1, enc.waves.length); // static preview shows the first wave of the farm encounter
+  setArenaFloor(S().farmFloor, isBossFloor(S().farmFloor));
 }
 // Active ally team auras from a list of arena units (each carries line/rarity/realm/name).
 const allyAurasFor = (units) => allyAuraSummary(units || []);
@@ -531,13 +548,14 @@ function lungeVector(ae, te) {
 }
 // Plays a battle timeline produced by resolveEncounter(..., { record:true }): charge bars fill,
 // actors lunge toward their target, HP bars drop with floating damage numbers. Resolves when done.
-export async function playTimeline(tl) {
+export async function playTimeline(tl, ctx = {}) {
   const a = $('side-A'), b = $('side-B'); if (!a || !b || !tl) return;
   const allies = tl.allies.map((u) => ({ ...u, ess: u.essMax }));
   let wave = 0, foes = (tl.waves[0] || []).map((u) => ({ ...u, ess: u.essMax }));
   a.innerHTML = allies.map((u, i) => unitBlock(u, 'ally', i)).join('');
   b.innerHTML = foes.map((u, i) => unitBlock(u, 'foe', i)).join('');
   setWaveIndicator(1, tl.waves.length);
+  setArenaFloor(ctx.floor, ctx.isBoss); // which floor this fight is on (frontier attempt or farm run)
   // per-side Auras & Traits panel: ally auras are fixed for the fight; foe auras swap with each wave.
   renderTraitPanels(allies, tl.allyAuras || [], foes, (tl.waveAuras || [])[0]);
 
@@ -912,7 +930,7 @@ function csAttrBoard(c) {
 }
 function csStatGrid(s) {
   const cell = (k, v) => `<div class="cs-stat"><span class="sk">${k}</span><span class="sv">${v}</span></div>`;
-  const hit = Math.min(0.99, 0.85 + s.hitChance);
+  const hit = 0.85 + s.hitChance;   // 85% base + bonus, UNCAPPED (was min'd at 99%); Hit% − their Evasion% = real landing chance
   return `<div class="cs-statgrid">
     ${cell('Crit Chance', pct(s.crit))}
     ${cell('Crit Damage', '×' + s.critDamage.toFixed(2))}

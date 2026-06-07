@@ -4,7 +4,7 @@ import { state, S, newGame, load, save, deleteSave, listSaves, SLOT_KEYS, active
 import { effectiveStats } from './systems/cultivation.js';
 import { resolveEncounter, fightWallMs } from './systems/battle.js';
 import { attemptBreakthrough } from './systems/cultivation.js';
-import { rollFloorRewards, firstClearEssence, rollFarmEssence, farmEssenceEV, applyDrops, buyResource } from './systems/economy.js';
+import { rollFloorRewards, firstClearEssence, rollFarmEssence, applyDrops, buyResource } from './systems/economy.js';
 import { pull, dismiss, dismissRefund, imprint, imprintCandidates, IMPRINT_CAP, autoImprintAll } from './systems/gacha.js';
 import { buyBoon, reincarnate, soulsAward } from './systems/prestige.js';
 import { craft, upgrade } from './systems/crafting.js';
@@ -134,7 +134,7 @@ async function runBattle() {
       if (verbose) UI.clearLog();                                 // a lone manual attempt starts a fresh feed
       UI.logLine(`— Assaulting Floor ${floor}${enc.isBoss ? ' BOSS' : ''} (${enc.waves.length} wave${enc.waves.length > 1 ? 's' : ''}) —`, auto ? '' : 'rare');
     }
-    await UI.playTimeline(res.timeline);    // animated arena: charge bars, clashes, damage popups
+    await UI.playTimeline(res.timeline, { floor, isBoss: enc.isBoss });    // animated arena: charge bars, clashes, damage popups
     if (verbose) log.forEach((m) => UI.logLine(m)); // dump the full feed after a single manual attempt
   } else {
     await sleep(fightWallMs(res.simTime));   // background: pace by the fight's real duration
@@ -172,7 +172,10 @@ async function runBattle() {
   // immediately update the buttons/labels without waiting for a re-render.
   if (activeTab === 'battle') UI.renderBattleControls();
   save();
-  if (autoChallenge || S().settings.idle || challengeRequested) idleTimer = setTimeout(runBattle, animate ? 350 : 0); // loop
+  // Don't reschedule while the browser tab is hidden — its timers are throttled/frozen, so a live loop
+  // there just crawls. We pause instead and credit an offline-style estimate when the tab returns (see
+  // the visibilitychange handler). The in-flight run that's settling now is the last one until we're back.
+  if (!isHidden() && (autoChallenge || S().settings.idle || challengeRequested)) idleTimer = setTimeout(runBattle, animate ? 350 : 0); // loop
   else if (activeTab === 'battle') UI.render('battle');           // settled: refresh controls + static arena
 }
 
@@ -200,29 +203,95 @@ function toggleAutoChallenge() {
 }
 
 // ---------- offline progress ----------
-function applyOffline() {
-  const elapsed = Date.now() - (S().lastSave || Date.now());
+// Estimate idle-farm gains over an away window by actually SIMULATING fights on the farm floor and
+// rolling the SAME rewards a live clear makes — stones, resource DROPS, and the farm-essence trickle —
+// then totalling them. We sim fight-by-fight (each its own win/loss + reward roll) within a wall-clock
+// budget; if the window affords more clears than we can sim in that budget, we sim a representative
+// batch and SCALE the totals to the full window so a multi-hour absence can't freeze the tab on return.
+// elapsedMs: explicit idle window to credit. Omitted (load path) → derive from the last save; passed
+// (background-tab catch-up) → the time the browser tab spent hidden, since the autosave heartbeat keeps
+// freshening lastSave even while throttled in the background. Returns null if the team can't clear it.
+const OFFLINE_SIM_BUDGET_MS = 250; // max wall-clock we'll spend simulating fights on return
+const OFFLINE_SIM_CAP = 3000;      // hard ceiling on simulated fights regardless of budget
+function applyOffline(elapsedMs) {
+  const elapsed = elapsedMs != null ? elapsedMs : Date.now() - (S().lastSave || Date.now());
   const capped = Math.min(elapsed, 8 * 3600 * 1000);
   if (capped < 8000 || !activeTeam().length) return null;
-  const enc = generateEncounter(S().farmFloor);
-  // sample fights for win rate AND average run duration, then estimate runs over the idle window
-  let wins = 0, totalMs = 0;
-  for (let i = 0; i < 5; i++) { const r = resolveEncounter(enc); if (r.win) wins++; totalMs += fightWallMs(r.simTime); }
-  const rate = wins / 5; if (rate < 0.2) return null;
-  const avgMs = Math.max(700, totalMs / 5);
-  const eff = Math.floor((capped / avgMs) * rate);
-  if (eff < 1) return null;
-  const r = rollFloorRewards(S().farmFloor, enc.isBoss);
-  const stones = r.stones * eff;
-  const ess = Math.round(eff * farmEssenceEV(S().farmFloor, enc.isBoss));
-  S().stones += stones; S().essence += ess;
+  const floor = S().farmFloor;
+  const enc = generateEncounter(floor);
+  // Sim runs until we've covered the whole window (by simulated wall-time) OR hit the budget/cap. Each
+  // run resolves a real fight and, on a win, rolls real rewards — wins/drops vary fight to fight.
+  let simmed = 0, wins = 0, simWallMs = 0, stones = 0, ess = 0;
+  const drops = {};
+  const budgetEnd = Date.now() + OFFLINE_SIM_BUDGET_MS;
+  while (simWallMs < capped && simmed < OFFLINE_SIM_CAP && Date.now() < budgetEnd) {
+    const res = resolveEncounter(enc);
+    simWallMs += Math.max(700, fightWallMs(res.simTime)); // a live run takes this long, so it consumes window
+    simmed++;
+    if (res.win) {
+      wins++;
+      const r = rollFloorRewards(floor, enc.isBoss);
+      stones += r.stones;
+      for (const id in r.drops) drops[id] = (drops[id] || 0) + r.drops[id];
+      ess += rollFarmEssence(floor, enc.isBoss);
+    }
+  }
+  if (!simmed) return null;
+  // If the budget/cap stopped us before the window was covered, scale the batch up to the full run count.
+  const fullRuns = Math.floor(capped / (simWallMs / simmed));
+  const scale = simmed >= fullRuns ? 1 : fullRuns / simmed;
+  if (scale > 1) {
+    wins = Math.round(wins * scale);
+    stones = Math.round(stones * scale);
+    ess = Math.round(ess * scale);
+    for (const id in drops) drops[id] = Math.round(drops[id] * scale);
+  }
+  if (wins < 1) return null; // couldn't clear the floor even once → nothing to credit
+  S().stones += stones;
+  S().essence += ess;
+  applyDrops(drops);
   // (no cultivation XP — breakthroughs are now stone purchases made manually, not auto-leveled)
-  return { eff, stones, ess, hours: (elapsed / 3600000).toFixed(1) };
+  return { eff: wins, stones, ess, drops, hours: (elapsed / 3600000).toFixed(1) };
 }
 
 // ---------- lifecycle ----------
 function startIdle() { if (S() && S().settings.idle && !battleBusy && !idleTimer) idleTimer = setTimeout(runBattle, 0); }
 function stopIdle() { if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; } } // an in-flight run finishes, then won't reschedule
+
+// ---------- background-tab handling ----------
+// Browsers throttle (or fully freeze) setTimeout in hidden tabs, so the setTimeout-driven idle loop
+// stalls when the player switches to another browser tab. Instead of letting it crawl, we PAUSE the loop
+// while hidden and credit an offline-style estimate for the away time when the tab returns — the same
+// model as load-time offline progress, just scoped to the time the tab spent backgrounded.
+const isHidden = () => typeof document !== 'undefined' && document.hidden;
+let hiddenAt = 0;
+function onVisibilityChange() {
+  if (!S()) return;
+  if (isHidden()) {
+    hiddenAt = Date.now();
+    save();          // persist before the tab goes quiet
+    stopIdle();      // cancel the pending tick; any in-flight run settles and then won't reschedule
+    return;
+  }
+  // Tab is back in the foreground: credit the away window, then resume the live loop.
+  const elapsed = hiddenAt ? Date.now() - hiddenAt : 0;
+  hiddenAt = 0;
+  if (elapsed > 0 && S().settings.idle && !battleBusy && !autoChallenge) {  // only catch up if idle farm is on
+    const off = applyOffline(elapsed);
+    if (off) {
+      // human-friendly away duration — tab switches are usually seconds/minutes, where "0.0h" reads broken
+      const secs = elapsed / 1000;
+      const away = secs < 60 ? `${Math.round(secs)}s` : secs < 3600 ? `${Math.round(secs / 60)}m` : `${off.hours}h`;
+      const dropN = Object.values(off.drops).reduce((a, n) => a + n, 0);
+      UI.refreshTop();
+      UI.toast(`Idle catch-up over ~${away}: ${off.eff.toLocaleString()} clears · +${off.stones.toLocaleString()}石${off.ess ? `, +${off.ess.toLocaleString()}✦` : ''}${dropN ? `, +${dropN.toLocaleString()} resources` : ''}`, 4500, 'loot');
+      if (activeTab === 'battle') UI.renderBattleControls();
+      save();
+    }
+  }
+  if (!battleBusy && (autoChallenge || challengeRequested)) runBattle();  // resume a climb / queued attempt
+  else startIdle();                                                       // or just resume passive farming
+}
 
 // Legacy saves predate the attribute system: auto-allocate a balanced pool so existing teams keep
 // their power (they can't reclaim it — no respec — but they won't be crippled). New characters carry
@@ -250,11 +319,16 @@ function startGame(obj, isNew) {
   save();
 }
 function showOffline(off) {
+  const drops = off.drops || {};
+  const dropIds = Object.keys(drops);
+  const dropsLine = dropIds.length
+    ? `• Collected ${dropIds.map((id) => `<b style="color:var(--jade)">${drops[id].toLocaleString()}× ${resourceName(id)}</b>`).join(', ')}<br>`
+    : '';
   UI.showModal(`<h3>While you cultivated away…</h3>
     <div class="body">Over ~<b>${off.hours}h</b> your team auto-farmed Floor ${S().farmFloor}:<br>
-    • Won <b style="color:var(--jade)">${off.eff}</b> encounters<br>
+    • Cleared it <b style="color:var(--jade)">${off.eff.toLocaleString()}</b> times<br>
     • Gathered <b style="color:var(--stone)">${off.stones.toLocaleString()} primeval stones</b> and <b style="color:var(--jade)">${off.ess.toLocaleString()} ✦</b><br>
-    • Advanced cultivation.</div>
+    ${dropsLine}</div>
     <div class="right"><button class="primary" onclick="G.closeModal()">Continue</button></div>`);
   UI.refreshTop();
 }
@@ -653,4 +727,5 @@ window.G = G;
 window.addEventListener('load', () => {
   renderTitle();
   setInterval(() => { if (S()) save(); }, 20000); // autosave heartbeat
+  document.addEventListener('visibilitychange', onVisibilityChange); // pause + catch up across browser-tab switches
 });

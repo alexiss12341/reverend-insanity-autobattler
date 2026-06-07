@@ -95,7 +95,7 @@ export function effectiveStats(ch, activeSet) {
     spd: Math.max(1, Math.round(d.spd * (1 + add.spdPct) * w)),
     lifesteal: Math.min(0.9, Math.max(0, add.lifesteal)),
     crit: Math.min(0.95, Math.max(0, d.critChance + add.crit)),
-    dodge: Math.min(0.95, Math.max(0, d.evasion + add.evasion)),
+    dodge: Math.max(0, d.evasion + add.evasion),         // UNCAPPED — scales past 100% like potency (no 95% pin)
     thorns: Math.max(0, add.thorns),
     essDrain: Math.max(0, lnEssDrain),   // Reaver: fraction of target essence stolen on hit
     dotSpread: Math.max(0, lnDotSpread), // Afflictor: chance to spread the victim's DoTs on a kill

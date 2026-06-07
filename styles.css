@@ -160,27 +160,35 @@ button.mini{font-size:10px;padding:3px 8px;min-width:0;letter-spacing:0.1em}
 .battle-stack{display:flex;flex-direction:column;gap:16px}
 .feedwrap{display:flex;flex-direction:column;gap:8px}
 .feed-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px}
+/* arena = three stacked sections: the battlefield grids, a centred Floor·Wave meta bar, then the
+   per-side Cultivators & Gu panels */
 .arena{border:1px solid var(--line);background:radial-gradient(70% 90% at 50% 30%,rgba(158,27,39,0.06),transparent 70%),var(--bg2);
-  padding:30px 40px;min-height:380px;display:flex;align-items:flex-start;justify-content:center;gap:30px;position:relative;overflow:hidden}
-.arena::before{content:"戦";position:absolute;font-family:var(--cjk);font-weight:900;font-size:340px;color:rgba(233,225,212,0.022);pointer-events:none;z-index:0}
-/* each side fills half the arena; teams hug the outer edges and face across the central battlefield */
+  padding:30px 40px;min-height:380px;display:flex;flex-direction:column;gap:14px;position:relative;overflow:hidden}
+.arena::before{content:"戦";position:absolute;left:50%;top:30px;transform:translateX(-50%);font-family:var(--cjk);font-weight:900;font-size:340px;color:rgba(233,225,212,0.022);pointer-events:none;z-index:0}
+/* the battlefield row: each side fills half, teams hug the outer edges and face across the centre */
+.arena-top{display:flex;align-items:flex-start;justify-content:center;gap:30px;width:100%;position:relative;z-index:1}
 .bside{flex:1 1 0;min-width:0;display:flex;flex-direction:column;gap:12px;position:relative;z-index:1}
 .bside.ally{align-items:flex-start} .bside.foe{align-items:flex-end}
 .bvs{flex:none;font-family:var(--cjk);color:var(--blood);font-size:40px;align-self:center;opacity:.45;z-index:1}
 .bgrid{display:grid;grid-template-columns:repeat(2,minmax(150px,196px));grid-template-rows:repeat(5,minmax(62px,auto));gap:10px}
-/* "Wave X of Y" badge, centred along the arena's bottom edge */
-.wave-indicator{position:absolute;left:50%;bottom:14px;transform:translateX(-50%);z-index:2;
-  font-family:var(--mono);font-size:11px;letter-spacing:.22em;text-transform:uppercase;color:var(--bone-dim);
-  background:rgba(8,6,5,0.72);border:1px solid var(--line);padding:6px 16px;white-space:nowrap}
+/* centred meta bar: current floor + "Wave X of Y", sitting just before the Cultivators & Gu details */
+.arena-meta{display:flex;align-items:center;justify-content:center;gap:12px;width:100%;position:relative;z-index:2}
+.arena-floor,.wave-indicator{font-family:var(--mono);font-size:11px;letter-spacing:.22em;text-transform:uppercase;
+  background:rgba(8,6,5,0.72);padding:6px 16px;white-space:nowrap}
+.wave-indicator{color:var(--bone-dim);border:1px solid var(--line)}
+.arena-floor{color:var(--stone);border:1px solid rgba(199,154,69,0.4)}
+.arena-floor.boss{color:#e7a7ad;border-color:rgba(200,49,60,0.55);background:rgba(158,27,39,0.14)}
 .side-lbl{font-family:var(--mono);font-size:10px;letter-spacing:.24em;color:var(--muted);text-transform:uppercase}
-/* per-side "Auras & Traits" panel under each team's grid — who carries what, and the team auras + sources */
-.trait-panel{width:100%;display:flex;flex-direction:column;gap:2px;margin-top:6px;
+/* per-side "Auras & Traits" panels, side by side below the meta bar */
+.arena-panels{display:flex;gap:30px;width:100%;position:relative;z-index:1}
+/* per-side "Auras & Traits" panel — who carries what, and the team auras + sources */
+.trait-panel{flex:1 1 0;min-width:0;display:flex;flex-direction:column;gap:2px;
   border-top:1px solid var(--line);padding-top:8px}
-.bside.foe .trait-panel{text-align:right}
+.trait-panel.foe{text-align:right}
 .trait-panel .tp-h{font-family:var(--mono);font-size:9px;letter-spacing:.2em;text-transform:uppercase;color:var(--muted);margin:7px 0 2px}
 .trait-panel .tp-h:first-child{margin-top:0}
 .tp-row{display:flex;align-items:flex-start;gap:7px;line-height:1.3}
-.bside.foe .tp-row{flex-direction:row-reverse}
+.trait-panel.foe .tp-row{flex-direction:row-reverse}
 .tp-seal{flex:none;font-family:var(--cjk);font-weight:700;font-size:12px;line-height:1;width:18px;height:18px;
   display:flex;align-items:center;justify-content:center;border:1px solid;border-radius:2px;background:rgba(8,6,5,0.6);margin-top:1px}
 .tp-body{min-width:0}
@@ -195,15 +203,15 @@ button.mini{font-size:10px;padding:3px 8px;min-width:0;letter-spacing:0.1em}
 /* Gu flow HORIZONTALLY (each Gu = a name-over-effect column) and wrap across the panel's width,
    so a loadout reads as a compact row instead of a tall stack. */
 .tp-gu{list-style:none;margin:5px 0 0;padding:0 0 0 25px;display:flex;flex-flow:row wrap;gap:5px 22px}
-.bside.foe .tp-gu{padding:0 25px 0 0;justify-content:flex-end}
+.trait-panel.foe .tp-gu{padding:0 25px 0 0;justify-content:flex-end}
 .tp-gu li{display:flex;flex-direction:column;gap:1px;line-height:1.3;min-width:0;max-width:240px}
 .tp-gu li b{font-family:var(--serif);font-weight:600;font-size:11.5px;color:var(--bone-dim)}
 .tp-gueff{font-family:var(--mono);font-size:9px;color:var(--muted);letter-spacing:.02em}
 .tp-nogu{font-family:var(--mono);font-size:9px;color:var(--muted);padding:2px 0 0 25px;opacity:.7}
-.bside.foe .tp-nogu{padding:2px 25px 0 0}
+.trait-panel.foe .tp-nogu{padding:2px 25px 0 0}
 /* archetype-line bonuses (combat lines fold a personal stat bag into the unit; support lines hint to the aura) */
 .tp-lineeff{font-family:var(--mono);font-size:9px;letter-spacing:.02em;line-height:1.4;padding:3px 0 1px 25px}
-.bside.foe .tp-lineeff{padding:3px 25px 1px 0}
+.trait-panel.foe .tp-lineeff{padding:3px 25px 1px 0}
 .tp-lineeff.muted{color:var(--muted)}
 .side{margin-bottom:14px}
 
