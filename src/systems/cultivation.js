@@ -35,7 +35,12 @@ function applyEffect(e, mB, mA, add) {
 // Returns combat-ready stats + battle-effect bundle. Base stats DERIVE from the 5 attributes; each
 // Gu's SIGNED effects (affinity ×1.10 already baked in at generation) layer on, scaled by path
 // mastery, then wounds/prestige. Multi-effect Gu contribute every line; status-Gu add inflict riders.
-export function effectiveStats(ch) {
+// `activeSet` (optional Set of equipped uids) gates which Gu are CHANNELLED: when supplied, only those
+// uids contribute effects/essCost/resonance — letting the battle engine compute the stat profile for a
+// partially-essence-starved loadout (the un-channelled Gu vanish entirely, incl. their HP/aperture). When
+// omitted, the FULL loadout applies (every other caller — UI, economy, idle preview — passes nothing).
+export function effectiveStats(ch, activeSet) {
+  const guOn = (uid) => !activeSet || activeSet.has(uid); // un-channelled (essence-starved) Gu drop out
   const a = {}; for (const k of ATTR_KEYS) a[k] = effAttr(ch, k);
   const d = deriveStats(a);
   const add = { atkPct: 0, defPct: 0, hpPct: 0, spdPct: 0, essPoolPct: 0, essRcvPct: 0, regenPct: 0,
@@ -46,11 +51,12 @@ export function effectiveStats(ch) {
   const cultRank = rankOf(ch.realm) + 1; // wielder rank 1-9 → discounts low Gu, surcharges high Gu
 
   const pathCount = {};
-  for (const uid of ch.gu) { const gu = guOf(uid); if (gu) pathCount[gu.daoPath] = (pathCount[gu.daoPath] || 0) + 1; }
+  for (const uid of ch.gu) { if (!guOn(uid)) continue; const gu = guOf(uid); if (gu) pathCount[gu.daoPath] = (pathCount[gu.daoPath] || 0) + 1; }
   let essCost = 0;
   const guAmp = 1 + lineGuAmp(ch); // Adept line: amplifies EVERY Gu's effect (path-agnostic)
 
   for (const uid of ch.gu) {
+    if (!guOn(uid)) continue;
     const gu = guOf(uid); if (!gu) continue;
     const path = gu.daoPath;
     essCost += guEssenceCostFor(gu, cultRank);

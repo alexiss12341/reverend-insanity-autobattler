@@ -417,6 +417,22 @@ button.mini{font-size:10px;padding:3px 8px;min-width:0;letter-spacing:0.1em}
 .gu-ess{font-family:var(--mono);font-size:10.5px;color:var(--essence);letter-spacing:.04em;line-height:1.6}
 .gu-card .gu-ess{display:block;margin-top:7px;position:relative;z-index:1}
 .gu-foot{margin-top:13px;padding-top:11px;border-top:1px solid var(--line);font-family:var(--mono);font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--jade);position:relative;z-index:1}
+/* Channel PRIORITY (slot order) — badge + reorder controls + starved state. Slot order = the order Gu
+   light up in battle until essence runs out; "starved" Gu fall past the full-aperture budget. */
+.gu-prio{font-family:var(--mono);font-size:9px;font-weight:700;letter-spacing:.06em;padding:2px 5px;border-radius:2px;
+  border:1px solid var(--jade-dim);color:var(--jade);background:rgba(63,158,116,0.1);margin-right:6px;vertical-align:middle}
+.gu-prio.starved{border-color:var(--blood);color:var(--blood-bright);background:rgba(158,27,39,0.12)}
+.gu-reorder{display:inline-flex;gap:3px}
+.gu-move{font-family:var(--mono);font-size:11px;line-height:1;padding:2px 5px;border:1px solid var(--line);border-radius:2px;
+  background:transparent;color:var(--bone-dim);cursor:pointer}
+.gu-move:hover{border-color:var(--blood-bright);color:var(--blood-bright)}
+.gu-move.disabled{opacity:.25;pointer-events:none}
+.gu-card.starved{opacity:.62;filter:saturate(.55)}
+.gu-card.starved:hover{opacity:.85}
+.gu-starved{font-family:var(--mono);font-size:9.5px;letter-spacing:.05em;color:var(--blood-bright);margin-top:8px;position:relative;z-index:1}
+.gu-aperture-note{font-family:var(--mono);font-size:11px;line-height:1.6;color:var(--muted);margin-bottom:13px;letter-spacing:.02em}
+.gu-aperture-note b{color:var(--bone)}
+.starved-ink{color:var(--blood-bright)}
 /* Gu TAGS — a Gu's effect kinds; refinement fodder must cover these between them */
 .gu-tags{display:flex;flex-wrap:wrap;gap:4px;margin-top:7px;position:relative;z-index:1}
 .gu-tag{font-family:var(--mono);font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--bone-dim);border:1px solid var(--line);border-radius:2px;padding:1px 6px;white-space:nowrap}

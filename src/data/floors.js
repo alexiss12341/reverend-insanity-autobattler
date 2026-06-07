@@ -262,7 +262,6 @@ function enemyUnit(floor, name, { boss = false, difficulty = 0, kind = 'beast', 
 
   // Gu loadout + traits apply as stat MULTIPLIERS + an effect bundle on top of the derived base.
   // Cultivators/bosses get a Gu kit; beasts get a few WILD Gu. Floors 1-3 stay plain.
-  let atkM = 1, defM = 1, hpM = 1, spdM = 1;
   const cultivator = kind === 'cultivator' || boss;
   const wantGu = cultivator || floor >= 4;
   // gate-boss teams (fullGu) carry a FULL rank-appropriate loadout (every slot) like a serious cultivator;
@@ -271,69 +270,88 @@ function enemyUnit(floor, name, { boss = false, difficulty = 0, kind = 'beast', 
     : cultivator ? Math.min(4, 2 + Math.floor(rank / 3)) : Math.min(2, 1 + Math.floor(rank / 4));
   const loadout = wantGu ? enemyGuLoadout(floor, rank, rng, guCount) : [];
   const affPath = (loadout[0] && loadout[0].daoPath) || themePath(name); // DAO PATH AFFINITY trait (its theme path)
-  const samePath = loadout.filter((g) => g.daoPath === affPath).length;  // same-path count → RESONANCE
-  const reso = enemyResonance(samePath);                                 // stacking one path pays off (like allies)
-  const rateFx = {}, riders = []; let regenFrac = 0, guAtkM = 1; // guAtkM = Gu-only atk mult (channel floor)
   const RATE_MAP = { crit: 'crit', critDmg: 'critDamage', critRes: 'critResist', statusRes: 'statusResist',
     evasion: 'dodge', hit: 'hitChance', armorPen: 'armorPen', lifesteal: 'lifesteal', thorns: 'thorns',
     potency: 'potency', lucky: 'luckyHit' };
-  for (const gu of loadout) {
-    const amp = gu.daoPath === affPath ? AFFINITY_EFFECT_MULT * reso : 1; // affinity (+10%) × resonance on its path
-    for (const e of (gu.effects || [])) {
-      const k = e.kind, v = (e.value || 0) * amp;
-      if (k === 'status') riders.push({ type: e.status, base: e.chance, dur: e.dur, mag: e.dot });
-      else if (k === 'atk') { atkM *= 1 + v; guAtkM *= 1 + v; }
-      else if (k === 'def') defM *= 1 + v;
-      else if (k === 'hp') hpM *= 1 + v;
-      else if (k === 'spd') spdM *= 1 + v;
-      else if (k === 'regen') regenFrac += v;
-      else if (RATE_MAP[k]) rateFx[RATE_MAP[k]] = (rateFx[RATE_MAP[k]] || 0) + v;
-      // essPool/essRcv: not modelled for enemy Gu lines
-    }
-  }
-  if (cultivator) {
-    // cultivators are inherently better-honed than wild beasts of the same role (deepens with rank)
-    const gt = Math.max(1, Math.min(6, 1 + Math.floor(rank * 0.7)));
-    atkM *= 1.10 + gt * 0.02; defM *= 1.14 + gt * 0.03; hpM *= 1.08 + gt * 0.02;
-  }
 
-  // TIERED LINE trait (archetype) at this unit's RARITY, chosen by the floor's squad theme for its role —
-  // folded into the SAME stat mults / combat-rate adds allies use (lineEffects bag). Support-line auras
-  // are applied later at the wave level (applyEnemyAura). Essence %/apBase fold into the pool below.
+  // CONSTANT (non-Gu) modifiers — identical across every channel tier. Cultivator honing + the squad's
+  // TIERED LINE trait fold into the SAME stat mults / combat-rate adds allies use; line essence %/apBase
+  // feed the pool. (Support-line auras are applied later, at the wave level, by applyEnemyAura.)
+  let cAtk = 1, cDef = 1, cHp = 1;
+  if (cultivator) {
+    const gt = Math.max(1, Math.min(6, 1 + Math.floor(rank * 0.7)));
+    cAtk = 1.10 + gt * 0.02; cDef = 1.14 + gt * 0.03; cHp = 1.08 + gt * 0.02;
+  }
   const lineId = squad.lines[role] || null;
   const lb = (lineId && LINES[lineId] && LINES[lineId].tiers) ? LINES[lineId].tiers[rarity] : null;
-  let essPoolPct = 0, essRcvPct = 0, apBase = 0;
-  if (lb) {
-    atkM *= 1 + (lb.atkPct || 0); defM *= 1 + (lb.defPct || 0); hpM *= 1 + (lb.hpPct || 0); spdM *= 1 + (lb.spdPct || 0);
-    for (const k in RATE_MAP) if (lb[k]) rateFx[RATE_MAP[k]] = (rateFx[RATE_MAP[k]] || 0) + lb[k];
-    essPoolPct = lb.essPoolPct || 0; essRcvPct = lb.essRcvPct || 0; apBase = lb.apBase || 0;
-  }
-
-  const maxHp = Math.round(base.maxHp * hpM);
-  let atk = Math.round(base.atk * atkM);
-  const atkBase = Math.round(base.atk * atkM / guAtkM); // atk WITHOUT the Gu atk% (the essence-channel floor)
-
-  // effects: attribute-derived combat block + themed beast/boss effects + Gu + line effects. The derived
-  // %s feed the battle engine's roll pipeline, so enemies resolve hits exactly like allies.
-  const effects = enemyEffects(floor, name, boss, maxHp);
-  effects.crit = (effects.crit || 0) + base.critChance;
-  effects.dodge = (effects.dodge || 0) + base.evasion;
-  effects.hitChance = base.hitChance;
-  effects.critDamage = base.critDamage;
-  effects.critResist = base.critResist;
-  effects.armorPen = base.armorPen;
-  effects.luckyHit = base.luckyHit;
-  effects.potency = base.potency;            // INT-derived status potency — was dropped; now parity with allies
-  effects.statusResist = base.statusResist;  // CON-derived status resist — was dropped; now parity with allies
-  effects.inflicts = riders; // one rider per equipped status-Gu effect (declared chance/dot/dur)
-  if (lb && lb.dotSpread) effects.dotSpread = (effects.dotSpread || 0) + lb.dotSpread;   // Afflictor extra
-  if (lb && lb.essDrain) effects.essDrain = (effects.essDrain || 0) + lb.essDrain;       // Reaver extra
-  for (const k in rateFx) effects[k] = (effects[k] || 0) + rateFx[k];
-  if (regenFrac) effects.regen = (effects.regen || 0) + Math.round(regenFrac * maxHp);
-  // Caps mirror the ally clamps in cultivation.js effectiveStats (dodge/critResist/statusResist/armorPen
-  // all 0.95) so both sides resolve identically; thorns/extra_turn are enemy-only legacy knobs.
+  const lineRate = {}; let essPoolPct = 0, essRcvPct = 0, apBase = 0;
+  if (lb) { for (const k in RATE_MAP) if (lb[k]) lineRate[RATE_MAP[k]] = (lineRate[RATE_MAP[k]] || 0) + lb[k];
+    essPoolPct = lb.essPoolPct || 0; essRcvPct = lb.essRcvPct || 0; apBase = lb.apBase || 0; }
+  // aperture pool/regen carry NO Gu contribution for enemies (Gu lines don't grant essPool/essRcv), so
+  // they're the same across tiers — aptitude (by rarity) still caps the usable fraction, like allies.
+  const essencePool = Math.round((base.essencePool + apBase) * essenceQualityByRank(rank - 1) * apertureCapacity(apt) * (1 + essPoolPct));
+  const essenceRegen = base.essenceRegen * apertureRegenFactor(apt) * (1 + essRcvPct);
   const CAP = { lifesteal: 0.9, crit: 0.95, dodge: 0.95, critResist: 0.95, statusResist: 0.95, armorPen: 0.95, thorns: 0.6, extra_turn: 0.5 };
-  for (const k in CAP) if (effects[k]) effects[k] = Math.min(effects[k], CAP[k]);
+
+  // Aggregate the Gu-derived modifiers for a loadout PREFIX (resonance recomputed from the prefix's
+  // same-path count, exactly like the ally subset path), with the prefix's cumulative channel cost.
+  const guAgg = (prefix) => {
+    const rate = {}, riders = []; let aM = 1, dM = 1, hM = 1, sM = 1, regenFrac = 0, cost = 0;
+    const reso = enemyResonance(prefix.filter((g) => g.daoPath === affPath).length); // same-path count → RESONANCE
+    for (const gu of prefix) {
+      cost += guEssenceCostFor(gu, rank);
+      const amp = gu.daoPath === affPath ? AFFINITY_EFFECT_MULT * reso : 1; // affinity (+10%) × resonance on its path
+      for (const e of (gu.effects || [])) {
+        const k = e.kind, v = (e.value || 0) * amp;
+        if (k === 'status') riders.push({ type: e.status, base: e.chance, dur: e.dur, mag: e.dot });
+        else if (k === 'atk') aM *= 1 + v;
+        else if (k === 'def') dM *= 1 + v;
+        else if (k === 'hp') hM *= 1 + v;
+        else if (k === 'spd') sM *= 1 + v;
+        else if (k === 'regen') regenFrac += v;
+        else if (RATE_MAP[k]) rate[RATE_MAP[k]] = (rate[RATE_MAP[k]] || 0) + v;
+      }
+    }
+    return { rate, riders, aM, dM, hM, sM, regenFrac, cost };
+  };
+  // Build the enemy's stat/effect profile from its loadout. Gu → cultivator → line multipliers apply in
+  // that order (matching the old single-pass build). NOTE: per-Gu essence gating is PLAYER-ONLY for now —
+  // enemies always field their FULL loadout (no channel ladder is emitted), so the battle engine resolves
+  // them on a single full-loadout tier. `buildTier` is written to take a prefix so the ladder can be
+  // re-enabled for foes later by emitting `loadout.slice(0,k)` tiers, but today it's only called once.
+  const buildTier = (prefix) => {
+    const g = guAgg(prefix);
+    // build each combined multiplier (Gu × cultivator × line) FIRST, then multiply base once — the exact
+    // association the old single-pass build used, so the full-loadout tier is byte-identical to before.
+    let aM = g.aM * cAtk, dM = g.dM * cDef, hM = g.hM * cHp, sM = g.sM;
+    if (lb) { aM *= 1 + (lb.atkPct || 0); dM *= 1 + (lb.defPct || 0); hM *= 1 + (lb.hpPct || 0); sM *= 1 + (lb.spdPct || 0); }
+    const maxHp = Math.round(base.maxHp * hM);
+    const atk = Math.round(base.atk * aM);
+    const def = Math.round(base.def * dM);
+    const spd = Math.max(1, Math.round(base.spd * sM));
+    // effects: attribute-derived combat block + themed beast/boss effects + Gu + line effects. The derived
+    // %s feed the battle engine's roll pipeline, so enemies resolve hits exactly like allies.
+    const effects = enemyEffects(floor, name, boss, maxHp);
+    effects.crit = (effects.crit || 0) + base.critChance;
+    effects.dodge = (effects.dodge || 0) + base.evasion;
+    effects.hitChance = base.hitChance;
+    effects.critDamage = base.critDamage;
+    effects.critResist = base.critResist;
+    effects.armorPen = base.armorPen;
+    effects.luckyHit = base.luckyHit;
+    effects.potency = base.potency;            // INT-derived status potency — parity with allies
+    effects.statusResist = base.statusResist;  // CON-derived status resist — parity with allies
+    effects.inflicts = g.riders; // one rider per CHANNELLED status-Gu effect (declared chance/dot/dur)
+    if (lb && lb.dotSpread) effects.dotSpread = (effects.dotSpread || 0) + lb.dotSpread;   // Afflictor extra
+    if (lb && lb.essDrain) effects.essDrain = (effects.essDrain || 0) + lb.essDrain;       // Reaver extra
+    const rate = { ...g.rate };                          // channelled Gu rates + constant line rates (Gu first,
+    for (const k in lineRate) rate[k] = (rate[k] || 0) + lineRate[k]; // matching the old single rateFx merge)
+    for (const k in rate) effects[k] = (effects[k] || 0) + rate[k];
+    if (g.regenFrac) effects.regen = (effects.regen || 0) + Math.round(g.regenFrac * maxHp);
+    for (const k in CAP) if (effects[k]) effects[k] = Math.min(effects[k], CAP[k]);
+    return { cost: g.cost, atk, def, spd, max: maxHp, essMax: essencePool, essRegen: essenceRegen, fx: effects };
+  };
+  const full = buildTier(loadout); // full loadout only (no per-Gu gating for enemies yet)
 
   const compCap = ENEMY_COMP_CAP[rank - 1];
   const comprehension = Math.min(compCap, Math.round(compCap * jitter(name + floor)));
@@ -349,15 +367,10 @@ function enemyUnit(floor, name, { boss = false, difficulty = 0, kind = 'beast', 
     comprehension, daoMarks, gu: loadout.map((g) => g.name),
     guInfo: loadout.map((g) => ({ name: g.name, eff: effectText(g) })), // name + effect text for the arena traits panel
 
-    maxHp, hp: maxHp, atk, atkBase,
-    def: Math.round(base.def * defM),
-    spd: Math.max(1, Math.round(base.spd * spdM)),
-    // essence pool/regen: aptitude (by rarity) caps the usable APERTURE fraction, exactly like allies —
-    // low-rarity (low-aptitude) foes under-power their Gu channeling, high-rarity sustain a heavy loadout.
-    essencePool: Math.round((base.essencePool + apBase) * essenceQualityByRank(rank - 1) * apertureCapacity(apt) * (1 + essPoolPct)),
-    essenceRegen: base.essenceRegen * apertureRegenFactor(apt) * (1 + essRcvPct),
-    essenceCost: loadout.reduce((s, g) => s + guEssenceCostFor(g, rank), 0),
-    effects,
+    maxHp: full.max, hp: full.max, atk: full.atk, def: full.def, spd: full.spd,
+    essencePool, essenceRegen,
+    essenceCost: full.cost,    // Σ all Gu — battle's enemyCombatant builds a single full-loadout tier from this
+    effects: full.fx,
   };
 }
 

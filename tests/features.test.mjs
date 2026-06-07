@@ -85,7 +85,9 @@ ok(Math.abs(STATUS.frozen.base - (STATUS.stun.base + 0.05)) < 1e-9 && STATUS.fro
   'Frozen lands 5% above Stun, skips actions, and is fire-dispellable');
 state.current = newGame('ts'); const TS = state.current;
 const sm = TS.roster[0];
-sm.attrs = { str: 8, agi: 8, con: 10, int: 24, luck: 4 };          // INT-heavy → high Potency
+// INT-heavy → high Potency AND enough APERTURE to actually channel a T5 status Gu (per-Gu essence gating
+// drops a Gu the wielder can't afford — int 40 keeps the body weak so fights stay long, foes get to act).
+sm.attrs = { str: 8, agi: 8, con: 10, int: 40, luck: 4 };
 TS.guInv.push({ uid: 'gx', guId: 'gu_poison_st_poison_t5' }); sm.gu = ['gx']; // poison status Gu
 ok(effectiveStats(sm).inflicts.some((s) => s.type === 'poison'), 'a poison-path Gu grants its wielder a Poison rider');
 let afflicted = 0;
@@ -97,6 +99,45 @@ ok(effectiveStats(sm).inflicts.some((s) => s.type === 'frozen'), 'an Ice-path Gu
 let froze = 0;
 for (let i = 0; i < 80 && froze < 1; i++) resolveEncounter(generateEncounter(6), (m) => { if (/frozen and cannot act/.test(m)) froze++; });
 ok(froze > 0, 'Frozen foes skip their action');
+
+section('features: per-Gu essence gating');
+{
+  // effectiveStats(ch, activeSet) is the foundation of battle's CHANNEL LADDER: only the Gu in the set
+  // contribute effects / essence cost / HP / aperture — so an essence-starved loadout drops Gu wholesale.
+  state.current = newGame('gate'); const Gst = state.current;
+  const ch = Gst.roster[0];
+  ch.attrs = { str: 40, agi: 10, con: 40, int: 40, luck: 5 };
+  ch.realm = 11; // rank 3 Peak — ample aperture for low-tier Gu
+  const atkId = Object.keys(GU_LIB).find((id) => { const g = GU_LIB[id]; return g.tier <= 3 && (g.effects || []).some((e) => e.kind === 'atk' && e.value > 0) && !(g.effects || []).some((e) => e.kind === 'status'); });
+  // an HP Gu of a DIFFERENT Dao path than the ATK Gu, so same-path resonance doesn't couple their effects
+  const atkPath = atkId && GU_LIB[atkId].daoPath;
+  const hpId = Object.keys(GU_LIB).find((id) => { const g = GU_LIB[id]; return g.tier <= 3 && g.daoPath !== atkPath && (g.effects || []).some((e) => e.kind === 'hp' && e.value > 0); });
+  ok(atkId && hpId, 'found a low-tier ATK Gu and a different-path HP Gu to build a test loadout');
+  Gst.guInv.push({ uid: 'ga', guId: atkId }, { uid: 'gh', guId: hpId });
+  ch.gu = ['ga', 'gh'];
+  const bare = effectiveStats(ch, new Set());        // channel NO Gu = bare-handed attribute profile
+  const justAtk = effectiveStats(ch, new Set(['ga'])); // channel only the ATK Gu (slot 1)
+  const justHp = effectiveStats(ch, new Set(['gh']));
+  const full = effectiveStats(ch);                   // full loadout (no filter)
+  ok(bare.essenceCost === 0, 'channelling no Gu costs no essence');
+  ok(justAtk.atk > bare.atk, 'channelling the ATK Gu raises ATK above the bare-handed swing');
+  ok(justAtk.atk === full.atk, 'dropping the (non-ATK) HP Gu leaves ATK unchanged — effects are per-Gu, not blended');
+  ok(full.maxHp > justAtk.maxHp, 'dropping the HP Gu lowers Max HP — HP is gated per-Gu, not structural');
+  ok(Math.abs(full.essenceCost - (justAtk.essenceCost + justHp.essenceCost)) < 1e-9, 'full channel cost = sum of each Gu\'s cost (cumulative prefix)');
+}
+{
+  // The gating THRESHOLD: a rank-1 wielder over-reaching with a T5 Gu can't channel it; raising aperture
+  // (INT) lets the same wielder sustain it. (Battle picks the largest prefix whose cost ≤ current essence.)
+  state.current = newGame('gate2'); const G2 = state.current;
+  const w = G2.roster[0];
+  w.attrs = { str: 8, agi: 8, con: 10, int: 24, luck: 4 };
+  G2.guInv.push({ uid: 'gi', guId: 'gu_ice_st_frozen_t5' }); w.gu = ['gi'];
+  const starved = effectiveStats(w, new Set(['gi']));
+  ok(starved.essencePool < starved.essenceCost, 'a rank-1 wielder over-reaching with a T5 Gu cannot channel it (aperture < cost)');
+  w.attrs = { str: 8, agi: 8, con: 10, int: 40, luck: 4 };
+  const fed = effectiveStats(w, new Set(['gi']));
+  ok(fed.essencePool >= fed.essenceCost, 'raising aperture (INT) lets the same wielder sustain the T5 Gu');
+}
 
 section('features: path-bound Gu recipes');
 const allGu = guList();

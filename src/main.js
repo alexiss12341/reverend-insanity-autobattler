@@ -607,6 +607,16 @@ const G = {
   openGuPicker,
   equipGu(charId, slot, uid) { const c = S().roster.find((x) => x.id === charId); c.gu[slot] = uid; UI.closeModal(); UI.render(activeTab === 'battle' ? 'team' : activeTab); save(); },
   unequipGu(charId, slot) { const c = S().roster.find((x) => x.id === charId); c.gu.splice(slot, 1); UI.closeModal(); UI.render(activeTab === 'battle' ? 'team' : activeTab); save(); },
+  // Reorder a Gu's channel PRIORITY (slot order): swap it with the adjacent equipped Gu (skipping empty
+  // slots). dir = -1 raises priority (fires earlier when essence is tight), +1 lowers it.
+  moveGu(charId, slot, dir) {
+    const c = S().roster.find((x) => x.id === charId); if (!c) return;
+    let j = slot + dir;
+    while (j >= 0 && j < c.gu.length && !c.gu[j]) j += dir; // skip empties to the nearest equipped slot
+    if (j < 0 || j >= c.gu.length || !c.gu[j]) return;       // no neighbour that way → already at the end
+    const t = c.gu[slot]; c.gu[slot] = c.gu[j]; c.gu[j] = t;
+    UI.render(activeTab === 'battle' ? 'team' : activeTab); save();
+  },
   // One-time bonus for completing EVERY First-Steps tutorial goal. Idempotent — the persistent
   // onboarding.rewarded flag guards it, so re-arming the guide (or repeated renders) can't farm it.
   // Fires from UI.render (manual final steps) and the battle-win path (finishing via idle farming);

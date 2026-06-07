@@ -928,15 +928,41 @@ function csStatGrid(s) {
     ${cell('Essence', s.essencePool + ' (+' + s.essenceRegen.toFixed(1) + ')')}
   </div>`;
 }
-// Gu loadout as cards (filled slots + empty slots), each opening the equip picker.
+// Gu loadout as cards (filled slots + empty slots), each opening the equip picker. Slot order is the
+// battle CHANNEL PRIORITY: each action lights Gu top-down until essence runs out, so we mark each Gu's
+// priority + whether the full aperture sustains it, and offer ▲▼ to reprioritise (G.moveGu).
 function csGuLoadout(c) {
+  const rank = rankOf(c.realm) + 1;
+  const pool = effectiveStats(c).essencePool;            // full-aperture essence pool (all Gu lit)
+  // equipped slots in order = priority; running cumulative cost vs the pool = the sustained prefix
+  const filled = [];
+  for (let i = 0; i < guSlotsOf(c); i++) if (c.gu[i]) filled.push(i);
+  const meta = {}; let cum = 0;
+  filled.forEach((slot, idx) => {
+    const g = guOf(c.gu[slot]);
+    cum += g ? guEssenceCostFor(g, rank) : 0;
+    meta[slot] = { priority: idx + 1, sustained: cum <= pool + 1e-9, cumCost: Math.round(cum) };
+  });
+  const sustainedCount = filled.filter((s) => meta[s].sustained).length;
+  const lastSlot = filled.length ? filled[filled.length - 1] : -1;
+
   const cards = Array.from({ length: guSlotsOf(c) }).map((_, i) => {
     const gu = c.gu[i] ? guOf(c.gu[i]) : null;
     if (!gu) return `<div class="gu-card empty" onclick="G.openGuPicker('${c.id}',${i})">＋ Empty Gu Slot ${i + 1}</div>`;
     const col = pathColor(gu.daoPath);
-    const baseEss = guEssenceCost(gu), effEss = Math.round(guEssenceCostFor(gu, rankOf(c.realm) + 1));
+    const baseEss = guEssenceCost(gu), effEss = Math.round(guEssenceCostFor(gu, rank));
     const essCol = effEss < baseEss ? '#6fcf97' : effEss > baseEss ? '#e06c6c' : ''; // green = discount, red = surcharge
     const essArrow = effEss < baseEss ? ' ▼' : effEss > baseEss ? ' ▲' : '';
+    const m = meta[i];
+    const prio = `<span class="gu-prio${m.sustained ? '' : ' starved'}" title="${m.sustained
+      ? `Channel priority ${m.priority} — lit at full aperture (needs ◇${m.cumCost} of ◇${pool})`
+      : `Channel priority ${m.priority} — STARVED: needs ◇${m.cumCost} but your aperture holds only ◇${pool}`}">P${m.priority}</span>`;
+    const upBtn = m.priority > 1
+      ? `<button class="gu-move" title="Raise channel priority" onclick="event.stopPropagation();G.moveGu('${c.id}',${i},-1)">▲</button>`
+      : '<span class="gu-move disabled">▲</span>';
+    const dnBtn = i !== lastSlot
+      ? `<button class="gu-move" title="Lower channel priority" onclick="event.stopPropagation();G.moveGu('${c.id}',${i},1)">▼</button>`
+      : '<span class="gu-move disabled">▼</span>';
     // Ascension control: only immortal artifacts (byTier) below peak rank ascend; feeds the NEXT rank's
     // resources via crafting.upgrade. Sits inside the clickable card → stopPropagation so it never opens
     // the equip picker. (Disabled state is a span, since a disabled <button> would let the click bubble.)
@@ -948,18 +974,24 @@ function csGuLoadout(c) {
         ? `<button class="gu-ascend" style="margin-top:8px;width:100%;font-size:11px;border-color:${col};color:${col}" title="${esc(`Ascend to Tier ${up.next} — ${cost}`)}" onclick="event.stopPropagation();G.upgradeGu('${ouid}')">✦ Ascend → T${up.next}</button>`
         : `<div class="gu-ascend disabled" style="margin-top:8px;text-align:center;font-size:10px;padding:4px;border:1px solid var(--line);border-radius:4px;opacity:.55" title="${esc(up.reasons.join(' '))}" onclick="event.stopPropagation()">✦ Ascend → T${up.next} (need materials)</div>`;
     }
-    return `<div class="gu-card" style="cursor:pointer" onclick="G.openGuPicker('${c.id}',${i})">
-      <div class="gu-top"><span><b class="tierbadge" style="color:var(--t${gu.tier});border-color:var(--t${gu.tier})">T${gu.tier}</b>${isUnique(gu) ? ' <span class="pill unique">UNIQUE</span>' : ''}</span>
-        <span style="color:${col}">${pathName(gu.daoPath)}</span></div>
+    const starvedTag = m.sustained ? ''
+      : '<div class="gu-starved" title="Beyond your aperture\'s reach at full essence — raise its priority (▲), drop pricier Gu above it, or grow your aperture (INT / rank / aptitude)">✕ starved · stays dark when essence is tight</div>';
+    return `<div class="gu-card${m.sustained ? '' : ' starved'}" style="cursor:pointer" onclick="G.openGuPicker('${c.id}',${i})">
+      <div class="gu-top"><span>${prio} <b class="tierbadge" style="color:var(--t${gu.tier});border-color:var(--t${gu.tier})">T${gu.tier}</b>${isUnique(gu) ? ' <span class="pill unique">UNIQUE</span>' : ''}</span>
+        <span class="gu-reorder">${upBtn}${dnBtn}</span></div>
       <div class="gu-glyph" style="color:${col}">${pathCjk(gu.daoPath)}</div>
       <div class="gu-name">${gu.name}</div>
       <div class="gu-eff">${effectText(gu)}</div>
-      <div class="gu-ess"${essCol ? ` style="color:${essCol}"` : ''} title="base ${baseEss}/use · rank ${rankOf(c.realm) + 1} wielder vs T${gu.tier} Gu">◇ Essence · ${effEss}/use${essArrow}</div>
+      <div class="gu-ess"${essCol ? ` style="color:${essCol}"` : ''} title="base ${baseEss}/use · rank ${rank} wielder vs T${gu.tier} Gu">◇ Essence · ${effEss}/use${essArrow}</div>
+      ${starvedTag}
       ${ascBtn}
       <div class="gu-foot" style="color:${col}">${pathCjk(gu.daoPath)} · ${pathName(gu.daoPath)} Path</div>
     </div>`;
   }).join('');
-  return `<div class="gu-cardgrid">${cards}</div>`;
+  const note = filled.length
+    ? `<div class="gu-aperture-note">Gu channel in <b>priority order</b> (P1 first). At full aperture (◇${pool}) you sustain <b>${sustainedCount}/${filled.length}</b> — any <span class="starved-ink">starved</span> Gu stays dark in battle until essence regenerates. Use <b>▲▼</b> to reprioritise.</div>`
+    : '';
+  return `${note}<div class="gu-cardgrid">${cards}</div>`;
 }
 // Dao comprehension + marks for every path the character touches.
 function csDao(c) {
@@ -1674,7 +1706,7 @@ export function viewCodex() {
 
   <section id="cdx-4">${secHead(4, 'Aptitude &amp; the Aperture', 'how much essence you hold')}
   <div class="card"><div class="body"><b>Aptitude does not speed up cultivation.</b> It sets your <b>aperture capacity</b> — the share of the primeval-essence pool you can actually fill, graded <b>D → C → B → A → Extreme</b>. (Fang Yuan opens with an <b>Extreme</b> aperture.)
-  <br><br>Essence powers your Gu in battle: every action channels your Gu loadout's essence cost. If your aperture can't cover a heavy loadout, the <b>extra</b> power your Gu add is dialed back — but a Gu can <b>never</b> make you hit softer than bare-handed. So aptitude caps how much <i>bonus</i> your Gu deliver, while <b>INT</b> and a higher <b>rank</b> grow the pool itself.</div></div></section>
+  <br><br>Essence powers your Gu in battle: every action channels your Gu, paying each one's essence cost. Your Gu fire <b>in loadout order</b> (slot 1 first), and each action lights up as many as your essence can afford — if your aperture can't cover the whole kit, the Gu past that point simply <b>stay dark</b> for that swing (an unlit Gu adds nothing — not its attack, defence, HP, nor status). A Gu rises again the moment your essence recovers. With <b>no</b> Gu lit you still fight bare-handed, so equipping Gu can never make you weaker. Put your most important Gu in the <b>early slots</b>; aptitude (aperture) and <b>INT</b>/<b>rank</b> decide how deep into the loadout you can sustain.</div></div></section>
 
   <section id="cdx-5">${secHead(5, 'Gu — One Gu, One Power', 'your equipment')}
   <div class="card"><div class="body">A Gu is a living treasure that does exactly <b>one</b> thing — only its strength scales with its <b>tier (1–10)</b>. Tiers <b>1–5 are common</b> (you may own many); tiers <b style="color:var(--t6)">6–10 are unique</b> — a single copy exists in the entire world.

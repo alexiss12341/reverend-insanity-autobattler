@@ -26,43 +26,88 @@ const guInfoFor = (ch) => ((ch && ch.gu) || []).map((uid) => {
 }).filter(Boolean);
 
 const THRESHOLD = 1000; // movement gauge cap
-// Essence (aperture) economy — GATES combat. Each action a combatant pays its loadout channel cost
-// (essCost = Σ Gu tier costs); if its aperture (essencePool, scaled by aptitude's capacity %) can't
-// cover that cost, the Gu under-channel — the channel factor drops toward ESS_BROKE_FLOOR. CRUCIALLY
-// that factor scaps only the GU-ADDED attack, NOT the unaided base swing (see effAtk + atkBase), so a
-// starved loadout merely under-delivers its bonus — equipping Gu can NEVER make a unit hit softer than
-// fighting bare-handed. Essence regenerates at essRegen × this scale per unit of gauge-time; since it
-// starts full and refills, the steady channel factor ≈ min(1, essencePool / essCost) — i.e. APERTURE
-// CAPACITY (aptitude) is the binding constraint on how much EXTRA a heavy Gu loadout actually delivers.
+// Essence (aperture) economy — GATES combat, per-Gu and ALL-OR-NOTHING. Each combatant carries a
+// `tiers` ladder: tiers[k] is the full stat/effect profile (atk/def/spd/maxHp/aperture/fx) for CHANNELLING
+// the first k Gu of its loadout (k=0 = bare-handed, k=N = the whole kit), with a cumulative essence
+// `cost`. Loadout SLOT ORDER is the priority — Gu fire down the list and stop at the first one essence
+// can't afford (a clean prefix, so as essence regenerates Gu only ever switch back ON, never flicker).
+// Each action `applyChannel` picks the largest affordable prefix from current essence, SWAPS the unit to
+// that tier's profile, and spends that tier's cost. An un-channelled Gu contributes NOTHING — its atk,
+// def, crit, status riders, HP and aperture all vanish — and costs no essence. Lowering Max HP / aperture
+// keeps current HP/essence and only CLAMPS the overflow down to the new (lower) cap. The k=0 tier is the
+// unaided attribute swing, so a fully-starved unit still fights bare-handed (never weaker than no Gu).
+// Essence regenerates at essRegen × this scale per unit of gauge-time, refilling toward the active tier's
+// aperture — so APERTURE CAPACITY (aptitude) still bounds how deep into the loadout a unit can sustain.
 const ESS_REGEN_SCALE = 0.16;
-const ESS_BROKE_FLOOR = 0.4; // floor on the channel factor applied to the GU-ADDED attack (base is never gated)
 const FRONT = 3;        // fallback enemy front-row size if a unit lacks an explicit row
 const BASE_HIT = 0.85;  // every attack starts from an 85% chance to land before Hit/Evasion adjust it
 // Every contested roll-chance (Hit, Crit) is clamped to [1%, 99%] — a max build floors the opposing
 // chance at 1% (near-immunity, never literal 0/100); Lucky Hit is the one roll left unclamped.
 const clampP = (p) => Math.max(0.01, Math.min(0.99, p));
 
+// Defaults for any fx field a unit's effect bundle doesn't supply, so every combatant reads the full set.
+const EMPTY_FX = { lifesteal: 0, crit: 0, dodge: 0, thorns: 0, burn: 0, regen: 0, extra_turn: 0,
+  hitChance: 0, critDamage: 1.5, critResist: 0, armorPen: 0, luckyHit: 0, potency: 0, statusResist: 0,
+  essDrain: 0, dotSpread: 0, inflicts: [] };
+
+// One rung of the CHANNEL LADDER from a stat bundle `s` (an effectiveStats result, or an enemy bundle):
+// the combat profile + cumulative essence `cost` for that Gu prefix. `fx` is the whole bundle (effects
+// read straight off it). Enemy bundles get EMPTY_FX-filled here; ally bundles already carry every field.
+const tierOf = (s, fillFx) => ({ cost: s.essenceCost || 0, atk: s.atk, def: s.def, spd: Math.max(1, s.spd),
+  max: s.maxHp, essMax: s.essencePool || 60, essRegen: s.essenceRegen || 3,
+  fx: fillFx ? { ...EMPTY_FX, ...(s.fx || s) } : (s.fx || s) });
+
+// Build an ally's per-Gu channel ladder: tiers[k] = the effectiveStats profile when only the first k
+// equipped Gu are channelled (slot order = priority). k=0 is the bare-handed attribute swing; k=N the
+// full kit. effectiveStats recomputes HP/aperture/resonance/every effect for each subset, so a dropped
+// Gu vanishes wholesale (incl. its HP & aperture contribution).
+function allyTiers(ch) {
+  const equipped = (ch.gu || []).filter(Boolean); // ordered priority list (skip empty slots)
+  const tiers = [];
+  for (let k = 0; k <= equipped.length; k++) tiers.push(tierOf(effectiveStats(ch, new Set(equipped.slice(0, k))), false));
+  return tiers;
+}
+// Initialise a combatant's live combat fields from its FULL (top) tier — units start the fight at full
+// power with brimming HP and aperture, then settle as applyChannel gates them per action.
+function initFromFull(u) {
+  const t = u.tiers[u.tiers.length - 1];
+  u.atk = t.atk; u.def = t.def; u.spd = Math.max(1, t.spd); u.fx = t.fx;
+  u.max = t.max; u.hp = t.max; u.essMax = t.essMax; u.essRegen = t.essRegen; u.ess = t.essMax;
+  u.activeGu = u.tiers.length - 1;
+  return u;
+}
 function allyCombatant(ch, pos) {
-  const s = effectiveStats(ch);
   // `ch` + `actions` let the caller bank per-action Comprehension after the encounter.
   // `side`/`idx` give the UI a stable handle; `row`/`lane` place the unit on the 2×5 board.
-  return { ch, name: ch.name, ally: true, side: 'ally', idx: pos, row: rowOf(ch), lane: laneOf(ch), gauge: 0, hp: s.maxHp, max: s.maxHp, atk: s.atk, atkBase: s.atkBase != null ? s.atkBase : s.atk, def: s.def, spd: Math.max(1, s.spd), fx: s, actions: 0,
-    ess: s.essencePool, essMax: s.essencePool, essRegen: s.essenceRegen, essCost: s.essenceCost || 0 };
+  return initFromFull({ ch, name: ch.name, ally: true, side: 'ally', idx: pos, row: rowOf(ch), lane: laneOf(ch),
+    gauge: 0, actions: 0, tiers: allyTiers(ch) });
 }
 function enemyCombatant(u, pos) {
-  // Defaults for any field the enemy's effect bundle doesn't supply; enemyUnit now derives the full
-  // combat block from attributes (crit, dodge=evasion, hitChance, critDamage, critResist, armorPen,
-  // luckyHit) so allies and foes resolve through the identical pipeline.
-  const base = { lifesteal: 0, crit: 0, dodge: 0, thorns: 0, burn: 0, regen: 0, extra_turn: 0,
-    hitChance: 0, critDamage: 1.5, critResist: 0, armorPen: 0, luckyHit: 0, potency: 0, statusResist: 0,
-    essDrain: 0, dotSpread: 0, inflicts: [] };
-  return {
+  // enemyUnit now bakes a per-Gu channel ladder (`u.tiers`); fall back to a single full-loadout rung for
+  // any unit that lacks one. Each rung's fx is EMPTY_FX-filled so foes resolve through the same pipeline.
+  const tiers = (u.tiers && u.tiers.length ? u.tiers : [tierOf({ essenceCost: u.essenceCost, atk: u.atk, def: u.def,
+    spd: u.spd, maxHp: u.maxHp, essencePool: u.essencePool, essenceRegen: u.essenceRegen, fx: u.effects }, false)])
+    .map((t) => ({ ...t, fx: { ...EMPTY_FX, ...(t.fx || {}) } }));
+  return initFromFull({
     name: u.name, ally: false, side: 'foe', idx: pos, isBoss: u.isBoss,
     row: u.row || (pos < FRONT ? 'front' : 'back'), lane: u.lane != null ? u.lane : pos % FRONT,
-    gauge: 0, hp: u.hp, max: u.maxHp, atk: u.atk, atkBase: u.atkBase != null ? u.atkBase : u.atk, def: u.def, spd: Math.max(1, u.spd),
-    ess: u.essencePool || 60, essMax: u.essencePool || 60, essRegen: u.essenceRegen || 3, essCost: u.essenceCost || 0,
-    fx: { ...base, ...(u.effects || {}) },
-  };
+    gauge: 0, tiers,
+  });
+}
+// Pick the largest affordable Gu prefix from CURRENT essence, swap the unit onto that tier's profile,
+// clamp any HP/essence overflow down to the new (possibly lower) caps, then spend that tier's cost.
+// All-or-nothing per Gu; a fully-starved unit lands on tier 0 (bare-handed) and spends nothing.
+function applyChannel(u) {
+  const tiers = u.tiers; if (!tiers) return;
+  let k = 0;
+  for (let i = tiers.length - 1; i > 0; i--) { if (u.ess + 1e-9 >= tiers[i].cost) { k = i; break; } }
+  const t = tiers[k];
+  u.atk = t.atk; u.def = t.def; u.spd = Math.max(1, t.spd); u.fx = t.fx;
+  u.max = t.max; u.essMax = t.essMax; u.essRegen = t.essRegen;
+  if (u.hp > u.max) u.hp = u.max;        // a dropped HP-Gu lowered Max HP → keep current HP, clamp overflow
+  if (u.ess > u.essMax) u.ess = u.essMax; // a dropped aperture-Gu lowered the pool → clamp overflow
+  u.ess = Math.max(0, u.ess - t.cost);   // pay only the active prefix's channel cost
+  u.activeGu = k;
 }
 // Overall combat power, used only as an aura tiebreaker (atk+def+hp, off pre-aura effectiveStats).
 const auraPower = (u) => (u.atk || 0) + (u.def || 0) + (u.max || 0);
@@ -104,11 +149,24 @@ export function applyTeamAuras(allies) {
       u.cleanseMax = cleanseMaxFor(u.ch.rarity);
     }
   }
+  // Auras are flat pre-battle buffs baked into EVERY tier of each ally's channel ladder (so they survive
+  // applyChannel's per-action profile swap), then the live fields are re-synced from the full tier. A
+  // synthetic combatant without a ladder (unit tests) is buffed on its live fields directly.
   for (const u of allies) {
-    if (atk) { u.atk = Math.round(u.atk * (1 + atk)); u.atkBase = Math.round((u.atkBase != null ? u.atkBase : u.atk) * (1 + atk)); }
-    if (def) u.def = Math.round(u.def * (1 + def));
-    if (spd) u.spd = Math.max(1, Math.round(u.spd * (1 + spd)));
-    if (thorns) u.fx = { ...u.fx, thorns: (u.fx.thorns || 0) + thorns };
+    if (u.tiers) {
+      if (atk || def || spd || thorns) for (const t of u.tiers) {
+        if (atk) t.atk = Math.round(t.atk * (1 + atk));
+        if (def) t.def = Math.round(t.def * (1 + def));
+        if (spd) t.spd = Math.max(1, Math.round(t.spd * (1 + spd)));
+        if (thorns) t.fx = { ...t.fx, thorns: (t.fx.thorns || 0) + thorns };
+      }
+      initFromFull(u);
+    } else {
+      if (atk) u.atk = Math.round(u.atk * (1 + atk));
+      if (def) u.def = Math.round(u.def * (1 + def));
+      if (spd) u.spd = Math.max(1, Math.round(u.spd * (1 + spd)));
+      if (thorns) u.fx = { ...u.fx, thorns: (u.fx.thorns || 0) + thorns };
+    }
   }
   return allies;
 }
@@ -203,25 +261,11 @@ function chooseTarget(actor, foeSide) {
 const DOT_TYPES = Object.keys(STATUS).filter((t) => STATUS[t].dot); // burn/poison/bleed — stored as instance arrays
 const stMag = (u, type) => (u.statuses && u.statuses[type] ? u.statuses[type].mag || 0 : 0);
 const effSpd = (u) => Math.max(1, u.spd * (1 - stMag(u, 'slow')));
-// Essence channel only saps the GU-ADDED attack, never the unaided base — so equipping Gu can never
-// make a unit hit SOFTER than fighting bare-handed (it just under-delivers the Gu's bonus when starved).
-const effAtk = (u) => {
-  const ch = u.channel != null ? u.channel : 1;
-  const base = u.atkBase != null ? u.atkBase : u.atk;
-  const channeled = base + Math.max(0, u.atk - base) * ch;
-  return channeled * (1 - stMag(u, 'weaken'));
-};
+// u.atk already reflects the active Gu prefix (applyChannel set it for this action) — Weaken just scales
+// it down. A starved unit's atk is its bare-handed tier, so equipping Gu can never make it hit softer.
+const effAtk = (u) => u.atk * (1 - stMag(u, 'weaken'));
 const effDef = (u) => u.def * (1 - stMag(u, 'sunder'));
 const frailMult = (u) => 1 + stMag(u, 'frail');
-
-// Pay essence to channel this action's Gu; returns the power factor in [ESS_BROKE_FLOOR, 1].
-// Symmetric for allies & foes (both carry essCost). Spends the channel cost (down to 0).
-function channelFactor(u) {
-  if (!u.essCost) return 1;
-  const f = Math.max(ESS_BROKE_FLOOR, Math.min(1, u.ess / u.essCost));
-  u.ess = Math.max(0, u.ess - u.essCost);
-  return f;
-}
 
 // Fire shatters any fire-dispellable status (Frozen). Returns the labels removed, for logging.
 function dispelByFire(tgt) {
@@ -430,12 +474,12 @@ export function resolveEncounter(encounter, onLog, opts = {}) {
         let ev;
         if (u.hp <= 0) { log(`${u.name} succumbs to affliction.`); ev = { target: null, dmg: 0, crit: false, lucky: false, dodged: false, dot, dots, touched: [...pre] }; }
         else if (stunned) { log(`${u.name} is ${frozen ? 'frozen' : 'stunned'} and cannot act.`); ev = { target: null, dmg: 0, crit: false, lucky: false, dodged: false, stunned: true, frozen, dot, dots, touched: [...pre] }; }
-        else { u.channel = channelFactor(u); ev = takeAction(u, enemySide, log, pre); ev.dot = dot; ev.dots = dots; // pay essence → Gu channel power
+        else { applyChannel(u); ev = takeAction(u, enemySide, log, pre); ev.dot = dot; ev.dots = dots; // gate Gu by essence → this action's active prefix
           if (u.teamHealPct) { const healed = new Set(ev.touched); teamHeal(u, allies, healed); ev.touched = [...healed]; cleanseTeam(u, allies); } } // Mender: heal + cleanse on its action
         actions++;
         if (rec) step.acts.push(serializeAct(u, ev));
         if (!stunned && u.hp > 0 && Math.random() < (u.fx.extra_turn || 0) && sideAlive(enemySide)) {
-          u.channel = channelFactor(u);
+          applyChannel(u);
           const ev2 = takeAction(u, enemySide, log); actions++;
           if (rec) step.acts.push(serializeAct(u, ev2));
         }
