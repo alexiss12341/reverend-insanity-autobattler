@@ -32,7 +32,7 @@ body::before{
 }
 body::after{
   content:"";position:fixed;inset:0;z-index:9998;pointer-events:none;
-  background:radial-gradient(120% 82% at 50% -4%, transparent 56%, rgba(0,0,0,0.5) 100%);
+  background:radial-gradient(ellipse 74% 74% at 50% 50%, transparent 64%, rgba(0,0,0,0.5) 100%);
 }
 
 /* ---------- typography helpers ---------- */
