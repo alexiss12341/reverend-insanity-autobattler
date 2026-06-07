@@ -67,9 +67,10 @@ export function apertureGrade(cap) {
 export const apertureRegenFactor = (aptitude) => (1 + apertureCapacity(aptitude)) / 2;
 
 // THE derivation: attributes (a) → full derived-stat block. Raw stats (HP/ATK/DEF/essence) are LINEAR
-// and carry the realm gulf; % stats diminish toward their cap via the ABSOLUTE half-saturation constant
-// STAT_K, so more of an attribute always = more stat (no realm dilution). Speed is bounded (8..~38) so
-// the ATB gauge never explodes. Roll-chances are NOT clamped here — the battle engine clamps at use.
+// and carry the realm gulf; most % stats (crit/critDmg/resist/armorPen/potency/lucky) diminish toward a
+// cap via the ABSOLUTE half-saturation constant STAT_K. EVASION and HIT CHANCE are the exception — they
+// scale LINEARLY (15% base + 0.25%/AGI, like STR→ATK), uncapped. Speed is bounded (8..~38) so the ATB
+// gauge never explodes. Roll-chances are NOT clamped here — the battle engine clamps the to-hit at use.
 export function deriveStats(a) {
   const str = a.str || 0, agi = a.agi || 0, con = a.con || 0, int = a.int || 0, luck = a.luck || 0;
   const K = STAT_K;
@@ -83,8 +84,8 @@ export function deriveStats(a) {
     critChance: dim(luck, K, 1),
     critDamage: 1.5 + 4.0 * dim(str, K, 1),  // multiplier ~1.5 .. ~5.5
     critResist: dim(con, K, 1),
-    evasion: dim(agi + 0.25 * luck, K, 0.5), // AGI→evasion at HALF rate (asymptotes ~50% from attrs; Gu adds more)
-    hitChance: dim(agi, K, 0.45),            // AGI→hit at HALF rate (+bonus over the 85% base hit)
+    evasion: (15 + agi * 0.25) / 100,        // LINEAR like STR→ATK: 15% base + 0.25% per AGI point (uncapped)
+    hitChance: (15 + agi * 0.25) / 100,      // LINEAR: 15% base + 0.25% per AGI point (+bonus over the 85% base hit)
     armorPen: dim(str, K, 1),
     potency: dim(int, K, 0.9),               // +bonus over a status's base inflict
     statusResist: dim(con, K, 1),
