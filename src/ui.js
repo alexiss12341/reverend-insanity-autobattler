@@ -994,6 +994,7 @@ function csStatGrid(s) {
     ${cell('Armor Pen', pct(s.armorPen))}
     ${cell('Potency', pct(s.potency))}
     ${cell('Status Resist', pct(s.statusResist))}
+    ${cell('Crit Resist', pct(s.critResist))}
     ${cell('Lucky Hit', pct(s.luckyHit))}
     ${cell('Lifesteal', pct(s.lifesteal))}
     ${cell('Thorns', pct(s.thorns))}
