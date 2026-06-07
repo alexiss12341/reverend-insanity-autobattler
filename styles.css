@@ -96,13 +96,17 @@ button.mini{font-size:10px;padding:3px 8px;min-width:0;letter-spacing:0.1em}
 #nav button{position:relative}
 #nav button:hover{background:rgba(208,186,160,0.04);color:var(--bone)}
 #nav button.active{border-left-color:var(--blood-bright);background:linear-gradient(90deg,rgba(158,27,39,0.12),transparent);color:var(--bone)}
-/* nav notification badge (e.g. fighters with unspent attribute points) */
+/* nav notification badges (e.g. fighters with unspent attribute points; duplicate copies to imprint) */
+.navbadges{position:absolute;right:11px;top:50%;transform:translateY(-50%);display:flex;gap:4px;pointer-events:none}
 .navbadge{display:none}
-.navbadge.on{display:grid;place-items:center;position:absolute;right:11px;top:50%;transform:translateY(-50%);
+.navbadge.on{display:grid;place-items:center;
   min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:var(--blood-bright);color:#f3e9da;
   font-family:var(--mono);font-weight:700;font-size:10px;line-height:1;letter-spacing:0;
   box-shadow:0 0 0 3px rgba(200,49,60,0.16);animation:navpulse 1.8s ease-in-out infinite}
+/* duplicate-set badge: brass accent so it reads as a distinct alert from the red unspent-points one */
+.navbadge.dup.on{background:var(--brass);color:#241c0c;box-shadow:0 0 0 3px rgba(176,139,62,0.18);animation:navpulse-dup 1.8s ease-in-out infinite}
 @keyframes navpulse{0%,100%{box-shadow:0 0 0 3px rgba(200,49,60,0.16)}50%{box-shadow:0 0 0 6px rgba(200,49,60,0.0)}}
+@keyframes navpulse-dup{0%,100%{box-shadow:0 0 0 3px rgba(176,139,62,0.20)}50%{box-shadow:0 0 0 6px rgba(176,139,62,0.0)}}
 #content{overflow:auto;padding:0 38px 90px;min-height:0;position:relative}
 
 /* ---------- page header (per tab) ---------- */
@@ -295,6 +299,13 @@ button.mini{font-size:10px;padding:3px 8px;min-width:0;letter-spacing:0.1em}
   color:var(--stone);border:1px solid rgba(199,154,69,0.4);background:rgba(199,154,69,0.08);padding:6px 10px;cursor:pointer;transition:.14s}
 .alloc-note:hover{border-color:var(--stone);background:rgba(199,154,69,0.16);color:#e8c777}
 .member.has-alloc,.teamslot.has-alloc{border-color:rgba(199,154,69,0.5);box-shadow:0 0 0 1px rgba(199,154,69,0.12) inset}
+/* Soul-Imprint duplicate banner (Team tab roster section) */
+.dup-banner{border-color:rgba(176,139,62,0.4);background:linear-gradient(180deg,rgba(176,139,62,0.07),rgba(0,0,0,0.18));margin-bottom:14px}
+.dup-chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:13px}
+.dup-chip{display:flex;align-items:center;gap:8px;text-transform:none;letter-spacing:0;font-family:var(--serif);font-size:13px;
+  padding:7px 11px;border-color:rgba(176,139,62,0.35)}
+.dup-chip:hover:not(:disabled){border-color:var(--brass);background:rgba(176,139,62,0.12);color:var(--bone)}
+.dup-chip .cjk{font-size:15px} .dup-chip .tiny{font-family:var(--mono)}
 .statline{display:flex;gap:16px;font-size:13px;color:var(--muted);margin-top:10px;flex-wrap:wrap;font-family:var(--mono)}
 .statline b{color:var(--bone);font-weight:700} .statline.big{font-size:14px}
 .derived{margin-top:6px;line-height:1.5;font-family:var(--mono);font-size:11px}

@@ -79,6 +79,53 @@ export function imprint(targetId, fodderId) {
   return { ok: true, name: t.name, level: t.imprint };
 }
 
+// ---- Duplicate detection / auto-consolidation ----
+// Groups of same-name, non-player cultivators with ≥2 copies (a "duplicate set"). Each entry is the
+// array of copies sharing that name. Used by the nav badge, the Team-tab banner, and auto-imprint.
+export function duplicateGroups() {
+  const by = new Map();
+  for (const c of S().roster) {
+    if (c.isPlayer) continue;
+    if (!by.has(c.name)) by.set(c.name, []);
+    by.get(c.name).push(c);
+  }
+  return [...by.values()].filter((g) => g.length >= 2);
+}
+// Pick the copy to KEEP from a duplicate set: highest realm, then highest existing imprint, then random.
+function bestKeeper(group) {
+  return group.slice().sort((a, b) =>
+    (b.realm - a.realm) || (((b.imprint || 0) - (a.imprint || 0))) || (Math.random() - 0.5))[0];
+}
+// How many duplicate sets still have an imprint to spend (a keeper below the cap) — the nav-badge count.
+export function imprintableDuplicateCount() {
+  return duplicateGroups().filter((g) => (bestKeeper(g).imprint || 0) < IMPRINT_CAP).length;
+}
+// Consolidate EVERY duplicate set into a single copy: keep the best (highest realm; ties → highest
+// imprint → random) and sacrifice the rest into it, each raising its Soul Imprint by one (capped at
+// IMPRINT_CAP — any overflow copies are left untouched). If a sacrificed copy was on the active team
+// and the keeper wasn't, the keeper inherits that board slot so the team isn't thinned. Returns the
+// number of copies merged and the number of distinct cultivators affected.
+export function autoImprintAll() {
+  let merged = 0, sets = 0;
+  for (const group of duplicateGroups()) {
+    const keeper = bestKeeper(group);
+    if ((keeper.imprint || 0) >= IMPRINT_CAP) continue;
+    let did = 0;
+    for (const f of group) {
+      if (f.id === keeper.id) continue;
+      if ((keeper.imprint || 0) >= IMPRINT_CAP) break;
+      const idx = S().roster.findIndex((c) => c.id === f.id);
+      if (idx < 0) continue;
+      if (f.active && !keeper.active) { keeper.active = true; keeper.row = f.row; keeper.lane = f.lane; }
+      S().roster.splice(idx, 1);
+      keeper.imprint = (keeper.imprint || 0) + 1;
+      merged++; did++;
+    }
+    if (did) sets++;
+  }
+  return { merged, sets };
+}
+
 // Immortal Essence refunded for dismissing a recruit of `rarity` (rarer = bigger refund). Exported so the
 // UI can preview the amount in the dismiss confirmation prompt.
 export const dismissRefund = (rarity) => Math.round(PULL_COST * 0.4 * Math.pow(1.8, rarityTier(rarity) - 1));

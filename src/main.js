@@ -5,7 +5,7 @@ import { effectiveStats } from './systems/cultivation.js';
 import { resolveEncounter, fightWallMs } from './systems/battle.js';
 import { attemptBreakthrough } from './systems/cultivation.js';
 import { rollFloorRewards, firstClearEssence, rollFarmEssence, farmEssenceEV, applyDrops, buyResource } from './systems/economy.js';
-import { pull, dismiss, dismissRefund, imprint, imprintCandidates, IMPRINT_CAP } from './systems/gacha.js';
+import { pull, dismiss, dismissRefund, imprint, imprintCandidates, IMPRINT_CAP, autoImprintAll } from './systems/gacha.js';
 import { buyBoon, reincarnate, soulsAward } from './systems/prestige.js';
 import { craft, upgrade } from './systems/crafting.js';
 import { generateEncounter, isBossFloor, MAX_FLOORS } from './data/floors.js';
@@ -495,6 +495,14 @@ const G = {
     UI.closeModal();
     if (!r.ok) return UI.toast(r.msg);
     UI.toast(`${r.name} → Soul Imprint Lv ${r.level}.`);
+    UI.render(activeTab); UI.refreshTop(); save();
+  },
+  // One-click consolidate every duplicate set: keep the best copy (highest realm), imprint the rest in.
+  autoImprint() {
+    const r = autoImprintAll();
+    if (!r.merged) return UI.toast('No duplicate copies to imprint.');
+    normalizeFormation(); // repair any board slot freed by a sacrificed active duplicate
+    UI.toast(`Soul Imprint · merged ${r.merged} duplicate${r.merged === 1 ? '' : 's'} into ${r.sets} cultivator${r.sets === 1 ? '' : 's'}.`);
     UI.render(activeTab); UI.refreshTop(); save();
   },
   buyBoon(key) {

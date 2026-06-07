@@ -20,7 +20,7 @@ import { affinityPaths, affinityName, AFFINITY_EFFECT_MULT, AFFINITY_COMP_MULT, 
 import { TRIBS_NEEDED, TRIB_THRESHOLD, ASCEND_COST, pending, canAscend, canBecomeVenerable, tierForRank } from './systems/tribulation.js';
 import { isImmortalRealm, MORTAL_PEAK, rankOf, guSlotsOf } from './data/realms.js';
 import { ATTR_KEYS, effAttr, unspentPoints, playerPool, apertureCapacity, apertureGrade, effAptitude, imprintAttrMult } from './data/attributes.js';
-import { imprintCandidates, IMPRINT_CAP } from './systems/gacha.js';
+import { imprintCandidates, IMPRINT_CAP, duplicateGroups, imprintableDuplicateCount } from './systems/gacha.js';
 import { STATUS } from './data/status.js';
 
 const $ = (id) => document.getElementById(id);
@@ -64,6 +64,10 @@ export function refreshTop() {
   const n = activeTeam().filter((c) => unspentPoints(c) > 0).length;
   const badge = $('team-alert');
   if (badge) { badge.textContent = n ? (n > 99 ? '99+' : '' + n) : ''; badge.classList.toggle('on', n > 0); }
+  // nav alert: how many duplicate sets are sitting in the roster ready to Soul Imprint
+  const d = imprintableDuplicateCount();
+  const dup = $('dup-alert');
+  if (dup) { dup.textContent = d ? (d > 99 ? '99+' : '' + d) : ''; dup.classList.toggle('on', d > 0); }
 }
 
 // ---------- tab router ----------
@@ -712,6 +716,33 @@ function activeTeamPanel() {
   for (let i = 0; i < 6; i++) cells.push(active[i] ? activeSlotCard(active[i]) : emptySlotCard(i + 1));
   return `<div class="grid cards teamslots">${cells.join('')}</div>`;
 }
+// Team-tab banner listing every duplicate set in the roster. Each set gets a redirect chip (opens the
+// copy you'd keep/imprint INTO) plus a single Auto-Imprint action that consolidates them all at once.
+function dupBanner() {
+  const groups = duplicateGroups();
+  if (!groups.length) return '';
+  const chips = groups.map((g) => {
+    const keeper = g.slice().sort((a, b) => (b.realm - a.realm) || (((b.imprint || 0) - (a.imprint || 0))))[0];
+    const lvl = keeper.imprint || 0;
+    const rc = rarityColor(keeper.rarity);
+    return `<button class="dup-chip" onclick="G.openChar('${keeper.id}')" title="Open ${esc(keeper.name)}'s sheet to Soul Imprint">
+      <span class="cjk" style="color:${rc}">${charGlyph(keeper) || '魂'}</span>
+      <span>${esc(keeper.name)} <b>×${g.length}</b></span>
+      <span class="muted tiny">${realmName(keeper.realm)}${lvl ? ` · 魂印 ${lvl}` : ''}</span>
+    </button>`;
+  }).join('');
+  const sets = groups.length;
+  return `<div class="card dup-banner">
+    <div class="row start" style="justify-content:space-between;gap:14px;flex-wrap:wrap">
+      <div>
+        <div class="big"><span class="cjk" style="color:var(--brass)">魂印</span> Duplicates ready to imprint</div>
+        <div class="muted small" style="margin-top:4px">${sets} cultivator${sets === 1 ? '' : 's'} ${sets === 1 ? 'has' : 'have'} spare copies. Sacrifice a duplicate to permanently raise the kept copy's attributes &amp; aptitude — open one below, or consolidate them all at once.</div>
+      </div>
+      <button class="primary" onclick="G.autoImprint()">Auto-Imprint All · keep highest realm</button>
+    </div>
+    <div class="dup-chips">${chips}</div>
+  </div>`;
+}
 export function viewTeam() {
   const st = S().settings;
   const sort = TEAM_SORTS[st.teamSort] ? st.teamSort : 'power';
@@ -732,6 +763,7 @@ export function viewTeam() {
   ${secHead(1, 'Active Team', `${activeTeam().length}/6 deployed`)}
   ${activeTeamPanel()}
   ${secHead(2, 'The Roster', `${S().roster.length} cultivators`)}
+  ${dupBanner()}
   ${teamControls(sort, filter, rar, pathF)}
   <div class="grid cards">${cards}</div>`;
 }
