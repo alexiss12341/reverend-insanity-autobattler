@@ -554,6 +554,12 @@ export function renderTraitPanels(allyUnits, allyAuras, foeUnits, foeAuras) {
 
 // ---- animated timeline playback ----
 const _sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// Sleep that bails out within ~100ms once abortTimeline() is raised — used for the long gauge-fill wait
+// so an interrupting attempt/auto-challenge cancels the animation near-instantly even on slow fights.
+async function _sleepAbort(ms) {
+  let waited = 0;
+  while (waited < ms && !_timelineAbort) { const chunk = Math.min(100, ms - waited); await _sleep(chunk); waited += chunk; }
+}
 function dmgPopup(host, text, cls, dy) {
   if (!host) return;
   const d = document.createElement('div'); d.className = 'dmgpop ' + (cls || ''); d.textContent = text;
@@ -571,10 +577,16 @@ function lungeVector(ae, te) {
   const tx = dx - Math.sign(dx || 1) * Math.min(Math.abs(dx), gap);
   return `translate(${Math.round(tx)}px,${Math.round(dy)}px)`;
 }
+// Set true to make an in-flight playTimeline stop ASAP (used when a new floor attempt / auto-challenge
+// interrupts the current fight). Reset at the start of every playback.
+let _timelineAbort = false;
+export function abortTimeline() { _timelineAbort = true; }
 // Plays a battle timeline produced by resolveEncounter(..., { record:true }): charge bars fill,
-// actors lunge toward their target, HP bars drop with floating damage numbers. Resolves when done.
+// actors lunge toward their target, HP bars drop with floating damage numbers. Resolves when done
+// (or early if abortTimeline() was called mid-fight).
 export async function playTimeline(tl, ctx = {}) {
   const a = $('side-A'), b = $('side-B'); if (!a || !b || !tl) return;
+  _timelineAbort = false;
   const allies = tl.allies.map((u) => ({ ...u, ess: u.essMax }));
   let wave = 0, foes = (tl.waves[0] || []).map((u) => ({ ...u, ess: u.essMax }));
   a.innerHTML = allies.map((u, i) => unitBlock(u, 'ally', i)).join('');
@@ -611,6 +623,7 @@ export async function playTimeline(tl, ctx = {}) {
   const LUNGE_OUT = 130, IMPACT_MS = 110, LUNGE_BACK = 110;
 
   for (const step of tl.steps) {
+    if (_timelineAbort) return; // a new attempt/auto-challenge interrupted this fight — bail immediately
     if (step.gauges && step.wave !== wave) {
       wave = step.wave; foes = (tl.waves[wave] || []).map((u) => ({ ...u, ess: u.essMax }));
       b.innerHTML = foes.map((u, i) => unitBlock(u, 'foe', i)).join('');
@@ -626,7 +639,8 @@ export async function playTimeline(tl, ctx = {}) {
         step.essence.ally.forEach((v, i) => drawEss('ally', i, v, dur));
         step.essence.foe.forEach((v, i) => drawEss('foe', i, v, dur));
       }
-      await _sleep(dur);
+      await _sleepAbort(dur);
+      if (_timelineAbort) return; // interrupted during the gauge-fill wait
     }
     for (const act of step.acts || []) {
       const ae = el(act.side, act.i);
@@ -706,16 +720,19 @@ function rosterPaths() {
   for (const c of S().roster) for (const uid of c.gu) { const g = guOf(uid); if (g) set.add(g.daoPath); }
   return [...set].sort((a, b) => pathName(a).localeCompare(pathName(b)));
 }
-function teamControls(sort, filter, rar, pathF) {
+function teamControls(sort, filter, rar, pathF, searchV) {
   const sb = (k) => `<button class="${sort === k ? 'primary' : ''}" onclick="G.setView('teamSort','${k}')">${TEAM_SORTS[k].label}</button>`;
   const fb = (k, label) => `<button class="${filter === k ? 'primary' : ''}" onclick="G.setView('teamFilter','${k}')">${label}</button>`;
   const rarOpts = ['all', ...RARITY_ORDER].map((r) => `<option value="${r}" ${rar === r ? 'selected' : ''}>${r === 'all' ? 'All rarities' : r}</option>`).join('');
   const pathOpts = ['all', ...rosterPaths()].map((p) => `<option value="${p}" ${pathF === p ? 'selected' : ''}>${p === 'all' ? 'All paths' : pathName(p)}</option>`).join('');
+  const filtered = filter !== 'all' || rar !== 'all' || pathF !== 'all' || !!(searchV && searchV.trim());
   return `<div class="teamctl">
     <span class="muted small">Sort</span><div class="viewtoggle">${Object.keys(TEAM_SORTS).map(sb).join('')}</div>
     <span class="muted small">Show</span><div class="viewtoggle">${fb('all', 'All')}${fb('active', 'Active')}${fb('reserve', 'Reserve')}</div>
     <span class="muted small">Rarity</span><select onchange="G.setView('teamRarity',this.value)">${rarOpts}</select>
     <span class="muted small">Path</span><select onchange="G.setView('teamPath',this.value)">${pathOpts}</select>
+    <input class="searchbox" type="text" placeholder="Search cultivators…" value="${esc(searchV || '')}" oninput="G.teamSearch(this.value)">
+    ${filtered ? '<button class="danger" onclick="G.clearTeamFilters()">✕ Clear</button>' : ''}
     <span class="muted small" style="margin-left:auto">${activeTeam().length}/6 active · ${S().roster.length} total</span>
   </div>`;
 }
@@ -794,29 +811,42 @@ function dupBanner() {
     <div class="dup-chips">${chips}</div>
   </div>`;
 }
+// The filtered + sorted roster cards (sort / show / rarity / path / name-search applied). Split out so
+// the search box can repaint just the results (preserving input focus), like the Market.
+function rosterCardsHtml() {
+  const st = S().settings;
+  const sort = TEAM_SORTS[st.teamSort] ? st.teamSort : 'power';
+  const filter = st.teamFilter || 'all';
+  const rar = st.teamRarity || 'all';
+  const pathF = st.teamPath || 'all';
+  const q = (st.teamSearch || '').trim().toLowerCase();
+  let list = S().roster.slice();
+  if (filter === 'active') list = list.filter((c) => c.active);
+  else if (filter === 'reserve') list = list.filter((c) => !c.active);
+  if (rar !== 'all') list = list.filter((c) => c.rarity === rar);
+  if (pathF !== 'all') list = list.filter((c) => c.gu.some((uid) => { const g = guOf(uid); return g && g.daoPath === pathF; }));
+  if (q) list = list.filter((c) => c.name.toLowerCase().includes(q)
+    || realmName(c.realm).toLowerCase().includes(q) || (c.rarity || '').toLowerCase().includes(q));
+  const cmp = TEAM_SORTS[sort].cmp;
+  list.sort((a, b) =>
+    (!!b.isPlayer - !!a.isPlayer) || (!!b.active - !!a.active) || cmp(a, b)); // you, then active, then sort
+  return list.map(memberCard).join('') || '<div class="muted">No cultivators match these filters.</div>';
+}
+export function renderRosterResults() { const h = $('rosterResults'); if (h) h.innerHTML = rosterCardsHtml(); }
 export function viewTeam() {
   const st = S().settings;
   const sort = TEAM_SORTS[st.teamSort] ? st.teamSort : 'power';
   const filter = st.teamFilter || 'all';
   const rar = st.teamRarity || 'all';
   const pathF = st.teamPath || 'all';
-  let list = S().roster.slice();
-  if (filter === 'active') list = list.filter((c) => c.active);
-  else if (filter === 'reserve') list = list.filter((c) => !c.active);
-  if (rar !== 'all') list = list.filter((c) => c.rarity === rar);
-  if (pathF !== 'all') list = list.filter((c) => c.gu.some((uid) => { const g = guOf(uid); return g && g.daoPath === pathF; }));
-  const cmp = TEAM_SORTS[sort].cmp;
-  list.sort((a, b) =>
-    (!!b.isPlayer - !!a.isPlayer) || (!!b.active - !!a.active) || cmp(a, b)); // you, then active, then sort
-  const cards = list.map(memberCard).join('') || '<div class="muted">No cultivators match these filters.</div>';
   return `${pagehead('人', 'Roster · 名册', 'Team & Cultivation',
     'Your <b>active team</b> (up to 6) fights for you — equip their Gu right here. Click any cultivator to open their full design sheet. Arrange battle positions in the <b>阵 Formation</b> tab.')}
   ${secHead(1, 'Active Team', `${activeTeam().length}/6 deployed`)}
   ${activeTeamPanel()}
   ${secHead(2, 'The Roster', `${S().roster.length} cultivators`)}
   ${dupBanner()}
-  ${teamControls(sort, filter, rar, pathF)}
-  <div class="grid cards">${cards}</div>`;
+  ${teamControls(sort, filter, rar, pathF, st.teamSearch || '')}
+  <div class="grid cards" id="rosterResults">${rosterCardsHtml()}</div>`;
 }
 function fmUnit(c) {
   const s = effectiveStats(c);
@@ -1281,7 +1311,7 @@ function viewToggle(key, mode) {
 // Refinery filter bar: Grid/List, a tier toggle (All · T1–T10), a Dao-path dropdown, and two
 // status toggles — "Craftable now" (only Gu you can craft right now) and "Unlocked paths"
 // (hide Gu whose Dao path is locked or below your frontier floor).
-function guControls(mode, tierF, pathF) {
+function guControls(mode, tierF, pathF, searchV) {
   const tb = (t) => `<button class="${String(tierF) === String(t) ? 'primary' : ''}" onclick="G.setView('guTier','${t}')">${t === 'all' ? 'All' : 'T' + t}</button>`;
   const tiers = ['all', 1, 2, 3, 4, 5, 6, 7, 8, 9].map(tb).join('');
   const allPaths = [...new Set(guList().map((g) => g.daoPath))].sort((a, b) => pathName(a).localeCompare(pathName(b)));
@@ -1289,12 +1319,13 @@ function guControls(mode, tierF, pathF) {
   const st = S().settings;
   const craftableOn = !!st.guCraftable, unlockedOn = !!st.guUnlocked;
   const flag = (key, on, label) => `<button class="${on ? 'primary' : ''}" onclick="G.toggleGuFlag('${key}')">${on ? '☑' : '☐'} ${label}</button>`;
-  const filtered = tierF !== 'all' || pathF !== 'all' || craftableOn || unlockedOn;
+  const filtered = tierF !== 'all' || pathF !== 'all' || craftableOn || unlockedOn || !!(searchV && searchV.trim());
   return `<div class="teamctl">
     ${viewToggle('guView', mode)}
     <span class="muted small">Tier</span><div class="viewtoggle wrap">${tiers}</div>
     <span class="muted small">Path</span><select onchange="G.setView('guPath',this.value)">${opts}</select>
     <div class="viewtoggle">${flag('guCraftable', craftableOn, 'Craftable now')}${flag('guUnlocked', unlockedOn, 'Unlocked paths')}</div>
+    <input class="searchbox" type="text" placeholder="Search Gu…" value="${esc(searchV || '')}" oninput="G.guSearch(this.value)">
     ${filtered ? `<button class="danger" onclick="G.clearGuFilters()">✕ Clear</button>` : ''}
   </div>`;
 }
@@ -1356,17 +1387,23 @@ function guCard(gu, owned) {
     </div>
   </div>`;
 }
-export function viewGu() {
+// Refinery results: the path-section list (with bar), filtered by tier / path / flags / name-search.
+// Split out so the search box repaints just this (keeping input focus). A name search auto-expands every
+// matching path section so hits are visible without manual expanding.
+function guResultsHtml() {
   const owned = {};
   S().guInv.forEach((g) => { owned[g.guId] = (owned[g.guId] || 0) + 1; });
   const st = S().settings;
   const tierF = st.guTier || 'all';
   const pathF = st.guPath || 'all';
+  const q = (st.guSearch || '').trim().toLowerCase();
   // apply tier + path filters, then group the survivors by Dao Path.
   const openMap = st.guOpen || {};
   let lib = guList();
   if (tierF !== 'all') lib = lib.filter((gu) => gu.tier === Number(tierF));
   if (pathF !== 'all') lib = lib.filter((gu) => gu.daoPath === pathF);
+  if (q) lib = lib.filter((gu) => gu.name.toLowerCase().includes(q)
+    || pathName(gu.daoPath).toLowerCase().includes(q) || effectText(gu).toLowerCase().includes(q));
   // "Unlocked paths": drop Gu on locked (Supreme) paths or paths past the current frontier floor.
   const pathUnlocked = (pid) => !isPathLocked(pid) && S().frontier >= pathFloorReq(pid);
   if (st.guUnlocked) lib = lib.filter((gu) => pathUnlocked(gu.daoPath));
@@ -1383,17 +1420,17 @@ export function viewGu() {
   });
   // The library is ~5,271 Gu (45 paths × ~117). Rendering every card at once (each runs canCraft) is
   // heavy, so path sections are COLLAPSED by default — only an open section builds its cards. A single
-  // path picked via the filter is auto-expanded (it's already narrowed to one).
+  // path picked via the filter, or an active name search, auto-expands the matching sections.
   const sections = paths.map((pid) => {
     const p = PATH(pid), c = commOf(pid);
     const gus = byPath[pid].sort((a, b) => a.tier - b.tier);
     const single = pathF === pid;
-    const open = single || !!openMap[pid];
+    const open = single || !!q || !!openMap[pid];
     const body = !open ? '' : (mode === 'list'
       ? `<div class="gulist">${gus.map((gu) => guRow(gu, owned)).join('')}</div>`
       : `<div class="gu-cardgrid">${gus.map((gu) => guCard(gu, owned)).join('')}</div>`);
     const caret = single ? '' : `<span class="gucaret">${open ? '▾' : '▸'}</span>`;
-    const head = single
+    const head = (single || q)
       ? '<div class="pathhdr">'
       : `<div class="pathhdr clickable" role="button" tabindex="0" onclick="G.toggleGuPath('${pid}')">`;
     return `<div class="pathsec">
@@ -1405,14 +1442,19 @@ export function viewGu() {
   }).join('') || '<div class="muted" style="margin-top:24px">No Gu match these filters.</div>';
   const anyOpen = Object.keys(openMap).length > 0;
   const bar = pathF === 'all' && paths.length
-    ? `<div class="teamctl"><span class="muted small">${paths.length} paths · ${lib.length.toLocaleString()} Gu — click a path to expand.</span>
-        ${anyOpen ? '<button class="danger" onclick="G.collapseGu()">✕ Collapse all</button>' : ''}</div>`
+    ? `<div class="teamctl"><span class="muted small">${paths.length} paths · ${lib.length.toLocaleString()} Gu${q ? ' match' : ' — click a path to expand'}.</span>
+        ${anyOpen && !q ? '<button class="danger" onclick="G.collapseGu()">✕ Collapse all</button>' : ''}</div>`
     : '';
+  return `${bar}${sections}`;
+}
+export function renderGuResults() { const h = $('guResults'); if (h) h.innerHTML = guResultsHtml(); }
+export function viewGu() {
+  const st = S().settings;
+  const mode = st.guView === 'list' ? 'list' : 'grid';
   return `${pagehead('蛊', 'Refinery · 炼蛊', 'Gu Refinery',
     'Gu bundle 1-4 signed effects; power scales with tier (1-9). Tiers 6-9 are immortal &amp; unique (one per world). Every Gu belongs to a <b>Dao Path</b>; rarer paths unlock only at deeper floors. Higher-tier Gu are refined from materials <b>plus lower-tier Gu of the same path</b>.')}
-  ${guControls(mode, tierF, pathF)}
-  ${bar}
-  ${sections}`;
+  ${guControls(mode, st.guTier || 'all', st.guPath || 'all', st.guSearch || '')}
+  <div id="guResults">${guResultsHtml()}</div>`;
 }
 
 // ---------- shop ----------
@@ -1527,23 +1569,28 @@ function resTile(r) {
   </div>`;
 }
 // Filter bar (Dao Path + rarity/rank), mirroring the Team/Formation controls. Persisted in settings.
-function almanacControls(rarityF, pathF) {
+function almanacControls(rarityF, pathF, searchV) {
   const pathsPresent = [...new Set(resourceList().filter((r) => r.daoPath).map((r) => r.daoPath))].sort((a, b) => pathName(a).localeCompare(pathName(b)));
   const pathOpts = ['all', 'universal', ...pathsPresent].map((p) => `<option value="${p}" ${pathF === p ? 'selected' : ''}>${p === 'all' ? 'All paths' : p === 'universal' ? 'Universal only' : pathName(p)}</option>`).join('');
   const rarOpts = ['all', ...RANKS.map(String)].map((r) => `<option value="${r}" ${rarityF === r ? 'selected' : ''}>${r === 'all' ? 'All ranks' : 'Rank ' + r}</option>`).join('');
-  const filtered = rarityF !== 'all' || pathF !== 'all';
+  const filtered = rarityF !== 'all' || pathF !== 'all' || !!(searchV && searchV.trim());
   return `<div class="teamctl">
     <span class="muted small">Path</span><select onchange="G.setView('almPath',this.value)">${pathOpts}</select>
     <span class="muted small">Rank</span><select onchange="G.setView('almRarity',this.value)">${rarOpts}</select>
+    <input class="searchbox" type="text" placeholder="Search resources…" value="${esc(searchV || '')}" oninput="G.almanacSearch(this.value)">
     ${filtered ? '<button class="danger" onclick="G.clearAlmanacFilters()">✕ Clear</button>' : ''}
     <span class="muted small" style="margin-left:auto">${resourceList().length} resources</span>
   </div>`;
 }
-export function viewAlmanac() {
+// The Almanac's grouped resource cards (rank / path / name-search applied). Split out so the search box
+// repaints just the results, preserving input focus.
+function almanacCardsHtml() {
   const st = S().settings;
   const rarityF = st.almRarity || 'all';
   const pathF = st.almPath || 'all';
-  const matchR = (r) => rarityF === 'all' || String(r.rank) === rarityF;
+  const q = (st.almSearch || '').trim().toLowerCase();
+  const matchR = (r) => (rarityF === 'all' || String(r.rank) === rarityF)
+    && (!q || r.name.toLowerCase().includes(q) || (r.daoPath && pathName(r.daoPath).toLowerCase().includes(q)));
   const byTier = (a, b) => a.rank - b.rank || a.name.localeCompare(b.name);
 
   // Each group renders as a card: a path/universal header over a grid of clickable resource tiles.
@@ -1575,20 +1622,23 @@ export function viewAlmanac() {
       return groupCard(pathCjk(pid), c.color, pathName(pid), sub, byPath[pid].sort(byTier).map(resTile).join(''));
     }).join('');
   }
-  if (!cards) cards = '<div class="muted" style="margin-top:24px">No resources match these filters.</div>';
-
+  return cards || '<div class="muted" style="margin-top:24px">No resources match these filters.</div>';
+}
+export function renderAlmanacResults() { const h = $('almResults'); if (h) h.innerHTML = almanacCardsHtml(); }
+export function viewAlmanac() {
+  const st = S().settings;
   const all = resourceList();
   const uniCount = all.filter((r) => !r.daoPath).length;
   const pathCount = new Set(all.filter((r) => r.daoPath).map((r) => r.daoPath)).size;
   return `${pagehead('谱', 'Almanac · 物谱', 'Resource Almanac',
     'Every crafting material in the world, gathered by Dao Path. <b>Universal</b> mats bind recipes across all paths; <b>path-bound</b> resources drop in their path’s stretch of the tower and feed that path’s Gu. Click any resource to see <b>where it drops</b>, its <b>drop rate</b>, and the <b>recipes</b> that use it.')}
-  ${almanacControls(rarityF, pathF)}
+  ${almanacControls(st.almRarity || 'all', st.almPath || 'all', st.almSearch || '')}
   <div class="cs-statgrid" style="grid-template-columns:repeat(3,1fr);margin-bottom:16px">
     <div class="cs-stat"><span class="sk">Resource Kinds</span><span class="sv">${all.length}</span></div>
     <div class="cs-stat"><span class="sk">Universal Mats</span><span class="sv">${uniCount}</span></div>
     <div class="cs-stat"><span class="sk">Paths Covered</span><span class="sv">${pathCount}</span></div>
   </div>
-  ${cards}`;
+  <div id="almResults">${almanacCardsHtml()}</div>`;
 }
 
 // Per-resource detail page (pseudo-tab 'res', opened via G.openRes → UI.openResSheet).

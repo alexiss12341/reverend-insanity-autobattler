@@ -25,12 +25,19 @@ import * as UI from './ui.js';
 let activeTab = 'battle';
 let battleBusy = false;        // a fight run (animated or timed) is in flight
 let idleTimer = null;          // pending next-run handle
+let abortBattle = false;       // set when a new attempt/auto-challenge should interrupt the in-flight fight
 let challengeRequested = false; // a manual "Attempt Floor" (frontier) is queued for the next run
 let autoChallenge = false;      // auto-challenge mode: keep assaulting the frontier until a defeat
 let autoChallengeHighest = 0;   // best floor cleared during the current auto-challenge run
 let pendingNew = null;          // in-progress new game: { slot, name, path, guId } across the name→path→Gu→archetype modals
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// Like sleep, but bails out early (within ~120ms) if abortBattle is raised — so an off-screen, timed
+// background run can also be interrupted by a new attempt / auto-challenge.
+async function sleepAbortable(ms) {
+  let waited = 0;
+  while (waited < ms && !abortBattle) { const chunk = Math.min(120, ms - waited); await sleep(chunk); waited += chunk; }
+}
 
 // ---------- rewards / clearing ----------
 function distributeRewards(floor, isBoss, fromLog) {
@@ -130,7 +137,6 @@ async function runBattle() {
   const verbose = animate && manual && !auto;
   const log = [];
   const res = resolveEncounter(enc, verbose ? (m) => log.push(m) : undefined, animate ? { record: true } : undefined);
-  commitComprehension(res.allies);
 
   if (animate) {
     if (challenging) {
@@ -138,11 +144,20 @@ async function runBattle() {
       UI.logLine(`— Assaulting Floor ${floor}${enc.isBoss ? ' BOSS' : ''} (${enc.waves.length} wave${enc.waves.length > 1 ? 's' : ''}) —`, auto ? '' : 'rare');
     }
     await UI.playTimeline(res.timeline, { floor, isBoss: enc.isBoss });    // animated arena: charge bars, clashes, damage popups
-    if (verbose) log.forEach((m) => UI.logLine(m)); // dump the full feed after a single manual attempt
+    if (verbose && !abortBattle) log.forEach((m) => UI.logLine(m)); // dump the full feed after a single manual attempt
   } else {
-    await sleep(fightWallMs(res.simTime));   // background: pace by the fight's real duration
+    await sleepAbortable(fightWallMs(res.simTime));   // background: pace by the fight's real duration (interruptible)
   }
   if (!S()) { battleBusy = false; return; } // game reset mid-fight
+  // A new "Attempt Floor"/"Auto-Challenge" interrupted this fight: discard its result (no rewards, no
+  // comprehension, no frontier change) and immediately launch the requested challenge instead.
+  if (abortBattle) {
+    abortBattle = false;
+    battleBusy = false;
+    if (!isHidden() && (autoChallenge || challengeRequested || S().settings.idle)) idleTimer = setTimeout(runBattle, 0);
+    return;
+  }
+  commitComprehension(res.allies);
 
   S().stats.battles += 1;
   if (animate && challenging) (res.win ? Audio.victory : Audio.defeat)(); // a manual assault gets a win/loss sting
@@ -183,12 +198,12 @@ async function runBattle() {
   else if (activeTab === 'battle') { Audio.scene(false); UI.render('battle'); } // settled on the battle tab: drop the music back to the calm arena mood + refresh
 }
 
-// "Attempt Floor": queue a one-off frontier run. If a run is animating it's picked up next; else now.
+// "Attempt Floor": launch a one-off frontier run NOW — interrupting whatever fight is animating.
 function attemptAdvance() {
   if (autoChallenge) return;       // already climbing
   if (!activeTeam().length) return UI.toast('Activate at least one fighter.');
   challengeRequested = true;
-  if (battleBusy) return;          // a run is in flight — it will run the challenge next
+  if (battleBusy) { abortBattle = true; UI.abortTimeline(); return; } // cut the in-flight fight short; it restarts as the attempt
   stopIdle();                      // cancel the pending idle tick and start the challenge immediately
   runBattle();
 }
@@ -201,7 +216,7 @@ function toggleAutoChallenge() {
   autoChallenge = true; autoChallengeHighest = 0;
   UI.setAutoChallenge(true);
   if (activeTab === 'battle') { UI.clearLog(); UI.logLine(`— Auto-Challenge: climbing from Floor ${S().frontier} —`, 'rare'); UI.renderBattleControls(); }
-  if (battleBusy) return;          // a run is in flight — it will pick up the climb next
+  if (battleBusy) { abortBattle = true; UI.abortTimeline(); return; } // cut the in-flight fight short; the climb starts now
   stopIdle();
   runBattle();
 }
@@ -311,7 +326,7 @@ function migrateAttributes() {
 }
 function startGame(obj, isNew) {
   state.current = obj;
-  autoChallenge = false; autoChallengeHighest = 0; challengeRequested = false; UI.setAutoChallenge(false);
+  autoChallenge = false; autoChallengeHighest = 0; challengeRequested = false; abortBattle = false; UI.setAutoChallenge(false);
   migrateAttributes();
   normalizeFormation(); // give every active fighter a unique board tile (repairs legacy saves)
   document.getElementById('title').classList.add('hidden');
@@ -357,7 +372,7 @@ function renderTitle() {
 
 function toTitle() {
   stopIdle();
-  autoChallenge = false; autoChallengeHighest = 0; challengeRequested = false; UI.setAutoChallenge(false);
+  autoChallenge = false; autoChallengeHighest = 0; challengeRequested = false; abortBattle = false; UI.setAutoChallenge(false);
   save();
   document.getElementById('game').classList.add('hidden');
   document.getElementById('title').classList.remove('hidden');
@@ -365,31 +380,56 @@ function toTitle() {
 }
 
 // ---------- equip pickers (modals) ----------
+// Spare Gu (not equipped on this or any other cultivator) eligible to slot onto `c`.
+function guPickerAvail(c) {
+  const usedElsewhere = (uid) => S().roster.some((o) => o !== c && o.gu.includes(uid));
+  return S().guInv.filter((g) => !c.gu.includes(g.uid) && !usedElsewhere(g.uid));
+}
+// Live filter state for the equip modal: which char/slot, plus the path filter + name search.
+let guPick = null;
+// The filtered + sorted spare-Gu rows for the equip picker (repainted live as the user filters/types).
+function guPickerListHtml() {
+  if (!guPick) return '';
+  const c = S().roster.find((x) => x.id === guPick.charId); if (!c) return '';
+  const tierOf = (g) => g.tier || GU_LIB[g.guId].tier; // ascended immortals carry an instance tier
+  let avail = guPickerAvail(c).map((g) => ({ g, gu: guOf(g.uid) })).filter((x) => x.gu);
+  const total = avail.length;
+  if (guPick.path !== 'all') avail = avail.filter((x) => x.gu.daoPath === guPick.path);
+  const q = (guPick.q || '').trim().toLowerCase();
+  if (q) avail = avail.filter((x) => x.gu.name.toLowerCase().includes(q)
+    || pathName(x.gu.daoPath).toLowerCase().includes(q) || effectText(x.gu).toLowerCase().includes(q));
+  if (!total) return '<div class="muted small">No spare Gu. Craft some in the Refinery.</div>';
+  if (!avail.length) return '<div class="muted small">No spare Gu match this filter.</div>';
+  return avail.sort((a, b) => tierOf(b.g) - tierOf(a.g)).map(({ g, gu }) => {
+    const t = gu.tier;
+    return `<div class="pickrow gu-pick"><div class="gp-info">
+        <div class="gp-head"><b style="color:var(--t${t})">T${t}</b> <span class="gp-name">${gu.name}</span>
+          ${isUnique(gu) ? '<span class="pill unique">UNIQUE</span>' : ''}<span class="gp-path">${pathName(gu.daoPath)}</span></div>
+        <div class="gu-eff">${effectText(gu)}</div>
+        <div class="gu-ess">◇ ${guEssenceCost(gu)} essence / use</div></div>
+      <button class="primary" onclick="G.equipGu('${guPick.charId}',${guPick.slotIdx},'${g.uid}')">Equip</button></div>`;
+  }).join('');
+}
 function openGuPicker(charId, slotIdx) {
   const c = S().roster.find((x) => x.id === charId); if (!c) return;
-  const usedElsewhere = (uid) => S().roster.some((o) => o !== c && o.gu.includes(uid));
-  const avail = S().guInv.filter((g) => !c.gu.includes(g.uid) && !usedElsewhere(g.uid));
-  let html = `<h3>Equip Gu — ${c.name} · Slot ${slotIdx + 1}</h3>`;
+  guPick = { charId, slotIdx, path: 'all', q: '' };
   const cur = c.gu[slotIdx] ? guOf(c.gu[slotIdx]) : null;
+  const availGu = guPickerAvail(c).map((g) => guOf(g.uid)).filter(Boolean);
+  const pathsPresent = [...new Set(availGu.map((gu) => gu.daoPath))].sort((a, b) => pathName(a).localeCompare(pathName(b)));
+  const pathOpts = ['all', ...pathsPresent].map((p) => `<option value="${p}">${p === 'all' ? 'All paths' : pathName(p)}</option>`).join('');
+  let html = `<h3>Equip Gu — ${c.name} · Slot ${slotIdx + 1}</h3>`;
   if (cur) html += `<div class="pickrow gu-pick"><div class="gp-info">
       <div class="gp-head"><b style="color:var(--t${cur.tier})">T${cur.tier}</b> <span class="gp-name">Equipped: ${cur.name}</span>
         ${isUnique(cur) ? '<span class="pill unique">UNIQUE</span>' : ''}<span class="gp-path">${pathName(cur.daoPath)}</span></div>
       <div class="gu-eff">${effectText(cur)}</div>
       <div class="gu-ess">◇ ${guEssenceCost(cur)} essence / use</div></div>
     <button class="danger" onclick="G.unequipGu('${charId}',${slotIdx})">Unequip</button></div>`;
-  if (!avail.length) html += '<div class="muted small">No spare Gu. Craft some in the Refinery.</div>';
-  const tierOf = (g) => g.tier || GU_LIB[g.guId].tier;   // ascended immortals carry an instance tier
-  avail.sort((a, b) => tierOf(b) - tierOf(a)).forEach((g) => {
-    const gu = guOf(g.uid); if (!gu) return;             // resolved (instance-tier) form, w/ effects
-    const t = gu.tier;
-    html += `<div class="pickrow gu-pick"><div class="gp-info">
-        <div class="gp-head"><b style="color:var(--t${t})">T${t}</b> <span class="gp-name">${gu.name}</span>
-          ${isUnique(gu) ? '<span class="pill unique">UNIQUE</span>' : ''}<span class="gp-path">${pathName(gu.daoPath)}</span></div>
-        <div class="gu-eff">${effectText(gu)}</div>
-        <div class="gu-ess">◇ ${guEssenceCost(gu)} essence / use</div></div>
-      <button class="primary" onclick="G.equipGu('${charId}',${slotIdx},'${g.uid}')">Equip</button></div>`;
-  });
-  html += `<div class="right"><button onclick="G.closeModal()">Close</button></div>`;
+  html += `<div class="teamctl" style="margin:12px 0 10px">
+      <span class="muted small">Path</span><select onchange="G.guPickFilter('path',this.value)">${pathOpts}</select>
+      <input class="searchbox" type="text" placeholder="Search Gu…" oninput="G.guPickFilter('q',this.value)">
+    </div>
+    <div id="gupick-list">${guPickerListHtml()}</div>
+    <div class="right"><button onclick="G.closeModal()">Close</button></div>`;
   UI.showModal(html);
 }
 
@@ -457,9 +497,14 @@ const G = {
     G.openChar(order[i].id);
   },
   setView(key, mode) { S().settings[key] = mode; UI.render(activeTab); save(); },
+  // Live roster search (Team tab): repaint only the cards so the input keeps focus while typing.
+  teamSearch(v) { S().settings.teamSearch = v; UI.renderRosterResults(); save(); },
+  clearTeamFilters() { const s = S().settings; s.teamFilter = 'all'; s.teamRarity = 'all'; s.teamPath = 'all'; s.teamSearch = ''; UI.render(activeTab); save(); },
   // Refinery boolean filters: "guCraftable" (craftable-now only) / "guUnlocked" (unlocked paths only).
   toggleGuFlag(key) { S().settings[key] = !S().settings[key]; UI.render(activeTab); save(); },
-  clearGuFilters() { const s = S().settings; s.guTier = 'all'; s.guPath = 'all'; s.guCraftable = false; s.guUnlocked = false; UI.render(activeTab); save(); },
+  // Live Refinery search: repaint only the path sections so the input keeps focus.
+  guSearch(v) { S().settings.guSearch = v; UI.renderGuResults(); save(); },
+  clearGuFilters() { const s = S().settings; s.guTier = 'all'; s.guPath = 'all'; s.guCraftable = false; s.guUnlocked = false; s.guSearch = ''; UI.render(activeTab); save(); },
   // Refinery: expand/collapse a single Dao-path section (collapsed sections build no cards).
   toggleGuPath(pid) { const o = S().settings.guOpen || (S().settings.guOpen = {}); if (o[pid]) delete o[pid]; else o[pid] = true; UI.render(activeTab); save(); },
   collapseGu() { S().settings.guOpen = {}; UI.render(activeTab); save(); },
@@ -473,7 +518,11 @@ const G = {
     document.querySelectorAll('#nav button').forEach((b) => b.classList.toggle('active', b.dataset.tab === 'almanac'));
     UI.openResSheet(id);
   },
-  clearAlmanacFilters() { S().settings.almRarity = 'all'; S().settings.almPath = 'all'; UI.render(activeTab); save(); },
+  // Live Almanac search: repaint only the resource cards so the input keeps focus.
+  almanacSearch(v) { S().settings.almSearch = v; UI.renderAlmanacResults(); save(); },
+  clearAlmanacFilters() { S().settings.almRarity = 'all'; S().settings.almPath = 'all'; S().settings.almSearch = ''; UI.render(activeTab); save(); },
+  // Equip-picker filter/search (path | name): repaint only the modal's Gu list, keeping input focus.
+  guPickFilter(key, v) { if (!guPick) return; guPick[key] = v; const host = document.getElementById('gupick-list'); if (host) host.innerHTML = guPickerListHtml(); },
   // Jump from a resource's recipe list into the Gu Refinery, pre-filtered to that Dao Path.
   openRefinery(path) { S().settings.guPath = path; G.setTab('gu'); save(); },
   setAllocStep(s) { S().settings.allocStep = s === 'max' ? 'max' : Number(s); UI.render(activeTab); save(); },
@@ -713,11 +762,16 @@ const G = {
   // `dismissed` state — dismissing the checklist never forfeits the reward.
   claimOnboardingReward() {
     const o = S() && S().onboarding;
-    if (!o || !o.active || o.rewarded || !UI.onboardingComplete()) return;
-    o.rewarded = true;
-    const amt = 450;
-    S().essence += amt;
-    UI.banner(`<span class="cjk b-seal">道</span><span class="b-text"><b>First Steps complete</b><span class="b-sub">+${amt} <span class="essence">✦</span> Immortal Essence</span></span>`, 'reward');
+    if (!o || !o.active || !UI.onboardingComplete()) return;
+    // Tutorial complete → RETIRE it (active:false) so undoing a step later (e.g. unequipping the starter
+    // Gu) can't re-pop the widget. Decoupled from the payout so a re-armed guide also retires when redone.
+    o.active = false;
+    if (!o.rewarded) {                       // one-time bonus — guarded so re-arming never re-pays
+      o.rewarded = true;
+      const amt = 450;
+      S().essence += amt;
+      UI.banner(`<span class="cjk b-seal">道</span><span class="b-text"><b>First Steps complete</b><span class="b-sub">+${amt} <span class="essence">✦</span> Immortal Essence</span></span>`, 'reward');
+    }
     UI.refreshTop();
     save();
   },
