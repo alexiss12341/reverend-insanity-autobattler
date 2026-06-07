@@ -75,7 +75,7 @@ export function newGame(slotKey, playerName = 'Fang Yuan', starter = null) {
     // existing saves are marked already-onboarded in migrateSave so veterans never see either.
     // `rewarded` is the persistent one-time guard for the tutorial-completion essence bonus.
     onboarding: { active: true, dismissed: false, tipsSeen: {}, rewarded: false },
-    settings: { idle: true, guView: 'grid', invView: 'grid', teamSort: 'power', teamFilter: 'all', teamRarity: 'all', teamPath: 'all', fmSort: 'power', fmRarity: 'all', fmPath: 'all', guTier: 'all', guPath: 'all', guOpen: {}, shopRarity: 'all', shopPath: 'all', shopSearch: '', allocStep: 10 },
+    settings: { idle: true, guView: 'grid', invView: 'grid', teamSort: 'power', teamFilter: 'all', teamRarity: 'all', teamPath: 'all', fmSort: 'power', fmRarity: 'all', fmPath: 'all', guTier: 'all', guPath: 'all', guOpen: {}, shopRarity: 'all', shopPath: 'all', shopSearch: '', allocStep: 10, audio: { bgm: 7, sfx: 7, bgmMuted: false, sfxMuted: false } },
   };
 }
 
@@ -120,6 +120,16 @@ function migrateSave(o) {
   }
   // Onboarding (First-Steps widget + tab tips) is for genuinely new players only. Any save that predates
   // it already belongs to someone who knows the game — mark it onboarded so nothing pops up for veterans.
+  // Procedural audio prefs — independent BGM + SFX levels (0–10) + mutes. Backfill on pre-audio saves,
+  // and migrate the first-gen {muted,volume} shape to the split BGM/SFX one.
+  if (o.settings) {
+    const a = o.settings.audio;
+    if (a == null) o.settings.audio = { bgm: 7, sfx: 7, bgmMuted: false, sfxMuted: false };
+    else if (a.bgm == null) {
+      const v = typeof a.volume === 'number' ? Math.round(a.volume * 10) : 7;
+      o.settings.audio = { bgm: v, sfx: v, bgmMuted: !!a.muted, sfxMuted: !!a.muted };
+    }
+  }
   if (o.onboarding == null) o.onboarding = { active: false, dismissed: true, tipsSeen: {}, rewarded: true };
   // Backfill the tutorial-completion bonus guard on pre-reward saves: veterans (onboarding already
   // inactive) are past the tutorial → mark rewarded so re-arming the guide can't pay out; a genuine

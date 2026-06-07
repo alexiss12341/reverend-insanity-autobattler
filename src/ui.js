@@ -22,6 +22,7 @@ import { isImmortalRealm, MORTAL_PEAK, rankOf, guSlotsOf } from './data/realms.j
 import { ATTR_KEYS, effAttr, unspentPoints, playerPool, apertureCapacity, apertureGrade, effAptitude, imprintAttrMult } from './data/attributes.js';
 import { imprintCandidates, IMPRINT_CAP, duplicateGroups, imprintableDuplicateCount } from './systems/gacha.js';
 import { STATUS } from './data/status.js';
+import * as Audio from './systems/audio.js';
 
 const $ = (id) => document.getElementById(id);
 const ATTR_LABEL = { str: 'STR', agi: 'AGI', con: 'CON', int: 'INT', luck: 'LCK' };
@@ -70,6 +71,29 @@ export function refreshTop() {
   if (dup) { dup.textContent = d ? (d > 99 ? '99+' : '' + d) : ''; dup.classList.toggle('on', d > 0); }
 }
 
+// The audio settings popup (opened by the bottom-left gear FAB). Independent BGM + SFX level bars
+// (0–10) plus a mute checkbox each that overrides — and disables — its bar. Reads live state from the
+// audio engine; the G.* handlers update the engine + these controls in place (no full re-render).
+export function settingsModal() {
+  const bgm = Audio.getBgm(), sfx = Audio.getSfx(), bm = Audio.isBgmMuted(), sm = Audio.isSfxMuted();
+  const row = (key, label, val, muted) => `
+    <div class="set-row">
+      <span class="set-label">${label}</span>
+      <span class="set-slider">
+        <input id="set-${key}" type="range" min="0" max="10" step="1" value="${val}" ${muted ? 'disabled' : ''}
+          oninput="G.set${key === 'bgm' ? 'Bgm' : 'Sfx'}(this.value)">
+        <span class="set-val" id="set-${key}-val">${muted ? '—' : val}</span>
+      </span>
+      <label class="set-mute"><input type="checkbox" ${muted ? 'checked' : ''}
+        onchange="G.set${key === 'bgm' ? 'Bgm' : 'Sfx'}Mute(this.checked)">Mute</label>
+    </div>`;
+  return `<h3>⚙ Settings</h3>
+    <div class="body" style="margin-bottom:6px">Audio — drag a bar (0–10), or tick <b>Mute</b> to silence that channel.</div>
+    ${row('bgm', 'BGM', bgm, bm)}
+    ${row('sfx', 'SFX', sfx, sm)}
+    <div class="right" style="margin-top:16px"><button class="primary" onclick="G.closeModal()">Done</button></div>`;
+}
+
 // ---------- tab router ----------
 let _charId = null; // character whose sheet is open (pseudo-tab 'char')
 export function openCharSheet(id) { _charId = id; render('char'); }
@@ -79,6 +103,7 @@ export function openResSheet(id) { _resId = id; render('res'); }
 let _lastViewKey = null;
 export function render(tab) {
   refreshTop();
+  Audio.setTheme(tab); // each sidebar view has its own musical mood (no-op if unchanged). See systems/audio.js THEMES
   const c = $('content');
   const views = {
     battle: viewBattle, team: viewTeam, formation: viewFormation, recruit: viewRecruit,
@@ -624,12 +649,12 @@ export async function playTimeline(tl, ctx = {}) {
       await _sleep(te ? LUNGE_OUT : ACT_MS);
       // 2) IMPACT — the strike lands ON CONTACT: target flash, floating damage, applied statuses, HP drop.
       if (te) {
-        if (act.dodged) dmgPopup(te, 'miss', 'miss');
-        else { te.classList.add('hit'); dmgPopup(te, compact(act.dmg) + (act.lucky ? '‼' : act.crit ? '!' : ''), act.lucky ? 'crit lucky' : act.crit ? 'crit' : ''); }
+        if (act.dodged) { dmgPopup(te, 'miss', 'miss'); Audio.miss(); }
+        else { te.classList.add('hit'); dmgPopup(te, compact(act.dmg) + (act.lucky ? '‼' : act.crit ? '!' : ''), act.lucky ? 'crit lucky' : act.crit ? 'crit' : ''); (act.lucky || act.crit) ? Audio.crit() : Audio.hit(); }
         // every status that landed on the target this hit floats up as its own coloured label
         if (act.applied) { let off = 18; for (const t of act.applied) if (STATUS[t]) { dmgPopup(te, STATUS[t].label, 'status status-' + t, off); off += 15; } }
       }
-      (act.hp || []).forEach((h) => { const u = unit(h.side, h.i); if (u) { u.hp = h.hp; drawHp(h.side, h.i); } });
+      (act.hp || []).forEach((h) => { const u = unit(h.side, h.i); if (u) { if (u.hp > 0 && h.hp <= 0) Audio.death(); u.hp = h.hp; drawHp(h.side, h.i); } });
       if (te) await _sleep(IMPACT_MS);
       // 3) RECOVER — the actor slides home, then the board resumes.
       if (ae && te) { ae.style.transition = `transform ${LUNGE_BACK}ms ease`; ae.style.transform = ''; }

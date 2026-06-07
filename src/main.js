@@ -14,10 +14,12 @@ import { GU_LIB, effectText, guEssenceCost, isUnique } from './data/gu.js';
 import { pathName } from './data/daoPaths.js';
 import { resourceName, RESOURCES } from './data/resources.js';
 import { isImmortalRealm, realmName } from './data/realms.js';
+import { rarityTier } from './data/rarities.js';
 import { accrue, ascend, resolveTribulation, becomeVenerable } from './systems/tribulation.js';
 import { addMarks, addComprehension } from './systems/dao.js';
 import { affinityCompMult } from './data/traits.js';
 import { ATTR_KEYS, unspentPoints, playerPool } from './data/attributes.js';
+import * as Audio from './systems/audio.js';
 import * as UI from './ui.js';
 
 let activeTab = 'battle';
@@ -122,6 +124,7 @@ async function runBattle() {
   const floor = challenging ? S().frontier : S().farmFloor;
   const enc = generateEncounter(floor);
   const animate = activeTab === 'battle';                         // only the visible screen animates
+  if (animate) Audio.scene(challenging, enc.isBoss);             // ramp the music for a frontier/boss assault
   // record a timeline whenever we animate; collect the verbose per-hit feed only for a SINGLE manual
   // attempt. Auto-challenge keeps a concise running history (one result line per floor), like idle farming.
   const verbose = animate && manual && !auto;
@@ -142,6 +145,7 @@ async function runBattle() {
   if (!S()) { battleBusy = false; return; } // game reset mid-fight
 
   S().stats.battles += 1;
+  if (animate && challenging) (res.win ? Audio.victory : Audio.defeat)(); // a manual assault gets a win/loss sting
   if (res.win) {
     S().stats.wins += 1;
     const firstTime = !S().clearedFloors[floor];
@@ -176,7 +180,7 @@ async function runBattle() {
   // there just crawls. We pause instead and credit an offline-style estimate when the tab returns (see
   // the visibilitychange handler). The in-flight run that's settling now is the last one until we're back.
   if (!isHidden() && (autoChallenge || S().settings.idle || challengeRequested)) idleTimer = setTimeout(runBattle, animate ? 350 : 0); // loop
-  else if (activeTab === 'battle') UI.render('battle');           // settled: refresh controls + static arena
+  else if (activeTab === 'battle') { Audio.scene(false); UI.render('battle'); } // settled on the battle tab: drop the music back to the calm arena mood + refresh
 }
 
 // "Attempt Floor": queue a one-off frontier run. If a run is animating it's picked up next; else now.
@@ -525,7 +529,9 @@ const G = {
     if (!battleBusy && activeTab === 'battle') UI.renderArena();  // refresh the static enemy preview when idle
     UI.toast('Now farming Floor ' + f); save();
   },
-  pull(n) { const r = pull(n); if (!r.ok) return UI.toast(r.msg); UI.render('recruit'); UI.renderPulls(r.got); save(); },
+  pull(n) { const r = pull(n); if (!r.ok) return UI.toast(r.msg);
+    Audio.gacha(Math.max(...r.got.map((c) => rarityTier(c.rarity)))); // sparkle scales with the best roll
+    UI.render('recruit'); UI.renderPulls(r.got); save(); },
   // Confirm before dismissing — releasing a cultivator is permanent, so guard against a mis-click.
   dismissPrompt(id) {
     const c = S().roster.find((x) => x.id === id); if (!c) return;
@@ -599,7 +605,13 @@ const G = {
     UI.toast(`Reincarnated — +${r.award} Sovereign Souls (${r.souls} total).`);
     G.setTab('battle'); UI.refreshTop(); save();
   },
-  craft(guId) { const r = craft(guId); UI.toast(r.ok ? `Refined ${r.gu.name}.` : r.msg); UI.render('gu'); save(); },
+  craft(guId) { const r = craft(guId); if (r.ok) Audio.forge(); UI.toast(r.ok ? `Refined ${r.gu.name}.` : r.msg); UI.render('gu'); save(); },
+  // Audio settings (gear FAB, bottom-left): independent BGM + SFX level bars (0–10) + mute overrides.
+  openSettings() { UI.showModal(UI.settingsModal(), 'narrow'); },
+  setBgm(v) { Audio.setBgm(v); const el = document.getElementById('set-bgm-val'); if (el) el.textContent = v; save(); },
+  setSfx(v) { Audio.setSfx(v); const el = document.getElementById('set-sfx-val'); if (el) el.textContent = v; Audio.click(); save(); }, // tick lets you hear the SFX level
+  setBgmMute(on) { Audio.setBgmMuted(on); const s = document.getElementById('set-bgm'); if (s) s.disabled = on; const el = document.getElementById('set-bgm-val'); if (el) el.textContent = on ? '—' : Audio.getBgm(); save(); },
+  setSfxMute(on) { Audio.setSfxMuted(on); const s = document.getElementById('set-sfx'); if (s) s.disabled = on; const el = document.getElementById('set-sfx-val'); if (el) el.textContent = on ? '—' : Audio.getSfx(); if (!on) Audio.hit(); save(); },
   // Ascend an OWNED immortal Gu one rank (consumes stones + that rank's resources; resolveOwned then
   // surfaces the stronger form). Re-renders the active view (usually the character sheet) + top bar.
   upgradeGu(uid) {
@@ -653,6 +665,7 @@ const G = {
   ascend(id) {
     const r = ascend(id);
     if (!r.ok) return UI.toast(r.msg);
+    if (r.ascended) Audio.breakthrough(true);
     UI.toast(r.msg); if (activeTab === 'battle') UI.logLine(r.msg, r.ascended ? 'win' : 'lose');
     UI.render(activeTab === 'battle' ? 'dao' : activeTab); save();
   },
@@ -661,6 +674,7 @@ const G = {
   attemptBreakthrough(id) {
     const r = attemptBreakthrough(id);
     if (!r.ok) return UI.toast(r.msg);
+    if (r.success) Audio.breakthrough(); else Audio.defeat();
     UI.toast(r.msg, 5000, r.success ? 'ascend' : '');
     if (activeTab === 'battle') UI.logLine(r.msg, r.success ? 'win' : 'lose');
     UI.refreshTop();                                          // stones changed (and maybe realm)
@@ -675,6 +689,7 @@ const G = {
   becomeVenerable(id) {
     const r = becomeVenerable(id);
     if (!r.ok) return UI.toast(r.msg);
+    if (r.ascended) Audio.breakthrough(true);
     UI.toast(r.msg); if (activeTab === 'battle') UI.logLine(r.msg, r.ascended ? 'win' : 'lose');
     UI.render(activeTab === 'battle' ? 'dao' : activeTab); save();
   },
@@ -726,6 +741,7 @@ window.G = G;
 // ---------- boot ----------
 window.addEventListener('load', () => {
   renderTitle();
+  Audio.init(); // procedural music + SFX; the context starts on the first user gesture (autoplay policy)
   setInterval(() => { if (S()) save(); }, 20000); // autosave heartbeat
   document.addEventListener('visibilitychange', onVisibilityChange); // pause + catch up across browser-tab switches
 });
