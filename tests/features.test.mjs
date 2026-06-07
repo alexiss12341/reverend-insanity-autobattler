@@ -12,7 +12,7 @@ import { statusForPath, STATUS } from '../src/data/status.js';
 import { guList, guEssenceCost, guEssenceCostFor, recipeFor, GU_LIB, guUsingResource, resolveOwned, nextTierOf, signatureGusForPath, pathStatuses, signatureImmortalGu, effectText } from '../src/data/gu.js';
 import { craft, canUpgrade, upgrade } from '../src/systems/crafting.js';
 import { B } from '../src/data/guBudget.js';
-import { RESOURCES, resourceList, resourcesForPath, rankRarity } from '../src/data/resources.js';
+import { RESOURCES, resourceList, resourcesForPath, rankRarity, universalRankWeights } from '../src/data/resources.js';
 import { pathFloorReq, pathList, isPathLocked } from '../src/data/daoPaths.js';
 import { NAMED_HEROES, nameForRarity } from '../src/data/npcs.js';
 import { makeCharacter } from '../src/state.js';
@@ -362,10 +362,12 @@ ok(resourcesForPath('blade').length === 45, 'each path has 5 types × rank 1-9 =
 }
 ok(RESOURCES['bind_relic_r1'] && RESOURCES['bind_stone_r9'], 'both universal binder ladders exist (rank 1-9)');
 ok(resourceList().length === 45 * 45 + 18, '45 paths × 45 + 18 binders = 2043 resources total');
-// FLOOR DISTRIBUTION: rank-N never drops before its realm band (rank 2 ≥ 51, rank 3 ≥ 101, …) and each
-// resource sits in an ≤18-floor SUB-WINDOW (types spread across the band, not all on every floor).
+// FLOOR DISTRIBUTION: rank-N never drops before its realm band (rank 2 ≥ 51, rank 3 ≥ 101, …). PATH
+// resources sit in an ≤18-floor SUB-WINDOW (types spread across the band); UNIVERSAL binders instead
+// span a 3-band gradient window (own band + 2 above), so they're excluded from the sub-window check.
 ok(resourceList().every((r) => r.floors[0] >= (r.rank - 1) * 50 + 1), 'rank-N resources never drop before floor (N-1)×50+1 (rank 2 ≥ 51, rank 3 ≥ 101 …)');
-ok(resourceList().every((r) => r.floors[1] >= r.floors[0] && r.floors[1] - r.floors[0] <= 17), 'each resource drops in an ≤18-floor sub-window within its band');
+ok(resourceList().filter((r) => r.daoPath).every((r) => r.floors[1] >= r.floors[0] && r.floors[1] - r.floors[0] <= 17), 'each PATH resource drops in an ≤18-floor sub-window within its band');
+ok(resourceList().filter((r) => !r.daoPath).every((r) => r.floors[0] === (r.rank - 1) * 50 + 1 && r.floors[1] === Math.min(450, (r.rank + 2) * 50)), 'each UNIVERSAL binder spans its 3-band gradient window [bandStart .. (rank+2)×50]');
 {
   // a path's 5 rank-1 types are SPREAD across distinct floor sub-windows within realm 1 (not all stacked).
   const r1 = resourceList().filter((r) => r.rank === 1);
@@ -373,6 +375,57 @@ ok(resourceList().every((r) => r.floors[1] >= r.floors[0] && r.floors[1] - r.flo
   // and a given floor only sees a SUBSET of its rank's resources (spread, not the full ~227)
   const poolAt25 = resourceList().filter((r) => 25 >= r.floors[0] && 25 <= r.floors[1]);
   ok(poolAt25.length > 0 && poolAt25.length < r1.length, 'a single floor holds only a subset of its rank-band resources (spread)');
+}
+{
+  // NO RANK INVERSION (PATH resources): within any single path a higher-rank resource never drops earlier
+  // than a lower-rank one — rank bands/segments are strictly ordered & non-overlapping. Gated paths whose
+  // low ranks are held back to the gate band get spread across it lowest-rank-first.
+  const bySource = {};
+  for (const r of resourceList()) {
+    if (!r.daoPath) continue; // universal binders overlap by design — checked separately below
+    const g = bySource[r.daoPath] || (bySource[r.daoPath] = {});
+    const cur = g[r.rank] || (g[r.rank] = { lo: Infinity, hi: -Infinity });
+    cur.lo = Math.min(cur.lo, r.floors[0]);
+    cur.hi = Math.max(cur.hi, r.floors[1]);
+  }
+  let inversion = null;
+  for (const [key, ranks] of Object.entries(bySource)) {
+    for (let rk = 1; rk < 9; rk++) {
+      if (ranks[rk] && ranks[rk + 1] && !(ranks[rk].hi < ranks[rk + 1].lo)) {
+        inversion = `${key} rank ${rk} (ends F${ranks[rk].hi}) overlaps rank ${rk + 1} (starts F${ranks[rk + 1].lo})`;
+      }
+    }
+  }
+  ok(inversion === null, `no rank inversion within any path${inversion ? ' — ' + inversion : ''}`);
+
+  // Theft path (gate F101, a rank-3 band) spreads its CLAMPED ranks 1/2/3 across the thirds of floors 101-150.
+  const theft = (rk) => resourcesForPath('theft').filter((r) => r.rank === rk);
+  const within = (rs, a, b) => rs.length > 0 && rs.every((r) => r.floors[0] >= a && r.floors[1] <= b);
+  ok(within(theft(1), 101, 116) && within(theft(2), 117, 133) && within(theft(3), 134, 150),
+    'Theft ranks 1/2/3 occupy the first/second/third thirds of floors 101-150 (gated-path gradient)');
+}
+
+section('features: universal binder drop gradient');
+{
+  const w = (f) => universalRankWeights(f);
+  const sum = (f) => Object.values(w(f)).reduce((a, x) => a + x, 0);
+  const close = (a, b, eps = 0.005) => Math.abs(a - b) <= eps;
+  // Shares always normalize to a 100% pie.
+  ok([1, 25, 51, 100, 150, 201, 300, 450].every((f) => close(sum(f), 1)), 'rank weights sum to 1 at every floor');
+  // F1-50: pure rank 1.
+  ok([1, 25, 50].every((f) => Object.keys(w(f)).length === 1 && close(w(f)[1], 1)), 'floors 1-50 drop only rank-1 universal resources');
+  // The exact gradient the spec calls out: F51 = 98/2, F52 = 96/4.
+  ok(close(w(51)[1], 0.98, 0.005) && close(w(51)[2], 0.02, 0.005), 'floor 51 universal mix is ≈98% rank 1 / 2% rank 2');
+  ok(close(w(52)[1], 0.96, 0.005) && close(w(52)[2], 0.04, 0.005), 'floor 52 universal mix is ≈96% rank 1 / 4% rank 2');
+  // A new rank debuts each band start and the prior-prior rank retires: F101 adds R3, F151 drops R1 & adds R4.
+  ok(Object.keys(w(101)).map(Number).sort((a, b) => a - b).join(',') === '1,2,3', 'floor 101 mixes ranks 1,2,3 (rank 3 debuts small)');
+  ok(w(101)[3] > 0 && w(101)[3] < 0.05, 'rank 3 debuts as a small share at floor 101');
+  ok(!w(150)[4] && w(150)[1] > 0, 'rank 1 still drops at floor 150 (last floor before it retires)');
+  ok(!w(151)[1] && Object.keys(w(151)).map(Number).sort((a, b) => a - b).join(',') === '2,3,4', 'floor 151 retires rank 1 and debuts rank 4 (mix 2,3,4)');
+  // Within a band the newest (top) rank's share rises monotonically with depth.
+  ok(w(105)[3] < w(125)[3] && w(125)[3] < w(149)[3], 'the band-top rank share grows as you climb within the band');
+  // A higher rank never APPEARS earlier than a lower one (debut floors stay ordered, even though windows overlap).
+  ok(w(50)[2] === undefined && w(100)[3] === undefined && w(150)[4] === undefined, 'a higher-rank universal never debuts before its band start');
 }
 
 section('features: aperture capacity (aptitude)');

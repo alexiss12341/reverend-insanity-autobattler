@@ -35,19 +35,67 @@ export const RESOURCES = {};
 const bandStart = (rank) => (rank - 1) * 50 + 1;             // realm band start floor for a rank
 const hashStr = (s) => { let h = 2166136261; for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619); return h >>> 0; };
 // FLOOR PLACEMENT. A rank-N resource lives in rank N's 50-floor REALM BAND ([(N-1)*50+1 .. N*50]) — so
-// rank 1 drops floors 1-50, rank 2 ONLY 51-100, rank 3 ONLY 101-150, … (never before its band; a path's
-// mats are also held back to its craft-gate). WITHIN the band each resource drops in an 18-floor
-// SUB-WINDOW, offset by id-hash, so the many types SPREAD across the band's floors — each floor's drop
-// pool is a varied subset rather than every type of that rank at once.
+// rank 1 drops floors 1-50, rank 2 ONLY 51-100, rank 3 ONLY 101-150, … (never before its band).
+// PATH GATING + GRADIENT: a path can't drop ANYTHING before its craft-gate floor, so every rank whose
+// natural band starts before the gate is held back into the GATE'S realm band. Those clamped low ranks
+// are then spread as a GRADIENT — the gate band is carved into one segment per clamped rank, LOWEST RANK
+// FIRST — so a higher-rank resource can never drop earlier than a lower-rank one. E.g. Theft (gate F101,
+// a rank-3 band 101-150) places its ranks 1/2/3 in floors 101-116 / 117-133 / 134-150. WITHIN its
+// segment each resource takes an ≤18-floor SUB-WINDOW offset by id-hash, so the many types SPREAD across
+// floors (where the segment is wide enough); ranks past the gate band keep their full natural band.
 const SUB = 18;
 function floorsFor(rank, gate, id) {
-  const base = Math.min(TOWER, Math.max(gate, bandStart(rank)));
-  const span = Math.min(49, TOWER - base);            // depth available from `base` (≤ the 50-floor band)
-  const slack = Math.max(0, span - (SUB - 1));        // room to slide the sub-window within the band
-  const s = base + (slack ? hashStr(id) % (slack + 1) : 0);
-  return [s, Math.min(TOWER, s + SUB - 1)];
+  const gateBandStart = Math.floor((gate - 1) / 50) * 50 + 1; // first floor of the gate's realm band
+  const gateBandRank = (gateBandStart - 1) / 50 + 1;          // rank that band belongs to (= max clamped rank)
+  let lo, hi;
+  if (rank <= gateBandRank) {
+    // Clamped into the gate band: carve it into one segment per clamped rank (lowest rank first).
+    const K = gateBandRank;
+    lo = gateBandStart + Math.floor((rank - 1) * 50 / K);
+    hi = gateBandStart + Math.floor(rank * 50 / K) - 1;
+  } else {
+    // Natural band — its start already sits past the gate band, so rank ordering is preserved.
+    lo = bandStart(rank);
+    hi = lo + 49;
+  }
+  lo = Math.min(TOWER, lo);
+  hi = Math.min(TOWER, hi);
+  const span = hi - lo + 1;
+  const win = Math.min(SUB, span);                    // ≤18-floor sub-window, never wider than the segment
+  const slack = span - win;                           // room to slide the sub-window within the segment
+  const s = lo + (slack ? hashStr(id) % (slack + 1) : 0);
+  return [s, Math.min(TOWER, s + win - 1)];
 }
 const reg = (id, name, rank, floors, daoPath) => { RESOURCES[id] = { id, name, rank, rarity: rankRarity(rank), floors, daoPath: daoPath || undefined }; };
+
+// ── UNIVERSAL binder DROP GRADIENT ──────────────────────────────────────────────────────────────────
+// Universal binders are NOT pinned to a single band like path resources. A rank-N binder stays in the
+// drop pool for THREE bands (its own + the two above) and the rank MIX slides up with depth. Each rank
+// is a triangular "tent": it RISES 0→1 across its own 50-floor band (debut floor (N-1)*50+1, peak N*50),
+// then FALLS 1→0 over the next 101 floors, hitting 0 at floor (N+2)*50+1 — so rank 1 retires exactly at
+// F151 (when rank 4 debuts), rank 2 at F201, etc. At any floor the active tents are normalized to a 100%
+// pie: F1-50 = 100% R1; F51 = 98% R1 / 2% R2; F52 = 96% / 4%; … each new rank enters small at its band
+// start and grows as you climb while the older ranks fade. universalRankWeights(floor) returns the share
+// of each active rank (sums to 1); economy.js turns those shares into the per-clear drop (rank picked by
+// weight, overall chance = Σ share×rank-base) so deeper universals still get rarer overall.
+function universalTent(rank, floor) {
+  const debut = (rank - 1) * 50 + 1, peak = rank * 50, retire = (rank + 2) * 50 + 1;
+  if (floor < debut || floor >= retire) return 0;
+  if (floor <= peak) return (floor - (rank - 1) * 50) / 50;   // rise 0.02 → 1 across its own band
+  return 1 - (floor - peak) / (retire - peak);                 // fall 1 → 0, reaching 0 at `retire`
+}
+export function universalRankWeights(floor) {
+  const top = Math.min(9, Math.max(1, Math.ceil(floor / 50)));   // the band this floor sits in
+  const out = {}; let sum = 0;
+  for (let rank = Math.max(1, top - 2); rank <= top; rank++) {    // the ≤3 ranks alive here
+    const w = universalTent(rank, floor);
+    if (w > 0) { out[rank] = w; sum += w; }
+  }
+  for (const k in out) out[k] /= sum;
+  return out;
+}
+// A binder rank's full drop range = its 3-band active window [debut .. last nonzero floor (N+2)*50].
+const universalFloors = (rank) => [bandStart(rank), Math.min(TOWER, (rank + 2) * 50)];
 
 // --- Universal binder families (2 ladders, rank 1-9) — recipes pull one per path ---
 export const BINDER_FAMILIES = ['relic', 'stone'];
@@ -55,9 +103,9 @@ const FAMILY1 = ['Spirit Grass', 'Jade Dew', 'Frost Marrow', 'Dragon Tendon', 'S
 const FAMILY2_Q = ['Crude', 'Coarse', 'Refined', 'Pure', 'Earthen', 'Profound', 'Heavenly', 'Saint', 'Immortal'];
 export const binderId = (fam, rank) => `bind_${fam}_r${rank}`;
 for (let r = 1; r <= 9; r++) {
-  const idA = binderId('relic', r), idB = binderId('stone', r);
-  reg(idA, FAMILY1[r - 1], r, floorsFor(r, 1, idA), null);
-  reg(idB, `${FAMILY2_Q[r - 1]} Spirit Stone`, r, floorsFor(r, 1, idB), null);
+  const span = universalFloors(r);
+  reg(binderId('relic', r), FAMILY1[r - 1], r, span, null);
+  reg(binderId('stone', r), `${FAMILY2_Q[r - 1]} Spirit Stone`, r, span, null);
 }
 
 // --- Path resources: 5 themed types × rank 1-9 per non-locked path ---

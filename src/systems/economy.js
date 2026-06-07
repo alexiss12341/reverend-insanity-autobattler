@@ -2,7 +2,7 @@
 // and the stone-funded shop (lower-tier resources). Equipment was removed for now.
 import { S, activeTeam } from '../state.js';
 import { teamStoneFind, effectiveStats } from './cultivation.js';
-import { resourcesForFloor, RESOURCES, resourceList } from '../data/resources.js';
+import { resourcesForFloor, RESOURCES, resourceList, universalRankWeights, BINDER_FAMILIES, binderId } from '../data/resources.js';
 import { rankOf } from '../data/realms.js';
 import { rarityTier } from '../data/rarities.js';
 import { prestigeGainMult } from './prestige.js';
@@ -39,14 +39,27 @@ export function teamLuck() {
 export const dropBonus = () => teamFortune() + teamLuck();
 
 // ---- Drops on clearing an encounter on `floor` ----
-// DROP MODEL: a floor's pool = every resource eligible there (resourcesForFloor). On each clear EVERY
-// pool resource rolls INDEPENDENTLY against its own drop chance, set by its RANK (1-9; higher rank =
-// rarer, so rank 5 is rarer than rank 4 even though they share the Epic colour). Fortune + Luck
-// (dropBonus) scale both the chance and the quantity; bosses too.
+// DROP MODEL. PATH resources: a floor's pool = every path resource eligible there (resourcesForFloor);
+// on each clear EVERY one rolls INDEPENDENTLY against its own drop chance, set by its RANK (1-9; higher
+// rank = rarer, so rank 5 is rarer than rank 4 even though they share the Epic colour). UNIVERSAL binders
+// follow a different rule (see universalRankWeights): each family rolls ONCE, and on a hit the RANK is
+// drawn from the floor's blended weights — so the rank mix slides up with depth while deep binders still
+// thin out. Fortune + Luck (dropBonus) scale both the chance and the quantity; bosses too.
 const DROP_CHANCE = [0.50, 0.40, 0.30, 0.22, 0.16, 0.11, 0.07, 0.04, 0.025]; // base per-clear chance by rank 1..9
 export const dropChance = (rank) => DROP_CHANCE[Math.max(1, Math.min(9, rank)) - 1] || 0.1;
 // Effective per-clear chance for a resource (rank base × boss × bonus), clamped to 95%.
 const effDropChance = (r, isBoss, b) => Math.min(0.95, dropChance(r.rank) * (isBoss ? 1.5 : 1) * (1 + b));
+// A binder FAMILY's per-clear fire-chance on `floor` = the active ranks' shares × each rank's base
+// chance (so a floor dominated by rarer ranks fires less often), then the usual boss/bonus scaling.
+function universalChance(weights, isBoss, b) {
+  let c = 0; for (const k in weights) c += weights[k] * dropChance(Number(k));
+  return Math.min(0.95, c * (isBoss ? 1.5 : 1) * (1 + b));
+}
+function pickWeightedRank(weights) {
+  let roll = Math.random(); // weights already sum to 1
+  for (const k in weights) { roll -= weights[k]; if (roll <= 0) return Number(k); }
+  return Number(Object.keys(weights)[0] || 1);
+}
 
 export function rollFloorRewards(floor, isBoss) {
   const b = dropBonus(); // Fortune + Luck → +drop chance & +quantity
@@ -54,21 +67,36 @@ export function rollFloorRewards(floor, isBoss) {
   const stones = Math.round(stoneBase * (1 + teamStoneFind() + teamFortune()) * prestigeGainMult());
 
   const drops = {};
+  const qty = () => Math.max(1, Math.round((isBoss ? 2 : 1) * (1 + b)));
   for (const r of resourcesForFloor(floor)) {
-    if (Math.random() < effDropChance(r, isBoss, b)) {
-      drops[r.id] = (drops[r.id] || 0) + Math.max(1, Math.round((isBoss ? 2 : 1) * (1 + b)));
+    if (!r.daoPath) continue; // universal binders handled below via the blended rank mix
+    if (Math.random() < effDropChance(r, isBoss, b)) drops[r.id] = (drops[r.id] || 0) + qty();
+  }
+  // Universal binders: each family rolls once; a hit draws its rank from the floor's blended weights.
+  const uw = universalRankWeights(floor);
+  if (Object.keys(uw).length) {
+    const uChance = universalChance(uw, isBoss, b);
+    for (const fam of BINDER_FAMILIES) {
+      if (Math.random() < uChance) { const id = binderId(fam, pickWeightedRank(uw)); drops[id] = (drops[id] || 0) + qty(); }
     }
   }
   return { stones, drops };
 }
 
-// Deterministic drop chance for `resId` on `floor` — surfaced by the Almanac. With independent rolls,
-// P(≥1 per clear) IS the resource's own effective chance (factors in the current team's Fortune + Luck).
-// Returns null if it can't drop here.
+// Deterministic drop chance for `resId` on `floor` — surfaced by the Almanac. For PATH resources this is
+// just the resource's own effective chance (independent rolls). For a UNIVERSAL binder it's the family's
+// fire-chance × that rank's share of the floor's blend. Both factor in the team's Fortune + Luck. Returns
+// null if it can't drop here.
 export function dropEstimate(resId, floor, isBoss) {
   const r = RESOURCES[resId];
+  if (!r) return null;
+  if (!r.daoPath) {
+    const uw = universalRankWeights(floor);
+    if (!uw[r.rank]) return null;
+    return { perClear: universalChance(uw, isBoss, dropBonus()) * uw[r.rank] };
+  }
   const pool = resourcesForFloor(floor);
-  if (!r || !pool.some((x) => x.id === resId)) return null;
+  if (!pool.some((x) => x.id === resId)) return null;
   return { perClear: effDropChance(r, isBoss, dropBonus()) };
 }
 
