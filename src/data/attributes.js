@@ -83,8 +83,8 @@ export function deriveStats(a) {
     critChance: dim(luck, K, 1),
     critDamage: 1.5 + 4.0 * dim(str, K, 1),  // multiplier ~1.5 .. ~5.5
     critResist: dim(con, K, 1),
-    evasion: dim(agi + 0.25 * luck, K, 1),
-    hitChance: dim(agi, K, 0.9),             // +bonus over the 85% base hit
+    evasion: dim(agi + 0.25 * luck, K, 0.5), // AGI→evasion at HALF rate (asymptotes ~50% from attrs; Gu adds more)
+    hitChance: dim(agi, K, 0.45),            // AGI→hit at HALF rate (+bonus over the 85% base hit)
     armorPen: dim(str, K, 1),
     potency: dim(int, K, 0.9),               // +bonus over a status's base inflict
     statusResist: dim(con, K, 1),
