@@ -8,7 +8,7 @@ import { MORTAL_PEAK, realmName, isImmortalRealm, essenceQuality, rankOf } from 
 import { resonanceMult, attainmentOf, marksIn, woundMult, injuryMult, ATTAIN_RANK, markAmp, comprehensionLevelIn, comprehensionMult, comprehensionCap } from './dao.js';
 import { affinityEffectMult, lineEffects, lineGuAmp } from '../data/traits.js';
 import { prestigeCombatMult } from './prestige.js';
-import { effAttr, playerPool, budget, deriveStats, ATTR_KEYS, apertureCapacity, apertureRegenFactor, realmPointsTotal, aptThreshold, aptitudeStepBonus, effAptitude } from '../data/attributes.js';
+import { effAttr, deriveStats, ATTR_KEYS, apertureCapacity, apertureRegenFactor, realmPointsTotal, aptThreshold, aptitudeStepBonus, effAptitude } from '../data/attributes.js';
 import { STATUS } from '../data/status.js';
 
 export function guOf(uid) {
@@ -36,9 +36,8 @@ function applyEffect(e, mB, mA, add) {
 // Gu's SIGNED effects (affinity ×1.10 already baked in at generation) layer on, scaled by path
 // mastery, then wounds/prestige. Multi-effect Gu contribute every line; status-Gu add inflict riders.
 export function effectiveStats(ch) {
-  const pool = playerPool(ch);
   const a = {}; for (const k of ATTR_KEYS) a[k] = effAttr(ch, k);
-  const d = deriveStats(a, budget(pool));
+  const d = deriveStats(a);
   const add = { atkPct: 0, defPct: 0, hpPct: 0, spdPct: 0, essPoolPct: 0, essRcvPct: 0, regenPct: 0,
     crit: 0, critDmg: 0, critRes: 0, statusRes: 0, evasion: 0, hit: 0, armorPen: 0, lifesteal: 0,
     thorns: 0, potency: 0, lucky: 0 };

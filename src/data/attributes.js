@@ -27,9 +27,12 @@ export function poolAtIndex(idx) {
   return P[lo] + (P[hi] - P[lo]) * (idx - lo);
 }
 
-// Per-attribute "budget" for the diminishing % stats — realm-relative, so a % stat depends on the
-// ALLOCATION RATIO, not raw magnitude (all-in ≈ 83% of cap, even spread ≈ 50%, at any realm).
-export const budget = (pool) => Math.max(1, pool / 5);
+// Half-saturation constant for the diminishing % stats. ABSOLUTE — NOT realm-relative: a % stat now
+// depends only on the RAW attribute, so more points always = more stat, at any realm (no pool dilution;
+// the old realm-relative `budget = pool/5` model was abolished — it perversely made deeper cultivators
+// scale WORSE). At attr = STAT_K a stat sits at half its cap; it climbs toward the cap as the attribute
+// grows. Raw stats (HP/ATK/DEF/essence) stay linear and carry the realm gulf.
+export const STAT_K = 40;
 
 // Enemy role → how it spreads its point pool across the five attributes (sums to ~1).
 export const ROLE_WEIGHTS = {
@@ -46,8 +49,9 @@ export function roleAttrs(role, pool) {
   return a;
 }
 
-// Diminishing-returns % toward `cap`, realm-relative via B.
-const dim = (attr, B, cap) => (cap * attr) / (attr + B);
+// Diminishing-returns % toward `cap`: attr/(attr+k). k = STAT_K (a constant), so it's ABSOLUTE —
+// realm-independent and monotonic in the raw attribute.
+const dim = (attr, k, cap) => (cap * attr) / (attr + k);
 
 // APERTURE CAPACITY: aptitude sets the FRACTION of the (INT-derived) aperture a cultivator can fill.
 // Per Reverend Insanity, talent grades map to % capacity; here aptitude 2.5 = 100% (Extreme), so
@@ -62,27 +66,29 @@ export function apertureGrade(cap) {
 // below 100% is halved, so D-grade (20% capacity) still regens at 60%, A at 94%, Extreme at 100%.
 export const apertureRegenFactor = (aptitude) => (1 + apertureCapacity(aptitude)) / 2;
 
-// THE derivation: attributes (a) + realm budget (B) → full derived-stat block. Raw stats are linear
-// (carry the gulf); % stats are diminishing toward ~100% (Lucky Hit ~50%); Speed is deliberately
-// flat. Roll-chances are NOT clamped here — the battle engine applies the [1%,99%] clamp at use.
-export function deriveStats(a, B) {
+// THE derivation: attributes (a) → full derived-stat block. Raw stats (HP/ATK/DEF/essence) are LINEAR
+// and carry the realm gulf; % stats diminish toward their cap via the ABSOLUTE half-saturation constant
+// STAT_K, so more of an attribute always = more stat (no realm dilution). Speed is bounded (8..~38) so
+// the ATB gauge never explodes. Roll-chances are NOT clamped here — the battle engine clamps at use.
+export function deriveStats(a) {
   const str = a.str || 0, agi = a.agi || 0, con = a.con || 0, int = a.int || 0, luck = a.luck || 0;
+  const K = STAT_K;
   return {
     maxHp: 60 + con * 9,
     atk: 6 + str * 1.5,
     def: 3 + con * 0.5,
-    spd: 8 + 30 * dim(agi, B, 1),            // flat-ish (8..~38) so gauge timing never explodes
+    spd: 8 + 30 * dim(agi, K, 1),            // bounded 8..~38 so gauge timing never explodes
     essencePool: Math.round(40 + int * 4),
     essenceRegen: 2 + int * 0.25,
-    critChance: dim(luck, B, 1),
-    critDamage: 1.5 + 4.0 * dim(str, B, 1),  // multiplier ~1.5 .. ~5.5
-    critResist: dim(con, B, 1),
-    evasion: dim(agi + 0.25 * luck, B, 1),
-    hitChance: dim(agi, B, 0.9),             // +bonus over the 85% base hit
-    armorPen: dim(str, B, 1),
-    potency: dim(int, B, 0.9),               // +bonus over a status's base inflict
-    statusResist: dim(con, B, 1),
-    luckyHit: dim(luck, B, 0.5),
+    critChance: dim(luck, K, 1),
+    critDamage: 1.5 + 4.0 * dim(str, K, 1),  // multiplier ~1.5 .. ~5.5
+    critResist: dim(con, K, 1),
+    evasion: dim(agi + 0.25 * luck, K, 1),
+    hitChance: dim(agi, K, 0.9),             // +bonus over the 85% base hit
+    armorPen: dim(str, K, 1),
+    potency: dim(int, K, 0.9),               // +bonus over a status's base inflict
+    statusResist: dim(con, K, 1),
+    luckyHit: dim(luck, K, 0.5),
   };
 }
 

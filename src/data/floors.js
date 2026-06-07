@@ -16,7 +16,7 @@
 import { resourcesForFloor } from './resources.js';
 import { guList, guEssenceCostFor, effectText } from './gu.js';
 import { commOf } from './daoPaths.js';
-import { deriveStats, roleAttrs, budget, poolAtIndex, realmPointsTotal, apertureCapacity, apertureRegenFactor, aptitudePointBonus, rarityBonus } from './attributes.js';
+import { deriveStats, roleAttrs, poolAtIndex, realmPointsTotal, apertureCapacity, apertureRegenFactor, aptitudePointBonus, rarityBonus, baseAttr } from './attributes.js';
 import { statusForPath, STATUS, statusDuration } from './status.js';
 import { essenceQualityByRank, guSlots } from './realms.js';
 import { NPC_TEMPLATES, RARITY_ORDER } from './rarities.js';
@@ -112,37 +112,37 @@ export const MAX_FLOORS = 450;
 export const isBossFloor = (floor) => floor % 10 === 0;
 // Realm/rank (1..9) of a floor's enemies.
 export const floorRealm = (floor) => Math.max(1, Math.min(9, Math.ceil(floor / FLOORS_PER_REALM)));
-// Enemy attribute-point pool for a floor: ramps across a rank's 4 stages (mortal), flat within an
-// immortal rank, jumping hard at each rank barrier — mirrors the player's realm-point curve so the two
-// sides stay aligned at every depth. PLUS a floor-RAMPED additive EDGE: the player arrives rarity-,
-// attribute-floor- and aptitude-boosted (a lone Epic main already out-pools a raw rank-1 enemy), so flat
-// realm-parity lets a lone strong cultivator solo-stomp deep into a band. The edge is ~0 on floor 1 (so
-// floor 1 stays a trivial solo win), ramps so a STAGNANT lone char is outpaced within ~a dozen floors,
-// and CAPS so deep floors (whose realm pool already dwarfs it) aren't overtuned.
-// DIFFICULTY MODEL — enemies are scaled against a REFERENCE appropriately-leveled cultivator (a solid
-// Epic-grade build) at the rank/stage each floor expects, NOT the raw realm-point table. This tracks the
-// player's real pool curve — including the aptitude point-bonus SPIKES at every rank-up — so the challenge
-// stays uniform across ranks instead of going soft in the mid-ranks. A within-band difficulty RAMP makes
-// each band a SAWTOOTH: gentle right after a rank-up (respite), building to a hard gate boss at the band's
-// end. DIFF_END > 1 means the gate enemy out-pools a Gu-LESS rank-peak team — so Gu (and their resonance)
-// are what let a synergized team break the wall; a Gu-less team simply can't.
-const REF_RARITY_BONUS = rarityBonus('Epic');  // reference player's rarity head-start (pool)
-const REF_APT = 2.2;                            // …and aptitude (drives the attribute-point bonus)
-const DIFF_START = 0.35;   // enemy pool ÷ reference player pool at a band's FIRST floor (post rank-up respite; keeps floor 1 / band-openings a gentle on-ramp)
-const DIFF_END   = 1.0;    // …and at the band's GATE boss. With strong Gu (GU_POWER) the GATE bite comes from foes' Gu, not raw pool
-const BOSS_POOL_MULT = 1.35; // the gate boss itself fields this × the floor pool on top of the ramp
-function refPlayerPool(realm) {
-  return poolAtIndex(realm) + REF_RARITY_BONUS + aptitudePointBonus(Math.round(realm), REF_APT);
-}
-// Ranks 1-3 are otherwise trivialized (few mobs + the team's numbers/Gu dominate), so their foes hit
-// HARDER per-unit. Indexed by rank (1-9); 1 for ranks 4+. Combined with bigger early waves (baseSize),
-// this forces Gu even at low ranks. EARLY_POWER[3] (rank 3) is the focus tweak.
-const EARLY_POWER = [0, 1.2, 1.25, 1.35, 1.3, 1.05, 1, 1, 1, 1];
-function poolForFloor(floor) {
+// The DISCRETE REALM INDEX (0..23) a floor's enemies sit at — the sub-stage STEPS up across a mortal
+// rank's 50-floor band in four quarters: Initial → Middle → Upper → Peak. So a foe is a genuine
+// "Rank 1 Middle" / "Rank 1 Peak", and the band's last floor (the realm gate, e.g. 50) is always Peak.
+// Immortal ranks (6-9) have no sub-stages — one realm index per rank.
+function floorRealmIndex(floor) {
   const rank = floorRealm(floor);
+  if (rank > 5) return Math.min(23, 20 + (rank - 6));                     // immortal: no sub-stages
   const within = ((floor - 1) % FLOORS_PER_REALM) / FLOORS_PER_REALM;     // 0 .. ~1 across the band
-  const refRealm = rank <= 5 ? (rank - 1) * 4 + within * 3 : Math.min(23, 20 + (rank - 6));
-  return refPlayerPool(refRealm) * (DIFF_START + (DIFF_END - DIFF_START) * within) * (EARLY_POWER[rank] || 1);
+  const stage = Math.min(3, Math.floor(within * 4));                      // 0..3 = Initial/Middle/Upper/Peak
+  return (rank - 1) * 4 + stage;
+}
+// PARITY BASELINE: an enemy's attribute-point pool is built exactly like a player's of its realm + rarity
+// — the real total a player earns from rank 1 to that realm (realm points + its rarity's bonus pool + its
+// aptitude overflow). The per-attribute rarity FLOOR (baseAttr) is added on top in enemyUnit, and the SAME
+// deriveStats turns attributes into stats. This baseline = a bare equivalent cultivator (the DIFF=1.0 / gate
+// reference).
+function enemyPool(realmIdx, rarity, apt) {
+  return poolAtIndex(realmIdx) + rarityBonus(rarity) + aptitudePointBonus(realmIdx, apt);
+}
+// DIFFICULTY MULTIPLIER layered on top of the parity baseline — scales the INVESTED pool only (never the
+// rarity floor, which stays the player-equal pre-investment baseline). A within-band SAWTOOTH: DIFF_START
+// right after a rank-up (a gentle respite, enemies under-invested vs a player) ramping to DIFF_END at the
+// band's gate (enemies out-stat an equal player), applied UNIFORMLY to every rank so mortal and immortal
+// bands share one curve. Bosses field BOSS_POOL_MULT × on top. The player's Gu + same-path resonance are
+// the margin that breaks each gate. These are the knobs that move the whole difficulty curve.
+const DIFF_START = 0.5;    // invested-pool factor at a band's FIRST floor (gentle post-rank-up on-ramp)
+const DIFF_END   = 2.0;    // …and at the band's GATE boss (enemies ~2× an equal player's invested pool)
+const BOSS_POOL_MULT = 1.35; // a boss fields this × the floor's invested pool on top of the ramp
+function difficultyMult(floor) {
+  const within = ((floor - 1) % FLOORS_PER_REALM) / FLOORS_PER_REALM;     // 0 .. ~1 across the band
+  return DIFF_START + (DIFF_END - DIFF_START) * within;
 }
 
 // Themed combat effects, gated by realm depth so realm-1 mobs stay simple. Bosses always bite.
@@ -179,14 +179,23 @@ function hash32(str) { let h = 0; for (let i = 0; i < str.length; i++) h = (h * 
 const jitter = (key) => 0.9 + (hash32(key) % 21) / 100; // deterministic 0.90 .. 1.10
 const themePath = (name) => THEME_PATHS[hash32(name) % THEME_PATHS.length];
 
-// ---- Enemy RARITY (gradient by depth) → aptitude (essence pool) + the tier of its traits ----------
-// Rarity ramps GENTLY with floor depth so shallow floors are almost all Common (negligible traits) and
-// higher rarities phase in deeper — trait strength grows gradually, not a cliff. Bosses/guards get a
-// bump. RARITY_CAP keeps it bounded. Deterministic via the floor rng. (Rarity does NOT add attribute
-// points — those stay realm-based; rarity only sets aptitude + which trait TIER the unit uses.)
+// ---- Enemy RARITY — band-capped, ramping to the cap at the realm gate ------------------------------
+// Each realm BAND has a single TOP rarity = its rank: rank 1 = Common, rank 2 = Uncommon, rank 3 = Rare,
+// rank 4 = Epic, rank 5 = Legendary, rank 6+ = Immortal (capped). So floors 1-50 are ALL Common; 51-100
+// introduce Uncommon; 101-150 Rare; 151-200 Epic; 201-250 Legendary; 251+ Immortal. Within a band the
+// pool shifts from the band's BASE rarity (the previous band's cap) — only a FEW of the new top rarity at
+// the opening — up to the FULL top rarity at the band's last floors (the gate boss is the hardest fight).
+// Bosses always field the cap. Deterministic via the floor rng. Rarity sets aptitude + trait TIER AND (in
+// the parity model) the attribute floor + bonus pool, so a higher-rarity foe is a genuinely stronger one.
 function enemyRarity(floor, boss, difficulty, rng) {
-  let lvl = (floor - 1) / 120 - 0.45 + (boss ? 1.4 : difficulty * 0.8) + (rng() - 0.5) * 0.9;
-  return RARITY_ORDER[Math.max(0, Math.min(5, Math.round(lvl)))];
+  const rank = floorRealm(floor);
+  const cap = Math.min(5, rank - 1);                   // band's TOP rarity (rank1→Common … rank6+→Immortal)
+  const base = Math.max(0, Math.min(5, rank - 2));     // band's BASE rarity (= the previous band's cap)
+  if (cap <= base) return RARITY_ORDER[cap];           // single-rarity band: rank 1 (all Common), ranks 7-9 (all Immortal)
+  if (boss) return RARITY_ORDER[cap];                  // bosses field the band's top rarity
+  const within = ((floor - 1) % FLOORS_PER_REALM) / FLOORS_PER_REALM;     // 0 .. ~0.98 across the band
+  const pTop = Math.min(1, 0.12 + 0.9 * within + (difficulty || 0) * 0.3); // a few at the opening → ALL by the gate
+  return RARITY_ORDER[rng() < pTop ? cap : base];
 }
 
 // ---- Squad THEMES: a coherent per-floor team gimmick. A theme maps each ROLE → a trait LINE, and may
@@ -242,9 +251,14 @@ function enemyUnit(floor, name, { boss = false, difficulty = 0, kind = 'beast', 
   const role = boss ? 'boss' : roleOf(name);
   const rarity = enemyRarity(floor, boss, difficulty, rng);    // gradient rarity → aptitude + trait tier
   const apt = (NPC_TEMPLATES[rarity] || NPC_TEMPLATES.Common).aptitude;
-  let pool = poolForFloor(floor);
-  if (boss) pool *= BOSS_POOL_MULT;               // bosses field a larger point pool (edge included)
-  const base = deriveStats(roleAttrs(role, pool), budget(pool)); // attribute-derived stats (same as allies)
+  // parity baseline (rank-1→realm pool for this rarity) × difficulty multiplier (within-band sawtooth),
+  // ×boss bump — the multiplier scales the INVESTED pool; the rarity floor below stays player-equal.
+  const realmIdx = floorRealmIndex(floor);          // discrete sub-stage (Initial→Peak across the band)
+  const pool = enemyPool(realmIdx, rarity, apt) * difficultyMult(floor) * (boss ? BOSS_POOL_MULT : 1);
+  const attrs = roleAttrs(role, pool);            // invested points, distributed across the five attributes by role
+  const floorA = baseAttr(rarity);                // …plus the SAME per-attribute rarity floor a player gets
+  for (const k in attrs) attrs[k] += floorA;
+  const base = deriveStats(attrs);                // attribute-derived stats — identical derivation to allies
 
   // Gu loadout + traits apply as stat MULTIPLIERS + an effect bundle on top of the derived base.
   // Cultivators/bosses get a Gu kit; beasts get a few WILD Gu. Floors 1-3 stay plain.
@@ -309,12 +323,16 @@ function enemyUnit(floor, name, { boss = false, difficulty = 0, kind = 'beast', 
   effects.critResist = base.critResist;
   effects.armorPen = base.armorPen;
   effects.luckyHit = base.luckyHit;
+  effects.potency = base.potency;            // INT-derived status potency — was dropped; now parity with allies
+  effects.statusResist = base.statusResist;  // CON-derived status resist — was dropped; now parity with allies
   effects.inflicts = riders; // one rider per equipped status-Gu effect (declared chance/dot/dur)
   if (lb && lb.dotSpread) effects.dotSpread = (effects.dotSpread || 0) + lb.dotSpread;   // Afflictor extra
   if (lb && lb.essDrain) effects.essDrain = (effects.essDrain || 0) + lb.essDrain;       // Reaver extra
   for (const k in rateFx) effects[k] = (effects[k] || 0) + rateFx[k];
   if (regenFrac) effects.regen = (effects.regen || 0) + Math.round(regenFrac * maxHp);
-  const CAP = { lifesteal: 0.9, crit: 0.95, dodge: 0.9, thorns: 0.6, extra_turn: 0.5 };
+  // Caps mirror the ally clamps in cultivation.js effectiveStats (dodge/critResist/statusResist/armorPen
+  // all 0.95) so both sides resolve identically; thorns/extra_turn are enemy-only legacy knobs.
+  const CAP = { lifesteal: 0.9, crit: 0.95, dodge: 0.95, critResist: 0.95, statusResist: 0.95, armorPen: 0.95, thorns: 0.6, extra_turn: 0.5 };
   for (const k in CAP) if (effects[k]) effects[k] = Math.min(effects[k], CAP[k]);
 
   const compCap = ENEMY_COMP_CAP[rank - 1];
@@ -326,7 +344,7 @@ function enemyUnit(floor, name, { boss = false, difficulty = 0, kind = 'beast', 
   }
 
   return {
-    name, isBoss: boss, kind: cultivator ? 'cultivator' : 'beast', rank, role, rarity, line: lineId,
+    name, isBoss: boss, kind: cultivator ? 'cultivator' : 'beast', rank, realm: realmIdx, role, rarity, line: lineId,
     daoPath: affPath,
     comprehension, daoMarks, gu: loadout.map((g) => g.name),
     guInfo: loadout.map((g) => ({ name: g.name, eff: effectText(g) })), // name + effect text for the arena traits panel

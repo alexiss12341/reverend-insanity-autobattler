@@ -54,7 +54,8 @@ function enemyCombatant(u, pos) {
   // combat block from attributes (crit, dodge=evasion, hitChance, critDamage, critResist, armorPen,
   // luckyHit) so allies and foes resolve through the identical pipeline.
   const base = { lifesteal: 0, crit: 0, dodge: 0, thorns: 0, burn: 0, regen: 0, extra_turn: 0,
-    hitChance: 0, critDamage: 1.5, critResist: 0, armorPen: 0, luckyHit: 0, essDrain: 0, dotSpread: 0, inflicts: [] };
+    hitChance: 0, critDamage: 1.5, critResist: 0, armorPen: 0, luckyHit: 0, potency: 0, statusResist: 0,
+    essDrain: 0, dotSpread: 0, inflicts: [] };
   return {
     name: u.name, ally: false, side: 'foe', idx: pos, isBoss: u.isBoss,
     row: u.row || (pos < FRONT ? 'front' : 'back'), lane: u.lane != null ? u.lane : pos % FRONT,
@@ -381,6 +382,7 @@ export function resolveEncounter(encounter, onLog, opts = {}) {
     guInfo: u.ch ? guInfoFor(u.ch) : (u.guInfo || []), // equipped Gu (name + effect) for the traits panel
     essMax: u.essMax != null ? u.essMax : (u.essencePool || 0),
     rarity: u.ch ? u.ch.rarity : u.rarity, line: u.ch ? u.ch.line : u.line,
+    realm: u.ch ? u.ch.realm : u.realm,
     affinity: u.ch ? affinityPaths(u.ch) : (u.daoPath ? [u.daoPath] : []) });
   const timeline = rec ? {
     allies: allies.map(snap),

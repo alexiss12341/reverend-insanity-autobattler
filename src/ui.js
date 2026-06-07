@@ -390,6 +390,7 @@ function unitBlock(u, side, idx) {
   const cult = u.kind === 'cultivator';
   // tooltip: rarity · trait line · Gu (so the player can read a foe's gimmick); name tinted by rarity.
   const bits = [];
+  if (u.realm != null) bits.push(realmName(u.realm));
   if (u.rarity) bits.push(u.rarity);
   if (u.line && LINES[u.line]) bits.push(lineName(u.line, u.rarity));
   if (u.gu && u.gu.length) bits.push(`Gu: ${u.gu.join(', ')}`);
@@ -428,7 +429,7 @@ export function renderArena() {
   const enc = generateEncounter(S().farmFloor);
   const foeUnits = enc.waves[0].map((u) => ({
     name: u.name, hp: u.maxHp, max: u.maxHp, row: u.row, lane: u.lane, kind: u.kind, gu: u.gu, essMax: u.essencePool, ess: u.essencePool,
-    rarity: u.rarity, line: u.line, affinity: u.daoPath ? [u.daoPath] : [], guInfo: u.guInfo || [] }));
+    rarity: u.rarity, realm: u.realm, line: u.line, affinity: u.daoPath ? [u.daoPath] : [], guInfo: u.guInfo || [] }));
   b.innerHTML = foeUnits.map((u, i) => unitBlock(u, 'foe', i)).join('');
   renderTraitPanels(allyUnits, allyAurasFor(allyUnits), foeUnits, enemyWaveAura(enc.waves[0]));
   setWaveIndicator(1, enc.waves.length); // static preview shows the first wave of the farm encounter

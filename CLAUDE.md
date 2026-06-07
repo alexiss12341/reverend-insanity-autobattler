@@ -31,9 +31,13 @@ Open the URL, pick a save slot, play. Saves use the browser's `localStorage` (3 
   A wave roster may exceed 6 total (each individual wave is ≤ 6).
 - A floor is **cleared** when every enemy of the encounter (all waves) is defeated → next floor unlocks.
 - **450-floor tower**: 9 cultivation realms × 50 floors; **every enemy on a floor is of that band's
-  realm** (floors 1–50 = rank 1 … 401–450 = rank 9), so difficulty ramps gently within a realm and
+  realm** (floors 1–50 = rank 1 … 401–450 = rank 9). Within a band the enemy **SUB-REALM steps**
+  Initial→Middle→Upper→Peak across the 50 floors (the gate floor is always Peak; immortal ranks are
+  single-stage), and a **band-capped RARITY** ramps from the previous band's cap up to this band's own —
+  rank 1 Common · 2 Uncommon · 3 Rare · 4 Epic · 5 Legendary · 6+ Immortal — only a *few* of the new
+  rarity at the opening, building to **all** of it at the gate. So difficulty ramps within a realm and
   jumps at each boundary (the mortal→immortal wall is floor 251). **Boss every 10th floor** (10 … 450);
-  bosses are far stronger and give more rewards.
+  bosses field the band's top rarity + a full Gu loadout and give more rewards.
 - **Idle**: the team auto-farms a chosen **cleared** floor; each background run takes as long as the
   team actually needs to clear it (paced by the fight's simulated duration, **not** a fixed tick). If
   stuck on the frontier, farm a lower floor to grind, then return. Offline progress is estimated on load.
@@ -152,8 +156,12 @@ src/
   data/               # pure data + generators (no state mutation)
     attributes.js     # STAT CORE (Phase 1 overhaul): 5 attributes (str/agi/con/int/luck) → derived
                       #   stats. NO realm multiplier — all power is in realm-granted attribute POINTS.
-                      #   deriveStats(attrs,B): raw stats LINEAR, % stats diminishing & realm-relative
-                      #   (B=pool/5). Shared by cultivation.js (allies) + floors.js (enemies via ROLE_WEIGHTS).
+                      #   deriveStats(attrs): raw stats LINEAR, % stats diminishing toward a cap via an
+                      #   ABSOLUTE half-saturation constant STAT_K (=40). NOT realm-relative — the old
+                      #   B=pool/5 model was ABOLISHED (it perversely made deeper cultivators scale WORSE:
+                      #   a 200-AGI immortal slower than a 30-AGI rank-1). Every % stat (spd/crit/evasion/
+                      #   hit/potency/resist/...) is now monotonic in its raw attribute, realm-independent.
+                      #   Shared by cultivation.js (allies) + floors.js (enemies via ROLE_WEIGHTS).
     status.js         # 9 battle statuses (Phase 3): registry (base%/duration/magnitude rule) + thematic
                       #   path→status map (fire→Burn, ice→Frozen, …) + statusForPath. Gu inflict via path.
                       #   DoTs (Burn/Poison/Bleed) = fixed 2-action, UNCAPPED independent instances (each
@@ -184,23 +192,23 @@ src/
                       #   per rarity down (Leg 6 · Epic 4 · Rare 2), and Common/Uncommon/Rare are 3 distinct rank-1
                       #   stages (0/1/2). See memory recruit-roster-system.md.
     floors.js         # 9 realms × 50 = 450-floor tower; deterministic encounter/wave/boss gen. Enemies mix
-                      #   spirit BEASTS + CULTIVATORS; enemyUnit sets realm-banded (bounded) stats by ROLE
-                      #   (tank/bruiser/skirmisher/striker) + comp/marks; cultivators wield a floor-themed Gu
-                      #   loadout (+inherent combat edge), beasts a few wild Gu — enemyGuLoadout/floorThemePaths. Each
-                      #   foe also gets a gradient RARITY (enemyRarity, gentle ramp by depth, Common early) → aptitude
-                      #   (caps its essence aperture, like allies) + a TIERED archetype LINE trait + Dao-Path AFFINITY,
-                      #   all BAKED into its stat block (no effectiveStats for foes). Each floor draws a coherent SQUAD
-                      #   theme (SQUADS: role→line + optional team AURA baked across the wave via applyEnemyAura) — the
-                      #   per-floor gimmick. RANK stays band-capped; traits/rarity make depth richer, not higher-rank.
-                      #   DIFFICULTY (poolForFloor): enemies scale to a REFERENCE appropriately-leveled cultivator
-                      #   (refPlayerPool = poolAtIndex + Epic rarity bonus + aptitudePointBonus, REF_APT 2.2) at the
-                      #   rank/STAGE each floor expects — NOT the raw realm table — so the challenge stays uniform across
-                      #   ranks (it tracks the player's aptitude-spike pool curve). A within-band RAMP gives the SAWTOOTH:
-                      #   DIFF_START 0.4 (gentle on-ramp / post-rank-up respite) → DIFF_END 1.8 at the gate boss; the boss
-                      #   then ×BOSS_POOL_MULT (1.35). DIFF_END>1 means a Gu-LESS rank-peak team can't clear the gate — Gu
-                      #   (+ same-path resonance) are the margin. Sim (realistic team, full same-path tier-R Gu): gate
-                      #   bosses ~44-79% w/ Gu (rank-2/F100 hardest ~40%), floor 1 still 100% solo, lone no-Gu walled ~F20.
-                      #   Knobs: DIFF_START/DIFF_END/BOSS_POOL_MULT/REF_APT at the top of floors.js.
+                      #   spirit BEASTS + CULTIVATORS, built with FULL PARITY to allies: enemyUnit gives each foe the
+                      #   SAME baseAttr(rarity) per-attr FLOOR + the real rank-1→realm point pool (enemyPool =
+                      #   poolAtIndex(realmIdx) + rarityBonus + aptitudePointBonus), distributed by ROLE (tank/bruiser/
+                      #   skirmisher/striker), then the SAME deriveStats allies use — a player & enemy of matched realm/
+                      #   rarity/build derive identical stats. Cultivators wield a floor-themed Gu loadout, beasts a few
+                      #   wild Gu (enemyGuLoadout/floorThemePaths) + comp/marks. SUB-REALM: floorRealmIndex STEPS the foe's
+                      #   realm Initial→Middle→Upper→Peak across the band (stored as `realm`, shown in the arena tooltip;
+                      #   gate floor = Peak; immortal ranks single-stage) — so its pool reflects e.g. a true Rank 2 Middle.
+                      #   RARITY (enemyRarity) is BAND-CAPPED: cap = rank (1 Common · 2 Uncommon · 3 Rare · 4 Epic ·
+                      #   5 Legendary · 6+ Immortal); within a band it ramps from the previous cap to this cap (pTop =
+                      #   0.12 + 0.9·within) — a few at the opening → ALL at the gate; bosses take the cap. Rarity → aptitude
+                      #   + trait TIER + the attribute floor/pool. Each floor draws a coherent SQUAD theme (SQUADS: role→
+                      #   line + optional team AURA via applyEnemyAura) — the per-floor gimmick. DIFFICULTY = a multiplier on
+                      #   the INVESTED pool only (never the rarity floor): within-band SAWTOOTH difficultyMult = DIFF_START
+                      #   0.5 → DIFF_END 2.0 (UNIFORM across all ranks; old EARLY_POWER removed) × ×BOSS_POOL_MULT 1.35 for
+                      #   bosses — so vs an equal player a band runs ×0.5 (gentle opening) → ~×2.66 at the gate boss; Gu +
+                      #   same-path resonance are the player's margin. Knobs: DIFF_START/DIFF_END/BOSS_POOL_MULT at top of floors.js.
                       #   placeWave = deliberate, role-aware formation templates (FORMS); floorRealm/MAX_FLOORS
   systems/            # game logic; import `state`, mutate via functions
     cultivation.js    # effectiveStats(char)=attr-base×(Gu% ×comprehension×resonance×markAmp)×prestige−wounds−injury; breakthroughCost/Chance + attemptBreakthrough (mortal, stone-purchased & fallible)
