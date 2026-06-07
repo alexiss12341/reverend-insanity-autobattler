@@ -372,7 +372,15 @@ function takeAction(u, foes, log, seed) {
       const d = Math.round(tgt.essMax * u.fx.essDrain);
       if (d > 0) { tgt.ess = Math.max(0, (tgt.ess || 0) - d); u.ess = Math.min(u.essMax || u.ess || 0, (u.ess || 0) + d); }
     }
-    if (tgt.fx.thorns > 0 && tgt.hp > 0) { u.hp -= Math.round(dmg * tgt.fx.thorns); touched.add(u); }
+    if (tgt.fx.thorns > 0 && tgt.hp > 0) {
+      // reflected thorns is mitigated by the ATTACKER's DEF, same calc as a normal hit (def×0.6, pierced
+      // by the wearer's armorPen), floored at 1 — so the attacker's defense damps thorns like any other hit.
+      // NOTE: this is DIRECT HP loss, NOT a re-run attack — it never checks u.fx.thorns, so reflected
+      // damage can never re-trigger thorns. Keep it a plain hp subtraction here (no attack call) to avoid
+      // a thorns-vs-thorns ping-pong loop.
+      const rdef = effDef(u) * 0.6 * Math.max(0, 1 - (tgt.fx.armorPen || 0));
+      u.hp -= Math.max(1, Math.round(dmg * tgt.fx.thorns - rdef)); touched.add(u);
+    }
     applied = inflictStatuses(u, tgt, log, touched); // (status) Potency vs Status Resistance per rider
     log(`${u.name} hits ${tgt.name} for ${dmg}${lucky ? ' (lucky crit!)' : crit ? ' (crit!)' : ''}.`);
     if (tgt.hp <= 0) log(`${tgt.name} is slain.`);
