@@ -23,25 +23,4 @@ so it must be served over HTTP.)
 - **Cultivation** — Ranks 1–9 (+ Venerable), realms multiply all stats; advance by winning.
 - **3 save slots** (localStorage).
 
-## Continue building with Claude Code
-
-This project is set up for [Claude Code](https://docs.claude.com/en/docs/claude-code/overview).
-
-1. Install (Node 18+):
-   ```bash
-   npm install -g @anthropic-ai/claude-code
-   ```
-   (A native installer is also available; see the docs.)
-2. From this folder, start a session:
-   ```bash
-   cd xianxia-autobattler
-   claude
-   ```
-   First run walks you through sign-in.
-3. `CLAUDE.md` in the project root gives Claude Code the full spec, architecture map, conventions, and a
-   roadmap of good next tasks, so you can just ask e.g. *"add Gu paths with set bonuses"* or
-   *"give enemies Gu effects and rebalance floors 1–30."*
-
-## Project layout
-
-See `CLAUDE.md` for the annotated file map and data-flow notes.
+- **Work in Progress**
