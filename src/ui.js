@@ -10,6 +10,7 @@ import { rarityColor, RARITY_ORDER, rarityTier } from './data/rarities.js';
 import { realmName, realmClass } from './data/realms.js';
 import { PULL_COST, PULL_COST_10, PITY_CAP, pityCount } from './systems/gacha.js';
 import { prestige, BOONS, boonCost, boonLevel, canReincarnate, soulsAward } from './systems/prestige.js';
+import { DAILY_QUESTS, COMPLETE_ALL_BONUS, ensureDaily, questProgress, questGoal, questComplete, questClaimed, questClaimable, allClaimed, bonusClaimable, pendingReward, claimableCount, msToReset } from './systems/quests.js';
 import { canCraft, refineSpec, canUpgrade } from './systems/crafting.js';
 import { resourceCost, dropEstimate, shopResources, highestRosterRank, marketUnlocked } from './systems/economy.js';
 import { generateEncounter, isBossFloor, encounterSize, floorRealm, FLOORS_PER_REALM } from './data/floors.js';
@@ -70,6 +71,10 @@ export function refreshTop() {
   const d = imprintableDuplicateCount();
   const dup = $('dup-alert');
   if (dup) { dup.textContent = d ? (d > 99 ? '99+' : '' + d) : ''; dup.classList.toggle('on', d > 0); }
+  // nav alert: daily quest rewards ready to claim
+  const q = claimableCount();
+  const qb = $('quest-alert');
+  if (qb) { qb.textContent = q ? (q > 99 ? '99+' : '' + q) : ''; qb.classList.toggle('on', q > 0); }
 }
 
 // The audio settings popup (opened by the bottom-left gear FAB). Independent BGM + SFX level bars
@@ -109,6 +114,7 @@ export function render(tab) {
   const views = {
     battle: viewBattle, team: viewTeam, formation: viewFormation, recruit: viewRecruit,
     gu: viewGu, shop: viewShop, inv: viewInventory, floors: viewFloors, codex: viewCodex, dao: viewDao,
+    quests: viewQuests,
     attainment: viewAttainment, almanac: viewAlmanac, res: () => viewResource(_resId),
     whatsnew: viewWhatsNew,
     char: () => viewCharacter(_charId),
@@ -159,6 +165,7 @@ const TAB_TIPS = {
   team: 'Your roster and who’s active. A red badge on the tab means someone has unspent attribute points.',
   formation: 'Drag fighters onto the 2×5 board. A front-row unit shields the back-liner in its own lane until it falls.',
   recruit: 'Spend ✦ Immortal Essence to summon cultivators across six rarities. Pity guarantees a rare pull eventually.',
+  quests: 'Daily goals that pay ✦ Immortal Essence. They reset every day at midnight — clear them all for a bonus.',
   gu: 'Craft Gu from primeval stones + that path’s resources. Higher tiers refine from spare same-path Gu one tier lower.',
   dao: 'Comprehension grows by fighting with a path’s Gu; immortals gather Dao Marks from tribulations. Ascend here.',
   attainment: 'Your standing in each Dao path — comprehension levels and the gates they unlock.',
@@ -1939,6 +1946,10 @@ export function viewFloors() {
 // Player-facing patch notes. Add the newest release to the TOP of this list; each entry is
 // { date, title, items: [[heading, html], …] }. HTML is allowed in the item bodies.
 const WHATS_NEW = [
+  { date: 'Jun 9, 2026', title: 'Daily Quests', items: [
+    ['Daily Quests', 'A new <b>日 Quests</b> page in the sidebar with six daily goals — win battles, push your frontier, refine Gu, recruit, breakthrough and shop the Market. Each pays <b style="color:var(--jade)">✦ Immortal Essence</b> on <b>claim</b>, and the board <b>resets every day at midnight</b>.'],
+    ['Clean Sweep bonus', 'Claim every quest in a day for a bonus lump of ✦. A jade badge on the <b>Quests</b> nav tab shows how many rewards are ready to collect.'],
+  ] },
   { date: 'Jun 9, 2026', title: 'Killer Moves', items: [
     ['Killer Moves', 'Author a devastating <b>special move</b> for each cultivator — pick a favored-domain <b>core Gu</b> plus 2+ <b>support Gu</b> of the core’s Dao path to assemble a signature strike. <b>27 archetypes</b> across five domains (offense · guard · motion · mystic · vigor); the move fires from <b>surplus essence</b> on a short cooldown for a burst of damage, status, healing, shielding or buffs.'],
     ['Unlock', 'Killer Moves open once you <b>clear Floor 100</b>, and can be equipped on <b>Rank 3+</b> cultivators. Build one from a character’s sheet — “Suggest” auto-configures a valid set.'],
@@ -1959,6 +1970,74 @@ const WHATS_NEW = [
     ['Visual polish', 'The screen vignette no longer dims UI content — it’s confined to the corners.'],
   ] },
 ];
+// ---------- daily quests ----------
+// Human-friendly "resets in …" from a ms span (Xh Ym, or Ym, or <1m).
+function fmtReset(ms) {
+  const m = Math.max(0, Math.floor(ms / 60000));
+  if (m < 1) return 'under a minute';
+  const h = Math.floor(m / 60), mm = m % 60;
+  return h ? `${h}h ${mm}m` : `${mm}m`;
+}
+export function viewQuests() {
+  ensureDaily();
+  const done = DAILY_QUESTS.filter((q) => questComplete(q.id)).length;
+  const claimable = claimableCount();
+  const ready = pendingReward();
+  const sweptDone = allClaimed();
+
+  const rows = DAILY_QUESTS.map((q) => {
+    const prog = questProgress(q.id), goal = questGoal(q.id);
+    const can = questClaimable(q.id), got = questClaimed(q.id), full = questComplete(q.id);
+    const fillPct = Math.round((prog / goal) * 100);
+    const state = got ? 'claimed' : can ? 'ready' : full ? 'full' : 'open';
+    const action = got
+      ? '<span class="q-claimed">✓ Claimed</span>'
+      : can
+        ? `<button class="primary q-claim" onclick="G.claimQuest('${q.id}')">Claim +${q.reward} ✦</button>`
+        : `<span class="q-reward">+${q.reward} ✦</span>`;
+    return `<div class="quest-row ${state}">
+      <div class="q-mark">${got ? '✓' : full ? '★' : '○'}</div>
+      <div class="q-body">
+        <div class="q-label">${q.label}</div>
+        <div class="q-hint">${q.hint}</div>
+        <div class="q-bar"><span style="width:${fillPct}%"></span></div>
+      </div>
+      <div class="q-side"><div class="q-count">${prog} / ${goal}</div>${action}</div>
+    </div>`;
+  }).join('');
+
+  // All-clear bonus row.
+  const bonusReady = bonusClaimable();
+  const bonusRow = `<div class="quest-row bonus ${S().daily.bonusClaimed ? 'claimed' : bonusReady ? 'ready' : 'open'}">
+    <div class="q-mark">${S().daily.bonusClaimed ? '✓' : '✦'}</div>
+    <div class="q-body">
+      <div class="q-label">Clean Sweep — claim every daily quest</div>
+      <div class="q-hint">A bonus for completing the full board today.</div>
+      <div class="q-bar"><span style="width:${Math.round((done / DAILY_QUESTS.length) * 100)}%"></span></div>
+    </div>
+    <div class="q-side"><div class="q-count">${DAILY_QUESTS.filter((x) => questClaimed(x.id)).length} / ${DAILY_QUESTS.length}</div>
+      ${S().daily.bonusClaimed
+        ? '<span class="q-claimed">✓ Claimed</span>'
+        : bonusReady
+          ? `<button class="primary q-claim" onclick="G.claimDailyBonus()">Claim +${COMPLETE_ALL_BONUS} ✦</button>`
+          : `<span class="q-reward">+${COMPLETE_ALL_BONUS} ✦</span>`}</div>
+  </div>`;
+
+  return `${pagehead('日', 'Daily · 每日', 'Quests',
+    'Daily goals that reward <b style="color:var(--jade)">✦ Immortal Essence</b>. Progress counts as you play; <b>claim</b> each one when it’s complete. The board <b>resets at midnight</b> — clear them all for a bonus.')}
+  <div class="cs-statgrid" style="grid-template-columns:repeat(4,1fr);margin-bottom:8px">
+    <div class="cs-stat"><span class="sk">Immortal Essence</span><span class="sv" style="color:var(--jade)">${fmt(S().essence)} ✦</span></div>
+    <div class="cs-stat"><span class="sk">Ready to Claim</span><span class="sv" style="color:var(--jade)">${ready ? '+' + ready + ' ✦' : '—'}</span></div>
+    <div class="cs-stat"><span class="sk">Completed</span><span class="sv">${done} / ${DAILY_QUESTS.length}</span></div>
+    <div class="cs-stat"><span class="sk">Resets In</span><span class="sv">${fmtReset(msToReset())}</span></div>
+  </div>
+  <div class="row gap" style="margin:0 0 14px;align-items:center">
+    <button class="primary" ${claimable ? '' : 'disabled'} onclick="G.claimAllQuests()">Claim All${claimable ? ` · +${ready} ✦` : ''}</button>
+    ${sweptDone ? '<span class="muted small">All done for today — come back tomorrow for a fresh board.</span>' : ''}
+  </div>
+  <div class="quest-list">${rows}${bonusRow}</div>`;
+}
+
 export function viewWhatsNew() {
   const entries = WHATS_NEW.map((e) => `<section class="wn-entry">
     <div class="wn-head"><span class="wn-tag">Update</span><span class="wn-title">${e.title}</span><span class="wn-date">${e.date}</span></div>

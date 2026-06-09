@@ -76,6 +76,10 @@ export function newGame(slotKey, playerName = 'Fang Yuan', starter = null) {
     // existing saves are marked already-onboarded in migrateSave so veterans never see either.
     // `rewarded` is the persistent one-time guard for the tutorial-completion essence bonus.
     onboarding: { active: true, dismissed: false, tipsSeen: {}, rewarded: false },
+    // Daily Quests board (systems/quests.js): date = the local calendar day it belongs to; progress maps
+    // questId→count; claimed marks collected quests; bonusClaimed = the all-clear bonus taken. Empty `date`
+    // makes ensureDaily() initialise it on first access. Resets at local midnight.
+    daily: { date: '', progress: {}, claimed: {}, bonusClaimed: false },
     settings: { idle: true, guView: 'grid', invView: 'grid', teamSort: 'power', teamFilter: 'all', teamRarity: 'all', teamPath: 'all', fmSort: 'power', fmRarity: 'all', fmPath: 'all', guTier: 'all', guPath: 'all', guOpen: {}, killerOpen: {}, shopRarity: 'all', shopPath: 'all', shopSearch: '', allocStep: 10, audio: { bgm: 7, sfx: 7, bgmMuted: false, sfxMuted: false } },
   };
 }
@@ -136,6 +140,8 @@ function migrateSave(o) {
       o.settings.audio = { bgm: v, sfx: v, bgmMuted: !!a.muted, sfxMuted: !!a.muted };
     }
   }
+  // Daily Quests board — backfill on pre-quest saves (starts fresh on next access via ensureDaily).
+  if (o.daily == null || typeof o.daily !== 'object') o.daily = { date: '', progress: {}, claimed: {}, bonusClaimed: false };
   if (o.onboarding == null) o.onboarding = { active: false, dismissed: true, tipsSeen: {}, rewarded: true };
   // Backfill the tutorial-completion bonus guard on pre-reward saves: veterans (onboarding already
   // inactive) are past the tutorial → mark rewarded so re-arming the guide can't pay out; a genuine

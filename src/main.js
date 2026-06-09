@@ -7,6 +7,7 @@ import { attemptBreakthrough } from './systems/cultivation.js';
 import { rollFloorRewards, firstClearEssence, rollFarmEssence, applyDrops, buyResource } from './systems/economy.js';
 import { pull, dismiss, dismissMany, dismissRefund, imprint, imprintCandidates, IMPRINT_CAP, autoImprintAll, duplicateSpares } from './systems/gacha.js';
 import { buyBoon, reincarnate, soulsAward } from './systems/prestige.js';
+import { bumpQuest, claimQuest, claimBonus, DAILY_QUESTS } from './systems/quests.js';
 import { craft, upgrade } from './systems/crafting.js';
 import { generateEncounter, isBossFloor, MAX_FLOORS } from './data/floors.js';
 import { guOf } from './systems/cultivation.js';
@@ -167,6 +168,8 @@ async function runBattle() {
     const firstTime = !S().clearedFloors[floor];
     const r = distributeRewards(floor, enc.isBoss);
     if (firstTime) S().stats.floorsCleared += 1;
+    bumpQuest('wins');                          // daily quest: live battle wins (offline catch-up doesn't count)
+    if (r.advanced) bumpQuest('advance');       // daily quest: pushed the frontier to a new floor
     processImmortals(true);
     if (activeTab === 'battle') {
       UI.logLine(challenging
@@ -643,6 +646,7 @@ const G = {
   },
   pull(n) { const r = pull(n); if (!r.ok) return UI.toast(r.msg);
     Audio.gacha(Math.max(...r.got.map((c) => rarityTier(c.rarity)))); // sparkle scales with the best roll
+    bumpQuest('recruit', r.got.length);          // daily quest: recruited a cultivator
     UI.render('recruit'); UI.renderPulls(r.got); save(); },
   // Confirm before dismissing — releasing a cultivator is permanent, so guard against a mis-click.
   dismissPrompt(id) {
@@ -750,7 +754,7 @@ const G = {
     UI.toast(`Reincarnated — +${r.award} Sovereign Souls (${r.souls} total).`);
     G.setTab('battle'); UI.refreshTop(); save();
   },
-  craft(guId) { const r = craft(guId); if (r.ok) Audio.forge(); UI.toast(r.ok ? `Refined ${r.gu.name}.` : r.msg); UI.render('gu'); save(); },
+  craft(guId) { const r = craft(guId); if (r.ok) { Audio.forge(); bumpQuest('craft'); } UI.toast(r.ok ? `Refined ${r.gu.name}.` : r.msg); UI.render('gu'); save(); },
   // Audio settings (gear FAB, bottom-left): independent BGM + SFX level bars (0–10) + mute overrides.
   openSettings() { UI.showModal(UI.settingsModal(), 'narrow'); },
   setBgm(v) { Audio.setBgm(v); const el = document.getElementById('set-bgm-val'); if (el) el.textContent = v; save(); },
@@ -764,7 +768,7 @@ const G = {
     UI.toast(r.ok ? `Ascended ${r.gu.name} to Tier ${r.tier}.` : r.msg);
     UI.render(activeTab); UI.refreshTop(); save();
   },
-  buyResource(id) { const r = buyResource(id, 1); UI.toast(r.ok ? 'Purchased.' : r.msg); if (r.ok) UI.render('shop'); UI.refreshTop(); save(); },
+  buyResource(id) { const r = buyResource(id, 1); if (r.ok) bumpQuest('market'); UI.toast(r.ok ? 'Purchased.' : r.msg); if (r.ok) UI.render('shop'); UI.refreshTop(); save(); },
   toggleActive(id) {
     const c = S().roster.find((x) => x.id === id); if (!c) return;
     if (!c.active) {
@@ -819,6 +823,7 @@ const G = {
   attemptBreakthrough(id) {
     const r = attemptBreakthrough(id);
     if (!r.ok) return UI.toast(r.msg);
+    bumpQuest('breakthrough');                    // daily quest: any breakthrough attempt counts (win or fail)
     if (r.success) Audio.breakthrough(); else Audio.defeat();
     UI.toast(r.msg, 5000, r.success ? 'ascend' : '');
     if (activeTab === 'battle') UI.logLine(r.msg, r.success ? 'win' : 'lose');
@@ -947,6 +952,33 @@ const G = {
     UI.render(activeTab);   // repaint current tab → renderOnboard() shows the widget
     UI.toast('First-Steps guide started — follow the checklist at the bottom-right.', 4000, 'tip');
     save();
+  },
+  // ---------- daily quests ----------
+  // Claim a single completed quest's ✦ reward. Repaints the Quests page + top bar + nav badge.
+  claimQuest(id) {
+    const r = claimQuest(id);
+    if (!r.ok) return UI.toast('Not ready to claim.');
+    Audio.victory();
+    UI.toast(`Quest complete — +${r.reward} ✦ Immortal Essence.`, 3500, 'loot');
+    UI.render('quests'); UI.refreshTop(); save();
+  },
+  // Claim the all-clear bonus (only once every quest is claimed).
+  claimDailyBonus() {
+    const r = claimBonus();
+    if (!r.ok) return UI.toast('Claim every quest first.');
+    Audio.breakthrough(true);
+    UI.banner(`<span class="cjk b-seal">日</span><span class="b-text"><b>Daily quests complete</b><span class="b-sub">+${r.reward} <span class="essence">✦</span> Immortal Essence</span></span>`, 'reward');
+    UI.render('quests'); UI.refreshTop(); save();
+  },
+  // Collect everything claimable at once (each completed quest + the all-clear bonus if it's earned).
+  claimAllQuests() {
+    let total = 0, n = 0;
+    for (const q of DAILY_QUESTS) { const r = claimQuest(q.id); if (r.ok) { total += r.reward; n++; } }
+    const b = claimBonus(); if (b.ok) total += b.reward;
+    if (!total) return UI.toast('Nothing ready to claim.');
+    Audio.victory();
+    UI.toast(`Claimed ${n} quest${n === 1 ? '' : 's'}${b.ok ? ' + bonus' : ''} — +${total} ✦.`, 4000, 'loot');
+    UI.render('quests'); UI.refreshTop(); save();
   },
   closeModal: UI.closeModal,
 };

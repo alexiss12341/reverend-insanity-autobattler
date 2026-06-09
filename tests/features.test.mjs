@@ -677,3 +677,49 @@ section('features: Soul Imprint (duplicate merge)');
   const food = makeCharacter('Bai Ning Bing', 'Legendary'); S2.roster.push(food);
   ok(!imprint(t.id, food.id).ok && t.imprint === IMPRINT_CAP, 'Soul Imprint is hard-capped at Lv 10');
 }
+
+section('features: daily quests (essence rewards + reset)');
+{
+  const { DAILY_QUESTS, COMPLETE_ALL_BONUS, ensureDaily, bumpQuest, claimQuest, claimBonus,
+    questComplete, questClaimable, questClaimed, allClaimed, bonusClaimable, claimableCount, pendingReward }
+    = await import('../src/systems/quests.js');
+  state.current = newGame('tq'); const Q = state.current;
+  ensureDaily();
+  ok(Q.daily.date && Q.daily.date.length === 10, 'ensureDaily stamps the local calendar day');
+  const wins = DAILY_QUESTS.find((x) => x.id === 'wins');
+
+  // progress + completion
+  ok(!questComplete('wins'), 'a fresh quest is not complete');
+  for (let i = 0; i < wins.goal - 1; i++) bumpQuest('wins');
+  ok(!questComplete('wins') && !questClaimable('wins'), 'below goal: not complete, not claimable');
+  bumpQuest('wins');
+  ok(questComplete('wins') && questClaimable('wins'), 'reaching the goal makes the quest claimable');
+
+  // overflow never pushes past the goal
+  bumpQuest('wins', 99);
+  ok((Q.daily.progress.wins || 0) === wins.goal, 'progress is clamped to the goal');
+
+  // claim grants essence exactly once
+  const before = Q.essence;
+  const r = claimQuest('wins');
+  ok(r.ok && r.reward === wins.reward && Q.essence === before + wins.reward, 'claiming a quest grants its ✦ reward');
+  ok(questClaimed('wins') && !questClaimable('wins'), 'a claimed quest is no longer claimable');
+  ok(!claimQuest('wins').ok && Q.essence === before + wins.reward, 'a quest cannot be double-claimed');
+
+  // claimableCount + pendingReward reflect outstanding rewards
+  bumpQuest('recruit', 5);
+  ok(questClaimable('recruit') && claimableCount() >= 1, 'claimableCount counts completed-unclaimed quests');
+  ok(pendingReward() >= DAILY_QUESTS.find((x) => x.id === 'recruit').reward, 'pendingReward sums outstanding ✦');
+
+  // all-clear bonus: only after EVERY quest is claimed
+  for (const q of DAILY_QUESTS) { bumpQuest(q.id, q.goal); claimQuest(q.id); }
+  ok(allClaimed() && bonusClaimable(), 'bonus unlocks once every quest is claimed');
+  const pb = Q.essence; const b = claimBonus();
+  ok(b.ok && b.reward === COMPLETE_ALL_BONUS && Q.essence === pb + COMPLETE_ALL_BONUS, 'the all-clear bonus pays out once');
+  ok(!claimBonus().ok, 'the bonus cannot be claimed twice');
+
+  // a calendar-day rollover resets the board
+  Q.daily.date = '2000-01-01';
+  ensureDaily();
+  ok(!questComplete('wins') && !questClaimed('wins') && !Q.daily.bonusClaimed, 'a date rollover resets progress, claims and the bonus');
+}
