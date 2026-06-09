@@ -726,6 +726,7 @@ function teamControls(sort, filter, rar, pathF, searchV) {
   const rarOpts = ['all', ...RARITY_ORDER].map((r) => `<option value="${r}" ${rar === r ? 'selected' : ''}>${r === 'all' ? 'All rarities' : r}</option>`).join('');
   const pathOpts = ['all', ...rosterPaths()].map((p) => `<option value="${p}" ${pathF === p ? 'selected' : ''}>${p === 'all' ? 'All paths' : pathName(p)}</option>`).join('');
   const filtered = filter !== 'all' || rar !== 'all' || pathF !== 'all' || !!(searchV && searchV.trim());
+  const anyBenched = S().roster.some((c) => !c.isPlayer && !c.active); // dismissable cultivators exist
   return `<div class="teamctl">
     <span class="muted small">Sort</span><div class="viewtoggle">${Object.keys(TEAM_SORTS).map(sb).join('')}</div>
     <span class="muted small">Show</span><div class="viewtoggle">${fb('all', 'All')}${fb('active', 'Active')}${fb('reserve', 'Reserve')}</div>
@@ -733,6 +734,7 @@ function teamControls(sort, filter, rar, pathF, searchV) {
     <span class="muted small">Path</span><select onchange="G.setView('teamPath',this.value)">${pathOpts}</select>
     <input class="searchbox" type="text" placeholder="Search cultivators…" value="${esc(searchV || '')}" oninput="G.teamSearch(this.value)">
     ${filtered ? '<button class="danger" onclick="G.clearTeamFilters()">✕ Clear</button>' : ''}
+    ${anyBenched ? '<button onclick="G.bulkDismissPrompt()" title="Select multiple benched cultivators to release for Immortal Essence">⊘ Dismiss…</button>' : ''}
     <span class="muted small" style="margin-left:auto">${activeTeam().length}/6 active · ${S().roster.length} total</span>
   </div>`;
 }

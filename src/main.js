@@ -5,7 +5,7 @@ import { effectiveStats } from './systems/cultivation.js';
 import { resolveEncounter, fightWallMs } from './systems/battle.js';
 import { attemptBreakthrough } from './systems/cultivation.js';
 import { rollFloorRewards, firstClearEssence, rollFarmEssence, applyDrops, buyResource } from './systems/economy.js';
-import { pull, dismiss, dismissRefund, imprint, imprintCandidates, IMPRINT_CAP, autoImprintAll } from './systems/gacha.js';
+import { pull, dismiss, dismissMany, dismissRefund, imprint, imprintCandidates, IMPRINT_CAP, autoImprintAll, duplicateSpares } from './systems/gacha.js';
 import { buyBoon, reincarnate, soulsAward } from './systems/prestige.js';
 import { craft, upgrade } from './systems/crafting.js';
 import { generateEncounter, isBossFloor, MAX_FLOORS } from './data/floors.js';
@@ -433,6 +433,68 @@ function openGuPicker(charId, slotIdx) {
   UI.showModal(html);
 }
 
+// ---------- bulk dismiss (multi-select + filters) ----------
+let bulkSel = new Set();                                   // ids ticked in the bulk-dismiss modal
+let bulkFilter = { rarity: 'all', imprint: 'all', realm: 'all' }; // modal's rarity / imprint / realm filters
+// Every benched, non-player cultivator (the dismissable pool) — rarest, then deepest realm, first.
+function dismissableAll() {
+  return S().roster.filter((c) => !c.isPlayer && !c.active)
+    .sort((a, b) => (rarityTier(b.rarity) - rarityTier(a.rarity)) || (b.realm - a.realm) || a.name.localeCompare(b.name));
+}
+// The pool narrowed by the modal's active filters (what the checklist currently shows).
+function dismissableList() {
+  const f = bulkFilter;
+  return dismissableAll().filter((c) =>
+    (f.rarity === 'all' || c.rarity === f.rarity)
+    && (f.imprint === 'all' || (c.imprint || 0) === Number(f.imprint))
+    && (f.realm === 'all' || c.realm === Number(f.realm)));
+}
+function renderBulkModal() { UI.showModal(bulkDismissModalHtml(), 'bulk'); }
+// Footer (live total + confirm) — counts the WHOLE selection (incl. rows hidden by a filter), repainted
+// on each tick so the checklist keeps its scroll/checkboxes.
+function bulkDismissFootHtml() {
+  let total = 0; bulkSel.forEach((id) => { const c = S().roster.find((x) => x.id === id); if (c) total += dismissRefund(c.rarity); });
+  const n = bulkSel.size;
+  return `<div class="row gap" style="margin-top:14px;justify-content:space-between;align-items:center">
+    <span class="muted small">${n} selected${n ? ` · +${total} ✦ Immortal Essence` : ''}</span>
+    <span class="gap" style="display:flex">
+      <button class="danger" ${n ? '' : 'disabled'} onclick="G.bulkDismissConfirm()">Dismiss ${n || ''}${n ? ` · +${total} ✦` : ''}</button>
+      <button onclick="G.closeModal()">Cancel</button>
+    </span></div>`;
+}
+function bulkDismissModalHtml() {
+  const all = dismissableAll(), list = dismissableList(), f = bulkFilter;
+  // option sets drawn from the UNFILTERED pool so a narrowing filter never hides the others
+  const rarities = [...new Set(all.map((c) => c.rarity))].sort((a, b) => rarityTier(b) - rarityTier(a));
+  const imprints = [...new Set(all.map((c) => c.imprint || 0))].sort((a, b) => a - b);
+  const realms = [...new Set(all.map((c) => c.realm))].sort((a, b) => b - a);
+  const opt = (cur, v, label) => `<option value="${v}" ${String(cur) === String(v) ? 'selected' : ''}>${label}</option>`;
+  const rarityOpts = opt(f.rarity, 'all', 'All rarities') + rarities.map((r) => opt(f.rarity, r, r)).join('');
+  const imprintOpts = opt(f.imprint, 'all', 'All imprints') + imprints.map((l) => opt(f.imprint, l, l === 0 ? 'No imprint' : '魂印 Lv ' + l)).join('');
+  const realmOpts = opt(f.realm, 'all', 'All realms') + realms.map((r) => opt(f.realm, r, realmName(r))).join('');
+  const dupCount = duplicateSpares().length;
+  const rows = list.length ? list.map((c) => `<label class="bulk-row">
+      <input type="checkbox" ${bulkSel.has(c.id) ? 'checked' : ''} onchange="G.bulkDismissToggle('${c.id}')">
+      <span class="bulk-name">${c.name}</span>
+      <span class="muted small">${c.rarity} · ${realmName(c.realm)}${(c.imprint || 0) > 0 ? ` · 魂印 ${c.imprint}` : ''}</span>
+      <span class="stone" style="margin-left:auto;white-space:nowrap">+${dismissRefund(c.rarity)} ✦</span>
+    </label>`).join('') : '<div class="muted" style="padding:18px 12px">No benched cultivators match these filters.</div>';
+  return `<h3>Dismiss Cultivators · 遣散</h3>
+    <p class="muted">Tick benched cultivators to release for <b>Immortal Essence</b>. This is <b>permanent</b> — they leave your roster for good. (You and active fighters can't be dismissed.)</p>
+    <div class="teamctl" style="margin:12px 0 8px">
+      <span class="muted small">Rarity</span><select onchange="G.bulkDismissFilter('rarity',this.value)">${rarityOpts}</select>
+      <span class="muted small">Imprint</span><select onchange="G.bulkDismissFilter('imprint',this.value)">${imprintOpts}</select>
+      <span class="muted small">Realm</span><select onchange="G.bulkDismissFilter('realm',this.value)">${realmOpts}</select>
+    </div>
+    <div class="row gap" style="margin:0 0 8px;flex-wrap:wrap">
+      <button onclick="G.bulkDismissAll(true)">Select shown (${list.length})</button>
+      <button onclick="G.bulkDismissAll(false)">Clear</button>
+      <button onclick="G.bulkDismissDupes()" ${dupCount ? '' : 'disabled'} title="Select every duplicate copy except the best of each (highest realm/imprint)">⧉ Select duplicates (${dupCount})</button>
+    </div>
+    <div class="bulk-list">${rows}</div>
+    <div id="bulk-dismiss-foot">${bulkDismissFootHtml()}</div>`;
+}
+
 // ---------- global event API ----------
 const G = {
   // New game is a four-step modal chain (name → Dao path → first Gu → archetype), carried by `pendingNew`
@@ -601,6 +663,39 @@ const G = {
     UI.toast(`Dismissed ${r.name} (+${r.refund} ✦).`);
     if (activeTab === 'char') G.setTab('team'); else UI.render('team'); // the sheet's subject is gone
     save();
+  },
+  // Bulk dismiss: open a checkbox picker of benched cultivators (filterable) to release together for essence.
+  bulkDismissPrompt() {
+    if (!dismissableAll().length) return UI.toast('No benched cultivators to dismiss — bench fighters first.');
+    bulkSel = new Set();
+    bulkFilter = { rarity: 'all', imprint: 'all', realm: 'all' };
+    renderBulkModal();
+  },
+  bulkDismissFilter(key, v) { bulkFilter[key] = v; renderBulkModal(); },
+  bulkDismissToggle(id) {
+    if (bulkSel.has(id)) bulkSel.delete(id); else bulkSel.add(id);
+    const f = document.getElementById('bulk-dismiss-foot'); if (f) f.innerHTML = bulkDismissFootHtml();
+  },
+  bulkDismissAll(on) {
+    if (on) dismissableList().forEach((c) => bulkSel.add(c.id)); // select the SHOWN (filtered) rows, unioned
+    else bulkSel = new Set();                                    // Clear wipes the whole selection
+    renderBulkModal();
+  },
+  // Tick every duplicate spare (keep the best of each name); reset filters so all selected rows are visible.
+  bulkDismissDupes() {
+    duplicateSpares().forEach((c) => bulkSel.add(c.id));
+    bulkFilter = { rarity: 'all', imprint: 'all', realm: 'all' };
+    renderBulkModal();
+  },
+  bulkDismissConfirm() {
+    const ids = [...bulkSel]; if (!ids.length) return;
+    const r = dismissMany(ids);
+    bulkSel = new Set();
+    UI.closeModal();
+    if (!r.count) return UI.toast('Nothing dismissed.');
+    UI.toast(`Dismissed ${r.count} cultivator${r.count === 1 ? '' : 's'} (+${r.refund} ✦).`);
+    UI.render(activeTab === 'char' || activeTab === 'battle' ? 'team' : activeTab);
+    UI.refreshTop(); save();
   },
   // Soul Imprint: open a picker of benched duplicates to sacrifice into the character `id`.
   imprintPrompt(id) {

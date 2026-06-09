@@ -100,6 +100,16 @@ function bestKeeper(group) {
 export function imprintableDuplicateCount() {
   return duplicateGroups().filter((g) => (bestKeeper(g).imprint || 0) < IMPRINT_CAP).length;
 }
+// The DISMISSABLE spare copies among duplicates: for each same-name set keep the best (highest realm,
+// then imprint) and return every OTHER benched copy. Drives the bulk-dismiss "Select duplicates" shortcut.
+export function duplicateSpares() {
+  const spares = [];
+  for (const g of duplicateGroups()) {
+    const keeper = bestKeeper(g);
+    for (const c of g) if (c.id !== keeper.id && !c.active) spares.push(c);
+  }
+  return spares;
+}
 // Consolidate EVERY duplicate set into a single copy: keep the best (highest realm; ties → highest
 // imprint → random) and sacrifice the rest into it, each raising its Soul Imprint by one (capped at
 // IMPRINT_CAP — any overflow copies are left untouched). If a sacrificed copy was on the active team
@@ -141,4 +151,12 @@ export function dismiss(charId) {
   S().roster.splice(i, 1);
   S().essence += refund;
   return { ok: true, refund, name: c.name, rarity: c.rarity };
+}
+// Dismiss several recruits at once (bulk release). Reuses dismiss() per id, so the player / active /
+// missing guards apply individually — a stale or invalid id is skipped, never mis-refunded. Returns the
+// number actually released, the total essence refunded, and their names.
+export function dismissMany(ids) {
+  let count = 0, refund = 0; const names = [];
+  for (const id of ids) { const r = dismiss(id); if (r.ok) { count++; refund += r.refund; names.push(r.name); } }
+  return { count, refund, names };
 }

@@ -513,6 +513,16 @@ button.mini{font-size:10px;padding:3px 8px;min-width:0;letter-spacing:0.1em}
   box-shadow:0 30px 80px -30px rgba(0,0,0,0.9)}
 .modal.wide{width:min(1180px,94vw)}
 .modal h3{font-family:var(--serif);font-weight:600;font-size:20px;letter-spacing:.1em;text-transform:uppercase;color:var(--bone);margin-bottom:14px}
+/* bulk-dismiss modal: roomier than the default, with a tall scrollable checklist */
+.modal.bulk{width:min(840px,94vw)}
+/* bulk-dismiss checklist: scrollable list of benched cultivators with a checkbox per row */
+.bulk-list{max-height:54vh;overflow:auto;border:1px solid var(--line);margin:4px 0 2px}
+.bulk-row{display:flex;align-items:center;gap:11px;padding:8px 12px;border-bottom:1px solid var(--line);cursor:pointer;font-size:14px}
+.bulk-row:last-child{border-bottom:none}
+.bulk-row:hover{background:rgba(208,186,160,0.045)}
+.bulk-row input[type=checkbox]{width:16px;height:16px;flex:none;cursor:pointer;accent-color:var(--blood-bright)}
+.bulk-row .bulk-name{font-family:var(--serif);font-weight:600;color:var(--bone)}
+.bulk-row .stone{font-family:var(--mono);font-size:12px}
 .pickrow{display:flex;justify-content:space-between;align-items:center;padding:9px 12px;border:1px solid var(--line);margin-bottom:7px;font-size:14px}
 /* equip-Gu picker rows: multi-line info column (tier · name · path · effect · essence) + right button */
 .pickrow.gu-pick{align-items:flex-start;gap:14px}
