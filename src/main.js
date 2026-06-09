@@ -13,7 +13,7 @@ import { generateEncounter, isBossFloor, MAX_FLOORS } from './data/floors.js';
 import { guOf } from './systems/cultivation.js';
 import { GU_LIB, effectText, guEssenceCost, isUnique } from './data/gu.js';
 import { pathName } from './data/daoPaths.js';
-import { autoConfigure, guInDomain, archetypeDomain } from './data/combos.js';
+import { autoConfigure, guInDomain, archetypeDomain, ARCHETYPES, KILLER_ARCH_COST } from './data/combos.js';
 import { resourceName, RESOURCES } from './data/resources.js';
 import { isImmortalRealm, realmName } from './data/realms.js';
 import { rarityTier } from './data/rarities.js';
@@ -169,7 +169,6 @@ async function runBattle() {
     const r = distributeRewards(floor, enc.isBoss);
     if (firstTime) S().stats.floorsCleared += 1;
     bumpQuest('wins');                          // daily quest: live battle wins (offline catch-up doesn't count)
-    if (r.advanced) bumpQuest('advance');       // daily quest: pushed the frontier to a new floor
     processImmortals(true);
     if (activeTab === 'battle') {
       UI.logLine(challenging
@@ -497,6 +496,16 @@ function bulkDismissModalHtml() {
     </div>
     <div class="bulk-list">${rows}</div>
     <div id="bulk-dismiss-foot">${bulkDismissFootHtml()}</div>`;
+}
+
+// Set (or clear, id=null) a character's killer archetype AFTER the unlock gate, then repaint. Drops
+// the core if it no longer matches the new archetype's favored domain (mirrors the old inline logic).
+function applyKillerArchetype(c, id) {
+  c.killer = c.killer || { core: null, support: [], archetype: null };
+  c.killer.archetype = id;
+  const dom = archetypeDomain(id);
+  if (dom && c.killer.core) { const cg = guOf(c.killer.core); if (!cg || !guInDomain(cg, dom)) { c.killer.core = null; c.killer.support = []; } }
+  UI.refreshTop(); UI.render(activeTab === 'battle' ? 'team' : activeTab); save();
 }
 
 // ---------- global event API ----------
@@ -883,21 +892,70 @@ const G = {
     if (i >= 0) sup.splice(i, 1); else sup.push(uid);
     UI.render(activeTab === 'battle' ? 'team' : activeTab); save();
   },
+  // Pick a killer-move archetype. Toggling off the active one, or switching to an ALREADY-UNLOCKED
+  // archetype, is free + immediate. A NEW archetype is gated by a confirm modal: the character's FIRST
+  // is free (with a warning that future ones cost essence); every subsequent one costs KILLER_ARCH_COST.
   setKillerArchetype(charId, id) {
     const c = S().roster.find((x) => x.id === charId); if (!c) return;
     c.killer = c.killer || { core: null, support: [], archetype: null };
-    c.killer.archetype = c.killer.archetype === id ? null : id; // re-click clears it
-    const dom = archetypeDomain(c.killer.archetype); // a core that no longer matches the favored domain is dropped
-    if (dom && c.killer.core) { const cg = guOf(c.killer.core); if (!cg || !guInDomain(cg, dom)) { c.killer.core = null; c.killer.support = []; } }
-    UI.render(activeTab === 'battle' ? 'team' : activeTab); save();
+    c.killerArchUnlocked = c.killerArchUnlocked || {};
+    if (c.killer.archetype === id) return applyKillerArchetype(c, null);   // re-click → toggle off (free)
+    if (c.killerArchUnlocked[id]) return applyKillerArchetype(c, id);       // already owned → switch (free)
+    const A = ARCHETYPES[id]; if (!A) return;
+    const first = Object.keys(c.killerArchUnlocked).length === 0;
+    if (first) {
+      UI.showModal(`<h3>${c.name}'s First Killer Move</h3>
+        <p class="muted">Unlocking <b>${A.name}</b> is <b>free</b> — every cultivator's first killer-move archetype costs nothing.</p>
+        <p class="muted">⚠ Any <b>other</b> archetype you unlock for ${c.name} later will cost <b>${KILLER_ARCH_COST} ✦</b> Immortal Essence each. (Re-selecting one you've already unlocked is always free.)</p>
+        <div class="row gap" style="margin-top:14px">
+          <button class="primary" onclick="G.confirmKillerArchetype('${charId}','${id}')">Unlock ${A.name} · free</button>
+          <button onclick="G.closeModal()">Cancel</button>
+        </div>`);
+    } else {
+      if (S().essence < KILLER_ARCH_COST) return UI.toast(`Need ${KILLER_ARCH_COST} ✦ to unlock ${A.name}.`);
+      const after = Math.floor(S().essence) - KILLER_ARCH_COST;
+      UI.showModal(`<h3>Unlock ${A.name}?</h3>
+        <p class="muted">${c.name} has already chosen a free first killer move. Unlocking <b>${A.name}</b> costs <b>${KILLER_ARCH_COST} ✦</b> Immortal Essence.</p>
+        <p class="muted">Balance: <b>${Math.floor(S().essence).toLocaleString()} ✦</b> → <b>${after.toLocaleString()} ✦</b>. Once unlocked, switching back to it is free.</p>
+        <div class="row gap" style="margin-top:14px">
+          <button class="primary" onclick="G.confirmKillerArchetype('${charId}','${id}')">Unlock · −${KILLER_ARCH_COST} ✦</button>
+          <button onclick="G.closeModal()">Cancel</button>
+        </div>`);
+    }
+  },
+  // Confirm an archetype unlock from the modal: charge only when it's NOT the free first pick, mark it
+  // unlocked, then apply it. Defensive re-check of essence (state may have changed since the prompt).
+  confirmKillerArchetype(charId, id) {
+    const c = S().roster.find((x) => x.id === charId); if (!c) return UI.closeModal();
+    c.killerArchUnlocked = c.killerArchUnlocked || {};
+    if (!c.killerArchUnlocked[id]) {
+      const paid = Object.keys(c.killerArchUnlocked).length > 0;
+      if (paid) {
+        if (S().essence < KILLER_ARCH_COST) { UI.closeModal(); return UI.toast(`Need ${KILLER_ARCH_COST} ✦.`); }
+        S().essence -= KILLER_ARCH_COST;
+        UI.toast(`Unlocked ${ARCHETYPES[id].name} for ${c.name} (−${KILLER_ARCH_COST} ✦).`, 3500, 'loot');
+      } else {
+        UI.toast(`${ARCHETYPES[id].name} unlocked for ${c.name} — free first killer move.`, 3500, 'loot');
+      }
+      c.killerArchUnlocked[id] = true;
+    }
+    UI.closeModal();
+    applyKillerArchetype(c, id);
   },
   autoKiller(charId) {
     const c = S().roster.find((x) => x.id === charId); if (!c) return;
     const items = (c.gu || []).filter(Boolean).map((uid) => ({ uid, gu: guOf(uid) })).filter((it) => it.gu);
     const auto = autoConfigure(items);
     if (!auto) return UI.toast('Equip 3+ Gu of one Dao path to form a killer move.');
+    c.killerArchUnlocked = c.killerArchUnlocked || {};
+    const owned = !!c.killerArchUnlocked[auto.archetype];
+    const first = Object.keys(c.killerArchUnlocked).length === 0;
+    // Don't silently spend essence via "Suggest": a PAID unlock must be confirmed by picking it in
+    // the list. Owned archetypes (and the free first pick) auto-fill directly.
+    if (!owned && !first) return UI.toast(`Suggested ${ARCHETYPES[auto.archetype].name} — unlock it for ${KILLER_ARCH_COST} ✦ by selecting it in the Archetype list.`);
+    if (!owned) { c.killerArchUnlocked[auto.archetype] = true; UI.toast(`${ARCHETYPES[auto.archetype].name} unlocked for ${c.name} — free first killer move.`, 3500, 'loot'); }
     c.killer = { core: auto.core, support: auto.support, archetype: auto.archetype };
-    UI.render(activeTab === 'battle' ? 'team' : activeTab); save();
+    UI.refreshTop(); UI.render(activeTab === 'battle' ? 'team' : activeTab); save();
   },
   // Team tab: expand/collapse the inline killer-move editor on a roster card.
   toggleKillerEdit(charId) {

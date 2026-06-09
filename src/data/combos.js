@@ -27,6 +27,9 @@ export const KILLER_COOLDOWN = 3;
 // (allies: both checks) and data/floors.js enemyUnit (enemies: rank only). UI mirrors it in ui.js.
 export const KILLER_UNLOCK_FLOOR = 100; // must have cleared Floor 100 (player-progression unlock)
 export const KILLER_MIN_RANK = 3;       // rank 3+ cultivators only (applies to allies AND enemies)
+// ARCHETYPE unlock cost (Immortal Essence): a character's FIRST archetype is free; every other
+// archetype it ever uses costs this to unlock (per archetype, per character). Charged in main.js.
+export const KILLER_ARCH_COST = 100;
 
 const round2 = (v) => Math.round(v * 100) / 100;
 // Per-target damage multiplier by delivery shape — the headline balance lever: AoE is FAR below

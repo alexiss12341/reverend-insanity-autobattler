@@ -100,11 +100,14 @@ export function dropEstimate(resId, floor, isBoss) {
   return { perClear: effDropChance(r, isBoss, dropBonus()) };
 }
 
-// First-clear Immortal Essence (boss floors give far more). Returns essence granted (0 if repeat).
+// First-clear Immortal Essence — a FLAT two-tier schedule (no per-floor scaling, so the deep tower
+// can't balloon the faucet): floors 1-100 pay a healthy lump, floors 101-450 pay less; bosses ~2×.
+// Returns essence granted (0 if repeat).
 export function firstClearEssence(floor, isBoss) {
   if (S().clearedFloors[floor]) return 0;
   S().clearedFloors[floor] = true;
-  const base = isBoss ? 25 + floor : 4 + Math.floor(floor / 2);
+  const early = floor <= 100;                       // floors 1-100 = the early band
+  const base = isBoss ? (early ? 80 : 50) : (early ? 40 : 20);
   return Math.round(base * prestigeGainMult());
 }
 

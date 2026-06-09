@@ -23,7 +23,7 @@ import { isImmortalRealm, MORTAL_PEAK, rankOf, guSlotsOf } from './data/realms.j
 import { ATTR_KEYS, effAttr, unspentPoints, playerPool, apertureCapacity, apertureGrade, effAptitude, imprintAttrMult } from './data/attributes.js';
 import { imprintCandidates, IMPRINT_CAP, duplicateGroups, imprintableDuplicateCount } from './systems/gacha.js';
 import { STATUS } from './data/status.js';
-import { validateKiller, assemble, nearestCore, describeOps, synergyLabel, guInDomain, archetypeDomain, archetypeBlurb, DOMAIN_INFO, ARCHETYPES, ARCHETYPE_ORDER, archetypeRole, KILLER_COST_MULT, KILLER_UNLOCK_FLOOR, KILLER_MIN_RANK } from './data/combos.js';
+import { validateKiller, assemble, nearestCore, describeOps, synergyLabel, guInDomain, archetypeDomain, archetypeBlurb, DOMAIN_INFO, ARCHETYPES, ARCHETYPE_ORDER, archetypeRole, KILLER_COST_MULT, KILLER_UNLOCK_FLOOR, KILLER_MIN_RANK, KILLER_ARCH_COST } from './data/combos.js';
 import * as Audio from './systems/audio.js';
 
 const $ = (id) => document.getElementById(id);
@@ -1181,14 +1181,22 @@ function csKiller(c) {
   // 1) ARCHETYPE chooser — GROUPED by favored domain (header = domain + the core-Gu kinds it accepts),
   // each archetype card showing its delivery tag + a one-line description.
   const DELIV_TAG = { single: '1 foe', lane: 'column', reach: 'AoE', all: 'all foes', self: 'self', team: 'team' };
+  // Archetype unlock economy: the FIRST archetype is free, every other costs KILLER_ARCH_COST ✦.
+  const unlocked = c.killerArchUnlocked || {};
+  const ownedCount = Object.keys(unlocked).length;
   const chooser = ['offense', 'mystic', 'guard', 'motion', 'vigor'].map((dom) => {
     const ids = ARCHETYPE_ORDER.filter((id) => ARCHETYPES[id].domain === dom);
     if (!ids.length) return '';
     const di = DOMAIN_INFO[dom] || { label: dom, cores: '' };
     const cards = ids.map((id) => {
       const A = ARCHETYPES[id], on = cfg.archetype === id;
-      return `<button class="killer-arch${on ? ' on' : ''}" onclick="G.setKillerArchetype('${c.id}','${id}')" title="${esc(archetypeRole(id))}">
-        <span class="ka-top"><b>${A.name}</b><span class="ka-deliv">${DELIV_TAG[A.delivery] || A.delivery}</span></span>
+      const owned = !!unlocked[id], free = !owned && ownedCount === 0;
+      const badge = owned ? `<span class="ka-deliv">${DELIV_TAG[A.delivery] || A.delivery}</span>`
+        : free ? '<span class="ka-cost free">FREE</span>'
+        : `<span class="ka-cost">🔒 ${KILLER_ARCH_COST} ✦</span>`;
+      const titleTag = owned ? '' : free ? ' · free first killer move' : ` · unlock for ${KILLER_ARCH_COST} ✦`;
+      return `<button class="killer-arch${on ? ' on' : ''}${owned ? '' : ' locked'}" onclick="G.setKillerArchetype('${c.id}','${id}')" title="${esc(archetypeRole(id))}${titleTag}">
+        <span class="ka-top"><b>${A.name}</b>${badge}</span>
         <span class="ka-desc">${archetypeBlurb(id)}</span></button>`;
     }).join('');
     return `<div class="killer-domgroup${archDom === dom ? ' active' : ''}">
@@ -1248,7 +1256,7 @@ function csKiller(c) {
   }
 
   return `<div class="killer-block">
-    <div class="killer-row"><b>Archetype</b> <span class="muted small">the move's shape · core must match its domain</span><button class="mini" style="margin-left:auto" onclick="G.autoKiller('${c.id}')">✦ Suggest</button></div>
+    <div class="killer-row"><b>Archetype</b> <span class="muted small">the move's shape · core must match its domain · first free, others ${KILLER_ARCH_COST} ✦ each</span><button class="mini" style="margin-left:auto" onclick="G.autoKiller('${c.id}')">✦ Suggest</button></div>
     <div class="killer-chooser">${chooser}</div>
     ${coreSection}
     ${supSection}
@@ -1947,7 +1955,7 @@ export function viewFloors() {
 // { date, title, items: [[heading, html], …] }. HTML is allowed in the item bodies.
 const WHATS_NEW = [
   { date: 'Jun 9, 2026', title: 'Daily Quests', items: [
-    ['Daily Quests', 'A new <b>日 Quests</b> page in the sidebar with six daily goals — win battles, push your frontier, refine Gu, recruit, breakthrough and shop the Market. Each pays <b style="color:var(--jade)">✦ Immortal Essence</b> on <b>claim</b>, and the board <b>resets every day at midnight</b>.'],
+    ['Daily Quests', 'A new <b>日 Quests</b> page in the sidebar with five daily goals — win battles, refine Gu, recruit, breakthrough and shop the Market. Each pays <b style="color:var(--jade)">✦ Immortal Essence</b> on <b>claim</b>, and the board <b>resets every day at midnight</b>.'],
     ['Clean Sweep bonus', 'Claim every quest in a day for a bonus lump of ✦. A jade badge on the <b>Quests</b> nav tab shows how many rewards are ready to collect.'],
   ] },
   { date: 'Jun 9, 2026', title: 'Killer Moves', items: [

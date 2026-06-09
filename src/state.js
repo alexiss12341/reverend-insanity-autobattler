@@ -31,6 +31,7 @@ export function makeCharacter(name, rarity, isPlayer = false) {
     bonusSlots: 0,     // extra Gu slots beyond the realm-derived base (e.g. prestige Insight). See guSlotsOf().
     gu: [],            // equipped Gu uids (<= guSlotsOf(char) — base scales with realm rank, data/realms.js)
     killer: { core: null, support: [], archetype: null }, // KILLER MOVE config: core = 1 favored-domain Gu uid; support = ≥2 same-path uids; archetype id (data/combos.js). Inert until configured.
+    killerArchUnlocked: {}, // archetypeId -> true: which killer-move archetypes this char has unlocked. First is FREE; each other costs KILLER_ARCH_COST ✦ (main.js setKillerArchetype).
     equip: { weapon: null, armor: null }, // equipped equipment uids
     active: isPlayer,  // on the battle team? (max 6 active)
     row: 'front',      // formation row: 'front' | 'back'
@@ -127,6 +128,11 @@ function migrateSave(o) {
     if (c.killer == null || Array.isArray(c.killer.core) || c.killer.support == null) {
       c.killer = { core: null, support: [], archetype: (c.killer && c.killer.archetype) || null };
     }
+    // Killer-archetype unlocks: first archetype is free, others cost essence. Backfill the map and
+    // GRANDFATHER any already-configured archetype so existing setups aren't re-charged (counts as
+    // the character's free first pick).
+    if (c.killerArchUnlocked == null || typeof c.killerArchUnlocked !== 'object') c.killerArchUnlocked = {};
+    if (c.killer && c.killer.archetype) c.killerArchUnlocked[c.killer.archetype] = true;
   }
   // Onboarding (First-Steps widget + tab tips) is for genuinely new players only. Any save that predates
   // it already belongs to someone who knows the game — mark it onboarded so nothing pops up for veterans.

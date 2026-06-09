@@ -18,19 +18,18 @@ function today() {
 export const DAILY_QUESTS = [
   { id: 'wins',         goal: 10, reward: 30, label: 'Win 10 battles',
     hint: 'Idle-farm any cleared floor or press ⚔ Attempt Floor.' },
-  { id: 'advance',      goal: 1,  reward: 45, label: 'Push your frontier — clear a new floor',
-    hint: 'Beat your frontier floor to open the next one.' },
-  { id: 'craft',        goal: 2,  reward: 35, label: 'Refine 2 Gu',
+  { id: 'craft',        goal: 2,  reward: 30, label: 'Refine 2 Gu',
     hint: 'Craft Gu in the Gu Refinery.' },
-  { id: 'recruit',      goal: 1,  reward: 25, label: 'Recruit a cultivator',
+  { id: 'recruit',      goal: 1,  reward: 30, label: 'Recruit a cultivator',
     hint: 'Spend ✦ on a pull in the Recruit tab.' },
   { id: 'breakthrough', goal: 1,  reward: 30, label: 'Attempt a breakthrough',
     hint: 'Buy a breakthrough on a Character sheet (success or failure both count).' },
-  { id: 'market',       goal: 3,  reward: 20, label: 'Buy 3 resources from the Market',
+  { id: 'market',       goal: 3,  reward: 30, label: 'Buy 3 resources from the Market',
     hint: 'Purchase resources with 石 Primeval Stones in the Market.' },
 ];
 // Bonus ✦ for completing (and claiming) every quest on the board the same day.
-export const COMPLETE_ALL_BONUS = 120;
+// (5 × 30 + 50 = 200 ✦ total per day.)
+export const COMPLETE_ALL_BONUS = 50;
 
 const questDef = (id) => DAILY_QUESTS.find((q) => q.id === id);
 
