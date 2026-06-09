@@ -1954,6 +1954,9 @@ export function viewFloors() {
 // Player-facing patch notes. Add the newest release to the TOP of this list; each entry is
 // { date, title, items: [[heading, html], …] }. HTML is allowed in the item bodies.
 const WHATS_NEW = [
+  { date: 'Jun 10, 2026', title: 'Balance', items: [
+    ['Sovereign Insight nerf', 'The <b>Sovereign Insight</b> prestige boon has been reined in: it is now <b>capped at 5 levels</b> (previously uncapped), and its purchase <b>cost has been increased to 4×</b>. <b>Sovereign Might</b> and <b>Sovereign Fortune</b> are unchanged.'],
+  ] },
   { date: 'Jun 9, 2026', title: 'Daily Quests', items: [
     ['Daily Quests', 'A new <b>日 Quests</b> page in the sidebar with five daily goals — win battles, refine Gu, recruit, breakthrough and shop the Market. Each pays <b style="color:var(--jade)">✦ Immortal Essence</b> on <b>claim</b>, and the board <b>resets every day at midnight</b>.'],
     ['Clean Sweep bonus', 'Claim every quest in a day for a bonus lump of ✦. A jade badge on the <b>Quests</b> nav tab shows how many rewards are ready to collect.'],
