@@ -19,16 +19,21 @@ export const prestigeCombatMult = () => 1 + (prestige().boons.might || 0) * 0.04
 export const prestigeGainMult = () => 1 + (prestige().boons.fortune || 0) * 0.08;
 
 export const BOONS = {
-  might:   { name: 'Sovereign Might',   base: 3, blurb: '+4% ATK & Max HP to all allies (per level).' },
-  fortune: { name: 'Sovereign Fortune', base: 3, blurb: '+8% Primeval Stone & Immortal Essence gains (per level).' },
-  insight: { name: 'Sovereign Insight', base: 5, blurb: 'Begin each new life with +1 player Gu slot and bonus resources (per level).' },
+  might:   { name: 'Sovereign Might',   base: 3,  blurb: '+4% ATK & Max HP to all allies (per level).' },
+  fortune: { name: 'Sovereign Fortune', base: 3,  blurb: '+8% Primeval Stone & Immortal Essence gains (per level).' },
+  // Insight is the strongest boon (a permanent Gu slot), so it's CAPPED at level 5 and costs 4× the
+  // others' base. migrateSave refunds any legacy save that bought past the cap.
+  insight: { name: 'Sovereign Insight', base: 20, max: 5, blurb: 'Begin each new life with +1 player Gu slot and bonus resources (per level, max 5).' },
 };
 export const boonLevel = (key) => prestige().boons[key] || 0;
+export const boonMax = (key) => BOONS[key].max ?? Infinity;
+export const boonAtMax = (key) => boonLevel(key) >= boonMax(key);
 export const boonCost = (key) => BOONS[key].base * (boonLevel(key) + 1);
 
 export function buyBoon(key) {
   if (!BOONS[key]) return { ok: false, msg: 'Unknown boon.' };
   const p = prestige(); S().prestige = p;
+  if (boonAtMax(key)) return { ok: false, msg: `${BOONS[key].name} is at its maximum level (${boonMax(key)}).` };
   const cost = boonCost(key);
   if (p.souls < cost) return { ok: false, msg: `Need ${cost} Sovereign Souls.` };
   p.souls -= cost; p.boons[key] = (p.boons[key] || 0) + 1;

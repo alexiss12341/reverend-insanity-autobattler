@@ -9,7 +9,7 @@ const rankColor = (rank) => rarityColor(rankRarity(rank)); // a rank's colour = 
 import { rarityColor, RARITY_ORDER, rarityTier } from './data/rarities.js';
 import { realmName, realmClass } from './data/realms.js';
 import { PULL_COST, PULL_COST_10, PITY_CAP, pityCount } from './systems/gacha.js';
-import { prestige, BOONS, boonCost, boonLevel, canReincarnate, soulsAward } from './systems/prestige.js';
+import { prestige, BOONS, boonCost, boonLevel, boonAtMax, canReincarnate, soulsAward } from './systems/prestige.js';
 import { DAILY_QUESTS, COMPLETE_ALL_BONUS, ensureDaily, questProgress, questGoal, questComplete, questClaimed, questClaimable, allClaimed, bonusClaimable, pendingReward, claimableCount, msToReset } from './systems/quests.js';
 import { canCraft, refineSpec, canUpgrade } from './systems/crafting.js';
 import { resourceCost, dropEstimate, shopResources, highestRosterRank, marketUnlocked } from './systems/economy.js';
@@ -2169,11 +2169,14 @@ export function viewDao() {
 function prestigePanel() {
   const p = prestige();
   const boons = Object.keys(BOONS).map((k) => {
-    const cost = boonCost(k), afford = p.souls >= cost;
+    const atMax = boonAtMax(k), cost = boonCost(k), afford = p.souls >= cost;
+    const max = BOONS[k].max;
     return `<div class="markrow">
-      <span><b>${BOONS[k].name}</b> <span class="pill">Lv ${boonLevel(k)}</span>
+      <span><b>${BOONS[k].name}</b> <span class="pill">Lv ${boonLevel(k)}${max ? ` / ${max}` : ''}</span>
         <span class="muted small">${BOONS[k].blurb}</span></span>
-      <button onclick="G.buyBoon('${k}')" ${afford ? '' : 'disabled'}>${cost} ✦souls</button>
+      ${atMax
+        ? '<button disabled>MAX</button>'
+        : `<button onclick="G.buyBoon('${k}')" ${afford ? '' : 'disabled'}>${cost} ✦souls</button>`}
     </div>`;
   }).join('');
   const can = canReincarnate();

@@ -146,6 +146,15 @@ function migrateSave(o) {
       o.settings.audio = { bgm: v, sfx: v, bgmMuted: !!a.muted, sfxMuted: !!a.muted };
     }
   }
+  // Sovereign Insight is now CAPPED at level 5 (and costs 4× more). A legacy save that bought past the
+  // cap is rolled back to 5 and refunded the souls it spent on the excess, priced at the OLD rate
+  // (base 5: level k cost 5·k). The clamp makes this idempotent on subsequent loads.
+  if (o.prestige && o.prestige.boons && (o.prestige.boons.insight || 0) > 5) {
+    let refund = 0;
+    for (let k = 6; k <= o.prestige.boons.insight; k++) refund += 5 * k;
+    o.prestige.souls = (o.prestige.souls || 0) + refund;
+    o.prestige.boons.insight = 5;
+  }
   // Daily Quests board — backfill on pre-quest saves (starts fresh on next access via ensureDaily).
   if (o.daily == null || typeof o.daily !== 'object') o.daily = { date: '', progress: {}, claimed: {}, bonusClaimed: false };
   if (o.onboarding == null) o.onboarding = { active: false, dismissed: true, tipsSeen: {}, rewarded: true };
