@@ -184,6 +184,19 @@ src/
                       #   cost, loot weight) + a single-glyph `cjk` accent per path (pathCjk(id), used as
                       #   UI seals/labels). Three Supreme paths catalogued but LOCKED.
     resources.js      # universal + generated path-bound resources (daoPath), all floor-dropped & spread across the 450 floors by tier; resourcesForFloor / resourcesForPath
+    combos.js         # KILLER MOVES skeleton (player-authored special moves, headless-safe). A move is
+                      #   ASSEMBLED, never enumerated: assemble(archetypeId, coreGu, supportGu) → spec{name,cjk,ops}.
+                      #   EQUIP = 1 CORE Gu whose effect DOMAIN == the archetype's favored domain + 2+ SUPPORT Gu all of the
+                      #   CORE's Dao path (validateKiller). 27 ARCHETYPES (ARCHETYPE_ORDER) each = favored DOMAIN + delivery +
+                      #   op template; path flavors name+status. DOMAINS are combos-local (KM_TAG_DOMAIN, DECOUPLED from gu.js
+                      #   TAG_SLOT): offense=atk/crit/critDmg/hit/armorPen/LIFESTEAL · guard=def/critRes/statusRes/thorns ·
+                      #   motion=spd/evasion · mystic=potency/status/lucky · VIGOR=hp/regen/essPool/essRcv (guInDomain/guDomains).
+                      #   FAVORABILITY (synergy) = purity of the same-path support toward the favored domain (0.6→1.0). mult =
+                      #   DELIVERY_MULT(single 3.0≫reach 1.0≫all 0.7 per target) × depthFactor(set count) × tierFactor × favorability.
+                      #   OP DSL: damage(mult/hits/exec/perStatus)·status(from:set,stacks)·heal·cleanse·buff(atk/def/spd/thorns/
+                      #   evasion)·shield·taunt·essence(signed: + restore allies / − drain foes). autoConfigure(loadout)={core,
+                      #   support,archetype} (enemies + player "Suggest"). KILLER_COST_MULT, KILLER_COOLDOWN(=3); describeOps/
+                      #   synergyLabel/nearestCore/archetypeDomain for UI.
     npcs.js           # gacha recruit roster: NAMED_HEROES = canon Reverend Insanity characters keyed by all 6
                       #   rarities, each tiered by PEAK cultivation rank (Immortal=Venerable/rank9 … Common=rank1/
                       #   mortal). nameForRarity(rarity) picks within the rolled tier (dupes allowed). Fang Yuan is
@@ -204,7 +217,12 @@ src/
                       #   5 Legendary · 6+ Immortal); within a band it ramps from the previous cap to this cap (pTop =
                       #   0.12 + 0.9·within) — a few at the opening → ALL at the gate; bosses take the cap. Rarity → aptitude
                       #   + trait TIER + the attribute floor/pool. Each floor draws a coherent SQUAD theme (SQUADS: role→
-                      #   line + optional team AURA via applyEnemyAura) — the per-floor gimmick. DIFFICULTY = a multiplier on
+                      #   line + optional team AURA via applyEnemyAura) — the per-floor gimmick. That role→LINE ALSO
+                      #   picks each rank-3+ cultivator's KILLER MOVE archetype (LINE_KILLER: wall→guard · vanguard/slayer/
+                      #   assassin/reaver→offense · tempest→motion · afflictor→mystic), and steers its loadout to field a
+                      #   matching-domain CORE (enemyGuLoadout coreDomain) so the move fits BOTH its archetype AND its Dao
+                      #   path (path = name/status flavor); lineKillerConfig builds it, generic autoConfigure is the fallback.
+                      #   DIFFICULTY = a multiplier on
                       #   the INVESTED pool only (never the rarity floor): within-band SAWTOOTH difficultyMult = DIFF_START
                       #   0.5 → DIFF_END 2.0 (UNIFORM across all ranks; old EARLY_POWER removed) × ×BOSS_POOL_MULT 1.35 for
                       #   bosses — so vs an equal player a band runs ×0.5 (gentle opening) → ~×2.66 at the gate boss; Gu +
@@ -215,6 +233,14 @@ src/
     battle.js         # resolveEncounter(enc,onLog,{record}): ATB movement-gauge auto-battle; record:true
                       #   emits an animatable timeline (steps: dt + gauge snaps + acts); returns simTime
                       #   for idle pacing (fightWallMs/PLAYBACK_MS). Enemies carry effects + comp/marks.
+                      #   KILLER MOVES: dealHit (shared per-hit math, factored from takeAction) + executeKillerMove (generic
+                      #   op interpreter: damage(exec/perStatus)/status/heal/cleanse/buff/shield/taunt/essence — all 27 archetypes). u.killer fires
+                      #   when ess≥u.comboCost (SURPLUS-ONLY, on top of channeling) AND u.killerCd≤0 → spends comboCost,
+                      #   applyTopTier (full power, no channel), cooldown=KILLER_COOLDOWN. damageUnit routes ALL damage through
+                      #   u.shield (temp HP, no decay, stacks, soaks DoTs too; statuses still land). Timed buff_*/taunt_t live
+                      #   in u.statuses (positive mirror of slow/weaken; effAtk/effSpd/effDef + the hit-roll evasion add them).
+                      #   serializeAct carries combo{name,cjk}+hits[] + shield in hp snaps; statusSnap tags buffs (b:1+mag).
+                      #   attachKiller (allies, from ch.killer={core,support,archetype}) / floors.js lineKillerConfig→autoConfigure (enemies, archetype by trait LINE) build u.killer.
     dao.js            # Comprehension (use-driven, rank-capped, tier-vs-level mult) + Dao Marks (tribulation-driven, 1+marks/1000 amp), aperture caps, attainment tiers (labels/gates), resonance
     tribulation.js    # ascension, tribulations (solo trials, tier-scaled mark gains), Dao Wounds/death, Venerable capstone (needs Comp 10 + Supreme attainment)
     gacha.js          # pull(n): rarity roll + recruit; PITY system; dismiss() recruit → essence refund
@@ -307,7 +333,7 @@ path/universal resources are already generated** in `resources.js` for it. Also 
 immortal essence** economy (Green Grape → … → Yellow Apricot). The Holy Land needs a grade-roll-at-
 ascension rule (still TBD). See the project memory file `dao-path-system.md`.
 
-Tests: `npm test` runs 185 headless assertions across core, formation, immortal-tier, and feature suites.
+Tests: `npm test` runs ~292 headless assertions across core, formation, immortal-tier, feature, and killer-move suites.
 (The immortal/Venerable suite is RNG-driven and slightly **flaky** — a 1–3 failure count confined to the
 tribulation/"became Venerable" assertions is pre-existing noise, not a regression; re-run to confirm. See
 `test-suite-flakiness.md` memory.)
@@ -321,7 +347,15 @@ scaling + comp/mark bands), `economy.js` (drops, `firstClearEssence`/`farmEssenc
 Deliberately thin / good next tasks:
 - **Holy Land subsystem** + **Phase 2 tiered essence** (both designed in memory, not built).
 - **Three Supreme paths** (Heaven/Human/Rule) are catalogued but LOCKED — a future unlock/quest could open them.
-- **Gu killer-moves** — combination effects when specific Gu sets are equipped together.
+- ~~Gu killer-moves~~ — **BUILT** (player-authored special moves; see `data/combos.js` + the killer-moves
+  memory). 27 archetypes across 5 domains; equip = 1 favored-domain CORE + 2+ same-path SUPPORT; favorability
+  = support's domain-purity. (Tempest is a pure self-haste — the extra-action/`gauge` idea was cut.)
+  **PROGRESSION GATE** (`combos.js KILLER_UNLOCK_FLOOR=100 / KILLER_MIN_RANK=3`): killer moves unlock only
+  after the player clears **Floor 100** AND only on **Rank 3+** cultivators — enforced authoritatively in
+  `battle.js attachKiller` (allies: both checks; gated → `u.killer` stays undefined) and `floors.js enemyUnit`
+  (enemies: rank≥3 only, since the Floor-100 unlock is player-side), mirrored by the UI lock in `ui.js`
+  (`killerUnlocked`/`csKiller` lock panel + `killerSummary`). Future polish: per-archetype magnitude/cost
+  tuning + richer arena VFX for AoE.
 - **Equipment** (weapons/armor) was REMOVED for now (inert `equip`/`equipment` fields remain) — could
   return with affixes/set bonuses. **Boss mechanics/telegraphs**, **drag-reorder within a row**.
   (Enemy formations + full cultivator Gu/gear loadouts are now implemented.)

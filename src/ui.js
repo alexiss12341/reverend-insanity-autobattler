@@ -22,6 +22,7 @@ import { isImmortalRealm, MORTAL_PEAK, rankOf, guSlotsOf } from './data/realms.j
 import { ATTR_KEYS, effAttr, unspentPoints, playerPool, apertureCapacity, apertureGrade, effAptitude, imprintAttrMult } from './data/attributes.js';
 import { imprintCandidates, IMPRINT_CAP, duplicateGroups, imprintableDuplicateCount } from './systems/gacha.js';
 import { STATUS } from './data/status.js';
+import { validateKiller, assemble, nearestCore, describeOps, synergyLabel, guInDomain, archetypeDomain, archetypeBlurb, DOMAIN_INFO, ARCHETYPES, ARCHETYPE_ORDER, archetypeRole, KILLER_COST_MULT, KILLER_UNLOCK_FLOOR, KILLER_MIN_RANK } from './data/combos.js';
 import * as Audio from './systems/audio.js';
 
 const $ = (id) => document.getElementById(id);
@@ -109,6 +110,7 @@ export function render(tab) {
     battle: viewBattle, team: viewTeam, formation: viewFormation, recruit: viewRecruit,
     gu: viewGu, shop: viewShop, inv: viewInventory, floors: viewFloors, codex: viewCodex, dao: viewDao,
     attainment: viewAttainment, almanac: viewAlmanac, res: () => viewResource(_resId),
+    whatsnew: viewWhatsNew,
     char: () => viewCharacter(_charId),
   };
   // Rebuilding #content's innerHTML resets its scroll. Keep the user where they were on an IN-PLACE
@@ -386,6 +388,17 @@ const STATUS_UI = {
   stun:   { abbr: 'STN', color: '#e8c777' },
   frozen: { abbr: 'FRZ', color: '#8fd9ff' },
 };
+// Positive killer-move BUFFS (and the timed Sentinel taunt) — shown with an ▲ and a warmer palette so
+// they read as gains, distinct from the debuff chips above. Keys = the stat (battle.js statusSnap maps
+// buff_atk→'atk' etc.) plus 'taunt'.
+const BUFF_UI = {
+  atk:    { abbr: 'ATK', color: '#e0a23c' },
+  def:    { abbr: 'DEF', color: '#6fa8dc' },
+  spd:    { abbr: 'SPD', color: '#5aa9e6' },
+  thorns: { abbr: 'THN', color: '#9ad06f' },
+  evasion:{ abbr: 'EVA', color: '#7fd0a0' },
+  taunt:  { abbr: 'TNT', color: '#c79a45' },
+};
 // Archetype-LINE palette: a single CJK seal glyph + colour per trait line, for the on-block trait seal
 // and the per-side Auras & Traits panel. Keys match data/traits.js LINES ids.
 const LINE_UI = {
@@ -419,6 +432,11 @@ function traitSeal(u) {
 }
 // Status badge chip (shown on top of a unit block). `n` = instance count (DoTs stack), shown when >1.
 const statusChip = (s) => {
+  if (s.b) { // positive killer-move buff (ATK/DEF/SPD/Thorns) or a timed taunt → ▲ + warm palette
+    const ui = BUFF_UI[s.t] || { abbr: (s.t || '?').slice(0, 3).toUpperCase(), color: 'var(--jade)' };
+    const title = s.t === 'taunt' ? 'Taunting — draws enemy aggro' : `+${Math.round((s.mag || 0) * 100)}% ${ui.abbr} (buff)`;
+    return `<span class="ust ust-buff" style="color:${ui.color};border-color:${ui.color}66" title="${esc(title)}">▲${ui.abbr}</span>`;
+  }
   const ui = STATUS_UI[s.t] || { abbr: (s.t || '?').slice(0, 3).toUpperCase(), color: 'var(--muted)' };
   const lbl = STATUS[s.t] ? STATUS[s.t].label : s.t;
   return `<span class="ust" style="color:${ui.color};border-color:${ui.color}66" title="${esc(lbl)}${s.n > 1 ? ' ×' + s.n : ''}">${ui.abbr}${s.n > 1 ? '<b>' + s.n + '</b>' : ''}</span>`;
@@ -449,7 +467,7 @@ function unitBlock(u, side, idx) {
     <div class="ub-status">${stBadges}</div>
     <div class="ub-name"${nameStyle}>${cult ? '◆ ' : ''}${u.name}</div>
     ${imprintStars(u.imprint, 'ub-imp')}
-    <div class="ub-bar hp val"><i style="width:${pctHp(u.hp, u.max)}%"></i><b class="ub-num">${compact(Math.max(0, u.hp))}</b></div>
+    <div class="ub-bar hp val"><i style="width:${pctHp(u.hp, u.max)}%"></i><u class="ub-shield" style="width:${u.shield && u.max ? Math.min(100, (100 * u.shield) / u.max) : 0}%"></u><b class="ub-num">${compact(Math.max(0, u.hp))}</b></div>
     ${essBar}
     <div class="ub-bar chg"><i style="width:0%"></i></div></div>`;
 }
@@ -504,7 +522,7 @@ function auraRow(aura) {
 }
 // One cultivator block: archetype-line seal + name, its TIERED line name + affinity, then the unit's
 // equipped Gu each with its effect text (from guInfo).
-function traitRow(u) {
+function traitRow(u, side, idx) {
   const lineNm = (u.line && LINES[u.line]) ? lineName(u.line, u.rarity) : null;
   const aff = (u.affinity || []).map((p) => affinityName(p)).filter(Boolean);
   const tags = [];
@@ -528,19 +546,23 @@ function traitRow(u) {
   const guHtml = gu.length
     ? `<ul class="tp-gu">${gu.map((g) => `<li><b>${esc(g.name)}</b><span class="tp-gueff">${esc(g.eff)}</span></li>`).join('')}</ul>`
     : '<div class="tp-nogu">No Gu equipped</div>';
-  return `<div class="tp-unit">
+  const idAttr = side != null ? ` id="tp-${side}-${idx}"` : '';
+  return `<div class="tp-unit"${idAttr}>
     <div class="tp-row tp-trait">
       <span class="tp-seal" style="color:${color};border-color:${color}66">${glyph}</span>
       <span class="tp-body"><b>${esc(u.name)}</b>${(u.imprint || 0) > 0 ? ' ' + imprintStars(u.imprint) : ''}${tags.length ? `<span class="tp-eff">${esc(tags.join(' · '))}</span>` : ''}</span>
     </div>
+    <div class="tp-buffs" style="display:none"></div>
     ${lineEffHtml}
     ${guHtml}
   </div>`;
 }
 // Build a side's panel HTML: active auras section (if any) + a per-cultivator section (traits + Gu).
-function traitPanelHtml(units, auras) {
+function traitPanelHtml(units, auras, side) {
   const auraRows = (auras || []).map(auraRow).join('');
-  const unitRows = (units || []).filter((u) => u.hp > 0 || u.hp == null).map(traitRow).join('');
+  // keep the TRUE index (for live buff updates: tp-{side}-{i} aligns with the timeline snapshot arrays);
+  // dead units render nothing but their slot index is preserved for the living ones.
+  const unitRows = (units || []).map((u, i) => ((u.hp > 0 || u.hp == null) ? traitRow(u, side, i) : '')).join('');
   if (!auraRows && !unitRows) return '<div class="tp-empty">No active auras or traits.</div>';
   return `${auraRows ? `<div class="tp-h">Team Auras</div>${auraRows}` : ''}${unitRows ? `<div class="tp-h">Cultivators &amp; Gu</div>${unitRows}` : ''}`;
 }
@@ -548,8 +570,8 @@ function traitPanelHtml(units, auras) {
 export function renderTraitPanels(allyUnits, allyAuras, foeUnits, foeAuras) {
   const A = $('traits-A'), B = $('traits-B');
   const foe = Array.isArray(foeAuras) ? foeAuras : (foeAuras ? [foeAuras] : []);
-  if (A) A.innerHTML = traitPanelHtml(allyUnits, allyAuras);
-  if (B) B.innerHTML = traitPanelHtml(foeUnits, foe.filter(Boolean));
+  if (A) A.innerHTML = traitPanelHtml(allyUnits, allyAuras, 'ally');
+  if (B) B.innerHTML = traitPanelHtml(foeUnits, foe.filter(Boolean), 'foe');
 }
 
 // ---- animated timeline playback ----
@@ -600,6 +622,7 @@ export async function playTimeline(tl, ctx = {}) {
   const unit = (side, i) => (side === 'ally' ? allies[i] : foes[i]);
   const drawHp = (side, i) => { const u = unit(side, i), e = el(side, i); if (!u || !e) return;
     e.querySelector('.hp>i').style.width = pctHp(u.hp, u.max) + '%';
+    const sh = e.querySelector('.ub-shield'); if (sh) sh.style.width = (u.shield && u.max ? Math.min(100, (100 * u.shield) / u.max) : 0) + '%';
     const num = e.querySelector('.hp .ub-num'); if (num) num.textContent = compact(Math.max(0, u.hp));
     e.classList.toggle('dead', u.hp <= 0); };
   const drawChg = (side, i, g, ms) => { const e = el(side, i); if (!e) return;
@@ -610,9 +633,17 @@ export async function playTimeline(tl, ctx = {}) {
     const bar = e.querySelector('.ess>i'); if (!bar) return; if (ms != null) bar.style.transitionDuration = ms + 'ms';
     u.ess = val; bar.style.width = Math.max(0, Math.min(100, (100 * val) / u.essMax)) + '%';
     const num = e.querySelector('.ess .ub-num'); if (num) num.textContent = compact(val); };
-  // refresh the active-status badge row on a block from a timeline snapshot ([{t,n}])
+  // refresh the active-status badge row on a block from a timeline snapshot ([{t,n,b,mag}]) — debuffs + buffs
   const drawStatuses = (side, i, list) => { const e = el(side, i); if (!e) return;
     const host = e.querySelector('.ub-status'); if (host) host.innerHTML = (list || []).map(statusChip).join(''); };
+  // mirror just the BUFF chips into the side "Cultivators & Gu" panel row for this unit (tp-{side}-{i})
+  const drawTraitBuffs = (side, i, list) => {
+    const host = document.getElementById(`tp-${side}-${i}`); if (!host) return;
+    const slot = host.querySelector('.tp-buffs'); if (!slot) return;
+    const buffs = (list || []).filter((s) => s.b);
+    slot.innerHTML = buffs.map(statusChip).join('');
+    slot.style.display = buffs.length ? '' : 'none';
+  };
 
   // Speed-driven, real-time playback: each step plays for a wall-clock span proportional to the
   // engine's `dt` (the gauge-time that actually elapsed), so a unit with twice the SPD visibly acts
@@ -650,6 +681,24 @@ export async function playTimeline(tl, ctx = {}) {
       if (ae && act.dots) { let off = 0; for (const t of ['burn', 'poison', 'bleed']) if (act.dots[t]) { dmgPopup(ae, compact(act.dots[t]), 'dot dot-' + t, off); off += 15; } }
       else if (ae && act.dot > 0) dmgPopup(ae, compact(act.dot), 'dot');
       if (ae && act.stun) dmgPopup(ae, act.frozen ? 'FROZEN' : 'STUN', act.frozen ? 'stun frozen' : 'stun', act.dot > 0 ? 18 : 0);
+      // KILLER MOVE: a combo act has no single lunge target — float a name banner on the actor, flash &
+      // float damage/status on EACH hit, apply all HP/shield changes, then skip the single-target sequence.
+      if (act.combo) {
+        if (ae) { ae.classList.add('lunging', 'casting'); dmgPopup(ae, act.combo.cjk || '✦', 'combo-cjk', -18); dmgPopup(ae, act.combo.name, 'combo', 0); }
+        Audio.crit();
+        await _sleep(ACT_MS);
+        for (const h of (act.hits || [])) {
+          const he = el(h.tgt.side, h.tgt.i); if (!he) continue;
+          if (h.dodged) { dmgPopup(he, 'miss', 'miss'); Audio.miss(); }
+          else if (h.dmg > 0) { he.classList.add('hit'); dmgPopup(he, compact(h.dmg) + (h.lucky ? '‼' : h.crit ? '!' : ''), h.lucky ? 'crit lucky' : h.crit ? 'crit' : ''); Audio.hit(); }
+          if (h.applied) { let off = 18; for (const t of h.applied) if (STATUS[t]) { dmgPopup(he, STATUS[t].label, 'status status-' + t, off); off += 15; } }
+        }
+        (act.hp || []).forEach((h) => { const u = unit(h.side, h.i); if (u) { if (u.hp > 0 && h.hp <= 0) Audio.death(); u.hp = h.hp; u.shield = h.shield || 0; drawHp(h.side, h.i); } });
+        await _sleep(IMPACT_MS + LUNGE_BACK);
+        for (const h of (act.hits || [])) { const he = el(h.tgt.side, h.tgt.i); if (he) he.classList.remove('hit'); }
+        if (ae) ae.classList.remove('lunging', 'casting');
+        continue;
+      }
       const te = act.tgt ? el(act.tgt.side, act.tgt.i) : null;
       const bs = ae ? ae.closest('.bside') : null;
       // 1) LUNGE OUT — the actor travels across the board and bumps into its target (or a small in-place
@@ -668,7 +717,7 @@ export async function playTimeline(tl, ctx = {}) {
         // every status that landed on the target this hit floats up as its own coloured label
         if (act.applied) { let off = 18; for (const t of act.applied) if (STATUS[t]) { dmgPopup(te, STATUS[t].label, 'status status-' + t, off); off += 15; } }
       }
-      (act.hp || []).forEach((h) => { const u = unit(h.side, h.i); if (u) { if (u.hp > 0 && h.hp <= 0) Audio.death(); u.hp = h.hp; drawHp(h.side, h.i); } });
+      (act.hp || []).forEach((h) => { const u = unit(h.side, h.i); if (u) { if (u.hp > 0 && h.hp <= 0) Audio.death(); u.hp = h.hp; u.shield = h.shield || 0; drawHp(h.side, h.i); } });
       if (te) await _sleep(IMPACT_MS);
       // 3) RECOVER — the actor slides home, then the board resumes.
       if (ae && te) { ae.style.transition = `transform ${LUNGE_BACK}ms ease`; ae.style.transform = ''; }
@@ -679,8 +728,8 @@ export async function playTimeline(tl, ctx = {}) {
     }
     // refresh on-block status badges from the end-of-instant snapshot
     if (step.statuses) {
-      step.statuses.ally.forEach((list, i) => drawStatuses('ally', i, list));
-      step.statuses.foe.forEach((list, i) => drawStatuses('foe', i, list));
+      step.statuses.ally.forEach((list, i) => { drawStatuses('ally', i, list); drawTraitBuffs('ally', i, list); });
+      step.statuses.foe.forEach((list, i) => { drawStatuses('foe', i, list); drawTraitBuffs('foe', i, list); });
     }
   }
 }
@@ -919,12 +968,31 @@ function breakthroughChip(c) {
   const cost = breakthroughCost(c.realm), chance = Math.round(breakthroughChance(c) * 100);
   return `<div class="muted small"${S().stones >= cost ? '' : ' style="opacity:.65"'}>▲ ${realmName(c.realm + 1)} · ${compact(cost)}石 · ${chance}%</div>`;
 }
-// Compact, clickable roster card → opens the full character sheet.
+// PROGRESSION GATE (mirrors battle.js attachKiller): killer moves are usable only on rank 3+ cultivators
+// AND after the player has cleared Floor 100 (combos.js KILLER_MIN_RANK / KILLER_UNLOCK_FLOOR).
+function killerUnlocked(c) {
+  return rankOf(c.realm) + 1 >= KILLER_MIN_RANK && !!S().clearedFloors[KILLER_UNLOCK_FLOOR];
+}
+// One-line summary of a character's configured killer move (name + synergy), or a "not set"/locked note.
+function killerSummary(c) {
+  if (!killerUnlocked(c)) return `<span class="muted">🔒 Unlocks at Rank ${KILLER_MIN_RANK} · Floor ${KILLER_UNLOCK_FLOOR}</span>`;
+  const cfg = c.killer || {};
+  const equipped = (c.gu || []).filter(Boolean);
+  const support = (cfg.support || []).filter((u) => equipped.includes(u));
+  if (cfg.core && cfg.archetype && validateKiller({ core: cfg.core, support, archetype: cfg.archetype }, equipped, guOf)) {
+    const spec = assemble(cfg.archetype, guOf(cfg.core), support.map(guOf));
+    if (spec) return `<b style="color:${pathColor(guOf(cfg.core).daoPath)}">${esc(spec.name)}</b> <span class="muted">· synergy ${synergyLabel(spec.favorability)}</span>`;
+  }
+  return '<span class="muted">no killer move set</span>';
+}
+// Compact, clickable roster card → opens the full character sheet. Carries a collapsible KILLER MOVE
+// editor (reuses csKiller) so moves can be configured right on the Team tab.
 function memberCard(c) {
   const s = effectiveStats(c);
   const rc = rarityColor(c.rarity);
   const unspent = unspentPoints(c);
-  return `<div class="card member clickable${unspent > 0 ? ' has-alloc' : ''}" onclick="G.openChar('${c.id}')" title="Open ${esc(c.name)}'s sheet">
+  const kmOpen = !!(S().settings.killerOpen || {})[c.id];
+  return `<div class="card member clickable${unspent > 0 ? ' has-alloc' : ''}${kmOpen ? ' km-open' : ''}" onclick="G.openChar('${c.id}')" title="Open ${esc(c.name)}'s sheet">
     ${c.active ? `<span class="active-mark">● ${rowOf(c) === 'back' ? 'BACK' : 'FRONT'} · L${laneOf(c) + 1}</span>` : ''}
     <div class="row start"><span class="uname big">${charGlyph(c) ? `<span class="cjk" style="color:${rc};margin-right:8px">${charGlyph(c)}</span>` : ''}${c.name}</span>
       <span class="rar" style="color:${rc}">${c.rarity}</span></div>
@@ -934,6 +1002,11 @@ function memberCard(c) {
     <div class="statline"><span>HP <b>${compact(s.maxHp)}</b></span><span>ATK <b>${compact(s.atk)}</b></span><span>DEF <b>${compact(s.def)}</b></span><span>SPD <b>${s.spd}</b></span></div>
     ${unspent > 0 ? `<div class="alloc-note" onclick="event.stopPropagation();G.openChar('${c.id}')">▲ ${compact(unspent)} attribute point${unspent === 1 ? '' : 's'} to allocate</div>` : ''}
     ${compSummary(c)}
+    <div class="km-row" onclick="event.stopPropagation()">
+      <button class="mini" onclick="G.toggleKillerEdit('${c.id}')" title="Configure this cultivator's killer move here">⚔ Killer Move ${kmOpen ? '▾' : '▸'}</button>
+      <span class="km-sum">${killerSummary(c)}</span>
+    </div>
+    ${kmOpen ? `<div class="km-editor" onclick="event.stopPropagation()">${csKiller(c)}</div>` : ''}
     <div class="row" style="margin-top:12px">
       <span class="muted tiny">View sheet ▸</span>
       <span class="gap" style="display:flex">
@@ -1068,6 +1141,112 @@ function csGuLoadout(c) {
     ? `<div class="gu-aperture-note">Gu channel in <b>priority order</b> (P1 first). At full aperture (◇${pool}) you sustain <b>${sustainedCount}/${filled.length}</b> — any <span class="starved-ink">starved</span> Gu stays dark in battle until essence regenerates. Use <b>▲▼</b> to reprioritise.</div>`
     : '';
   return `${note}<div class="gu-cardgrid">${cards}</div>`;
+}
+
+// KILLER MOVE config (character sheet): pick an ARCHETYPE → a CORE Gu of its favored domain → 2+ SUPPORT
+// Gu of the core's Dao path. Favorability = how much of that same-path support also matches the favored
+// domain. "Suggest" auto-fills; the preview shows the assembled effect, essence cost, synergy.
+function csKiller(c) {
+  // PROGRESSION GATE: show a locked panel until the cultivator is rank 3+ AND the player has cleared
+  // Floor 100. battle.js attachKiller enforces the same rule, so this is UX only.
+  if (!killerUnlocked(c)) {
+    const rankOk = rankOf(c.realm) + 1 >= KILLER_MIN_RANK;
+    const floorOk = !!S().clearedFloors[KILLER_UNLOCK_FLOOR];
+    const req = (ok, label) => `<li class="${ok ? 'km-req-ok' : 'km-req-no'}">${ok ? '✓' : '✗'} ${label}</li>`;
+    return `<div class="killer-block killer-locked">
+      <div class="killer-row"><b>🔒 Killer move locked</b></div>
+      <div class="killer-hint">Killer moves are a mid-game art — they unlock once these are both met:</div>
+      <ul class="km-reqs">
+        ${req(floorOk, `Clear <b>Floor ${KILLER_UNLOCK_FLOOR}</b>`)}
+        ${req(rankOk, `Reach <b>Rank ${KILLER_MIN_RANK}</b> — currently ${realmName(c.realm)}`)}
+      </ul>
+    </div>`;
+  }
+  const equipped = (c.gu || []).filter(Boolean).map((uid) => ({ uid, gu: guOf(uid) })).filter((x) => x.gu);
+  const cfg = c.killer || { core: null, support: [], archetype: null };
+  const guRes = (uid) => { const e = equipped.find((x) => x.uid === uid); return e ? e.gu : null; };
+  const archDom = archetypeDomain(cfg.archetype);                       // favored domain of the chosen archetype
+  const coreGu = cfg.core ? guRes(cfg.core) : null;
+  const corePath = coreGu ? coreGu.daoPath : null;
+  const support = (cfg.support || []).filter((u) => equipped.some((x) => x.uid === u));
+  const valid = validateKiller({ ...cfg, support }, c.gu, guRes);
+
+  // 1) ARCHETYPE chooser — GROUPED by favored domain (header = domain + the core-Gu kinds it accepts),
+  // each archetype card showing its delivery tag + a one-line description.
+  const DELIV_TAG = { single: '1 foe', lane: 'column', reach: 'AoE', all: 'all foes', self: 'self', team: 'team' };
+  const chooser = ['offense', 'mystic', 'guard', 'motion', 'vigor'].map((dom) => {
+    const ids = ARCHETYPE_ORDER.filter((id) => ARCHETYPES[id].domain === dom);
+    if (!ids.length) return '';
+    const di = DOMAIN_INFO[dom] || { label: dom, cores: '' };
+    const cards = ids.map((id) => {
+      const A = ARCHETYPES[id], on = cfg.archetype === id;
+      return `<button class="killer-arch${on ? ' on' : ''}" onclick="G.setKillerArchetype('${c.id}','${id}')" title="${esc(archetypeRole(id))}">
+        <span class="ka-top"><b>${A.name}</b><span class="ka-deliv">${DELIV_TAG[A.delivery] || A.delivery}</span></span>
+        <span class="ka-desc">${archetypeBlurb(id)}</span></button>`;
+    }).join('');
+    return `<div class="killer-domgroup${archDom === dom ? ' active' : ''}">
+      <div class="killer-domhead">${di.label}<span class="muted small">core: ${di.cores}</span></div>
+      <div class="killer-archgrid">${cards}</div></div>`;
+  }).join('');
+
+  // 2) CORE picker — equipped Gu of the archetype's favored domain (others greyed)
+  let coreSection = '';
+  if (cfg.archetype) {
+    const cores = equipped.map(({ uid, gu }) => {
+      const okDom = guInDomain(gu, archDom), on = cfg.core === uid, col = pathColor(gu.daoPath);
+      return `<button class="killer-gu${on ? ' on' : ''}${okDom ? '' : ' off'}"${okDom ? '' : ' disabled'}
+        style="${on ? `border-color:${col};color:${col}` : ''}" onclick="G.setKillerCore('${c.id}','${uid}')"
+        title="${esc(gu.name)} — ${pathName(gu.daoPath)} · T${gu.tier}${okDom ? '' : ` (not a ${archDom} Gu)`}"><span class="cjk">${pathCjk(gu.daoPath)}</span> T${gu.tier}</button>`;
+    }).join('');
+    coreSection = `<div class="killer-row" style="margin-top:12px"><b>Core</b> <span class="muted small">1 <b>${archDom}</b> Gu — sets name · status · path</span></div>
+      <div class="killer-gus">${cores || '<span class="muted small">No Gu equipped.</span>'}</div>`;
+  }
+
+  // 3) SUPPORT picker — equipped Gu of the core's path (★ = also favored-domain → raises synergy)
+  let supSection = '';
+  if (coreGu) {
+    const sups = equipped.filter(({ uid }) => uid !== cfg.core).map(({ uid, gu }) => {
+      const okPath = gu.daoPath === corePath, on = support.includes(uid), fav = okPath && guInDomain(gu, archDom), col = pathColor(gu.daoPath);
+      return `<button class="killer-gu${on ? ' on' : ''}${okPath ? '' : ' off'}"${okPath ? '' : ' disabled'}
+        style="${on ? `border-color:${col};color:${col}` : ''}" onclick="G.setKillerSupport('${c.id}','${uid}')"
+        title="${esc(gu.name)} — ${pathName(gu.daoPath)} · T${gu.tier}${okPath ? (fav ? ' · favored ✓ (boosts synergy)' : ' · off-domain') : ' (different path)'}">${fav ? '★ ' : ''}<span class="cjk">${pathCjk(gu.daoPath)}</span> T${gu.tier}</button>`;
+    }).join('');
+    supSection = `<div class="killer-row" style="margin-top:12px"><b>Support</b> <span class="muted small">2+ <b>${pathName(corePath)}</b> Gu · ★ = ${archDom} → higher synergy</span></div>
+      <div class="killer-gus">${sups || '<span class="muted small">No other Gu of this path equipped.</span>'}</div>`;
+  }
+
+  // preview (when valid) or a step-by-step hint
+  let preview = '', hint = '';
+  if (valid) {
+    const spec = assemble(cfg.archetype, coreGu, support.map(guRes));
+    if (spec) {
+      const rank = rankOf(c.realm) + 1;
+      const cost = Math.round(KILLER_COST_MULT * [coreGu, ...support.map(guRes)].reduce((s, g) => s + guEssenceCostFor(g, rank), 0));
+      const syn = synergyLabel(spec.favorability), synCol = syn === 'High' ? '#6fcf97' : syn === 'Medium' ? '#c79a45' : '#e06c6c';
+      preview = `<div class="killer-preview">
+        <div class="killer-head"><span class="cjk" style="color:${pathColor(corePath)};font-size:20px;margin-right:6px">${spec.cjk}</span><b>${spec.name}</b>
+          <span class="pill" title="Essence banked to cast">◇ ${fmt(cost)}</span>
+          <span class="pill" style="color:${synCol};border-color:${synCol}66" title="Favorability — share of the same-path support that matches the move's favored domain (★)">Synergy: ${syn}</span></div>
+        <ul class="killer-ops">${describeOps(spec).map((o) => `<li>${o}</li>`).join('')}</ul>
+        <div class="muted small">Fires in battle when ◇${fmt(cost)} banks (essence surplus) and its 3-action cooldown is up.</div>
+      </div>`;
+    }
+  } else if (!cfg.archetype) {
+    const near = nearestCore(equipped);
+    hint = `<div class="killer-hint">Pick an <b>archetype</b> — its domain sets which Gu can be the core.${near ? ` Closest same-path set: <b>${pathName(near.path)}</b> (${near.have}/3).` : ''}</div>`;
+  } else if (!coreGu) {
+    hint = `<div class="killer-hint">Choose a <b>${archDom}</b> core Gu above (off-domain Gu are greyed).</div>`;
+  } else if (support.length < 2) {
+    hint = `<div class="killer-hint">Add <b>${2 - support.length}</b> more <b>${pathName(corePath)}</b> support Gu (you have ${support.length}/2+). ★ same-domain support hits harder.</div>`;
+  }
+
+  return `<div class="killer-block">
+    <div class="killer-row"><b>Archetype</b> <span class="muted small">the move's shape · core must match its domain</span><button class="mini" style="margin-left:auto" onclick="G.autoKiller('${c.id}')">✦ Suggest</button></div>
+    <div class="killer-chooser">${chooser}</div>
+    ${coreSection}
+    ${supSection}
+    ${hint}${preview}
+  </div>`;
 }
 // Dao comprehension + marks for every path the character touches.
 function csDao(c) {
@@ -1265,6 +1444,9 @@ export function viewCharacter(id) {
 
     ${secHead(c.isPlayer ? 5 : 6, 'Gu Loadout', `${c.gu.filter(Boolean).length}/${guSlotsOf(c)} slots`)}
     ${csGuLoadout(c)}
+
+    ${secHead(c.isPlayer ? 6 : 7, 'Killer Move', '蛊技 · core + archetype')}
+    ${csKiller(c)}
 
     <div class="row" style="margin-top:30px;padding-top:20px;border-top:1px solid var(--line)">
       <button onclick="G.setTab('team')">← Back to Roster</button>
@@ -1753,13 +1935,48 @@ export function viewFloors() {
   ${body}`;
 }
 
+// ---------- what's new (changelog) ----------
+// Player-facing patch notes. Add the newest release to the TOP of this list; each entry is
+// { date, title, items: [[heading, html], …] }. HTML is allowed in the item bodies.
+const WHATS_NEW = [
+  { date: 'Jun 9, 2026', title: 'Killer Moves', items: [
+    ['Killer Moves', 'Author a devastating <b>special move</b> for each cultivator — pick a favored-domain <b>core Gu</b> plus 2+ <b>support Gu</b> of the core’s Dao path to assemble a signature strike. <b>27 archetypes</b> across five domains (offense · guard · motion · mystic · vigor); the move fires from <b>surplus essence</b> on a short cooldown for a burst of damage, status, healing, shielding or buffs.'],
+    ['Unlock', 'Killer Moves open once you <b>clear Floor 100</b>, and can be equipped on <b>Rank 3+</b> cultivators. Build one from a character’s sheet — “Suggest” auto-configures a valid set.'],
+  ] },
+  { date: 'Jun 9, 2026', title: 'Roster Tools', items: [
+    ['Bulk Dismiss', 'Release many benched cultivators at once for Immortal Essence — a new <b>Dismiss…</b> checklist on the Team roster, with rarity / Soul-Imprint / realm filters and a one-click <b>Select duplicates</b>.'],
+    ['Soul Imprint duplicates', 'A brass badge on the <b>Team</b> tab flags duplicate cultivators ready to imprint, with quick-jump chips and a one-click <b>Auto-Imprint All</b> (keeps each name’s highest-realm copy). Imprint level now shows as gold <span style="color:var(--brass)">★</span> stars on every character card and in the arena.'],
+    ['Search bars', 'Find things fast — search added to the <b>Almanac</b>, <b>Gu Refinery</b> and <b>roster</b>, plus a path filter + search when equipping Gu.'],
+  ] },
+  { date: 'Jun 8, 2026', title: 'Combat & Arena', items: [
+    ['Instant challenge', '<b>Attempt Floor</b> and <b>Auto-Challenge</b> now interrupt the current fight immediately instead of waiting for the animation to finish.'],
+    ['Arena readout', 'The arena now shows the <b>floor</b> you’re fighting and the <b>wave</b> count, centred just below the battlefield.'],
+    ['Crit rework', '<b>Crit Chance</b> (LUCK) and <b>Crit Resist</b> (CON) now scale linearly &amp; uncapped, like Evasion/Hit — and Crit Resist is shown in the character <b>Combat Profile</b>.'],
+  ] },
+  { date: 'Jun 7, 2026', title: 'Guide & Polish', items: [
+    ['Guide: resonance', 'The in-game <b>Guide</b> now explains same-path Gu <b>resonance</b>.'],
+    ['Tutorial fix', 'Finishing <b>First-Steps</b> no longer re-opens the checklist when you later undo a completed step (e.g. unequipping your starter Gu).'],
+    ['Visual polish', 'The screen vignette no longer dims UI content — it’s confined to the corners.'],
+  ] },
+];
+export function viewWhatsNew() {
+  const entries = WHATS_NEW.map((e) => `<section class="wn-entry">
+    <div class="wn-head"><span class="wn-tag">Update</span><span class="wn-title">${e.title}</span><span class="wn-date">${e.date}</span></div>
+    <div class="card"><div class="body"><ul class="cdx-list wn-list">
+      ${e.items.map(([h, t]) => `<li><b>${h}</b> — ${t}</li>`).join('')}
+    </ul></div></div></section>`).join('');
+  return `${pagehead('新', 'Dispatches · 新讯', "What's New",
+    'Patch notes &amp; new content as the world of Gu deepens. Newest at the top.')}
+  ${entries}`;
+}
+
 // ---------- codex ----------
 export function viewCodex() {
   const toc = [
     ['cdx-1', 'Attributes'], ['cdx-2', 'Realms'], ['cdx-3', 'Breakthroughs'], ['cdx-4', 'Aptitude'],
     ['cdx-5', 'Gu'], ['cdx-6', 'Refining'], ['cdx-7', 'Dao Paths'], ['cdx-8', 'Market'], ['cdx-9', 'Combat & Idle'],
-    ['cdx-10', 'Soul Imprint'],
-  ].map(([id, label]) => `<a class="cdx-tab" href="#${id}">${label}</a>`).join('');
+    ['cdx-10', 'Soul Imprint'], ['cdx-11', 'Killer Moves'],
+  ].map(([id, label]) => `<a class="cdx-tab" href="#${id}" onclick="G.cdxOpen('${id}');return false;">${label}</a>`).join('');
   const o = S().onboarding || {};
   const onbActive = !!(o.active && !o.dismissed);
   const onbBar = `<div class="cdx-onboard">
@@ -1771,9 +1988,9 @@ export function viewCodex() {
   return `${pagehead('典', "Manual · 指南", 'Codex',
     "A beginner's guide to cultivation, Gu, and the laws of this world. The floating checklist walks you through your first steps — this explains how it all works.")}
   ${onbBar}
-  <div class="cdx-toc">${toc}</div>
+  <div class="cdx-toc">${toc}<button class="cdx-allbtn" onclick="G.cdxToggleAll(this)">⊕ Expand all</button></div>
 
-  <section id="cdx-1">${secHead(1, 'The Five Attributes', 'your raw power')}
+  <details class="cdx-sec" id="cdx-1"><summary>${secHead(1, 'The Five Attributes', 'your raw power')}</summary>
   <div class="card"><div class="body">Every cultivator's strength comes from five attributes, raised by spending the points each breakthrough grants. Allocate them on a cultivator's <b>Character</b> sheet (the ＋ / − buttons, then <b>Confirm</b>); a red mark on the <b>Team</b> tab means someone has points waiting.
   <ul class="cdx-list">
     <li><b>STR</b> · Strength <span class="muted">— ATK, Crit Damage, Armor Penetration</span></li>
@@ -1782,13 +1999,13 @@ export function viewCodex() {
     <li><b>INT</b> · Intelligence <span class="muted">— Potency (status power), essence pool &amp; regen</span></li>
     <li><b>LCK</b> · Luck <span class="muted">— Crit chance, Lucky hits, drop rate</span></li>
   </ul>
-  There is <b>no realm multiplier</b> — all your power lives in these points, so a higher realm matters because it grants <b>more</b> of them. Raw stats (HP, ATK) grow steadily; percentage stats (crit, evasion) have diminishing returns and scale relative to your realm.</div></div></section>
+  There is <b>no realm multiplier</b> — all your power lives in these points, so a higher realm matters because it grants <b>more</b> of them. Raw stats (HP, ATK) grow steadily; percentage stats (crit, evasion) have diminishing returns and scale relative to your realm.</div></div></details>
 
-  <section id="cdx-2">${secHead(2, 'Realms — Big &amp; Small', 'the cultivation ladder')}
+  <details class="cdx-sec" id="cdx-2"><summary>${secHead(2, 'Realms — Big &amp; Small', 'the cultivation ladder')}</summary>
   <div class="card"><div class="body">Cultivation climbs <b>Ranks 1–9</b> — these are the <b>big realms</b>. Each mortal rank (1–5) is split into four <b>small realms</b>: <b>Initial → Middle → Upper → Peak</b>. So the whole mortal ladder runs Rank 1 Initial … Rank 5 Peak (a "Gu Master").
-  <br><br>Beyond it lie the immortal ranks <b style="color:var(--t6)">6–9</b> (a "Gu Immortal") — these have <b>no sub-stages</b> — and <b style="color:var(--t9)">Rank 9 is the Venerable</b>, the apex of all cultivation. Every step multiplies your power and grants attribute points; crossing into a new <b>big realm</b> is a far greater leap than a small-realm step.</div></div></section>
+  <br><br>Beyond it lie the immortal ranks <b style="color:var(--t6)">6–9</b> (a "Gu Immortal") — these have <b>no sub-stages</b> — and <b style="color:var(--t9)">Rank 9 is the Venerable</b>, the apex of all cultivation. Every step multiplies your power and grants attribute points; crossing into a new <b>big realm</b> is a far greater leap than a small-realm step.</div></div></details>
 
-  <section id="cdx-3">${secHead(3, 'Breaking Through', 'how you advance')}
+  <details class="cdx-sec" id="cdx-3"><summary>${secHead(3, 'Breaking Through', 'how you advance')}</summary>
   <div class="card"><div class="body">You don't grind XP to level up. A mortal breakthrough is <b>purchased with <span style="color:var(--stone)">石 Primeval Stones</span></b> on a cultivator's <b>Character</b> sheet, and it can <b>fail</b> — but failure only spends the stones (no injury, no setback), so simply try again once you can afford it.
   <br><br><b>Success chance = 70% from your Aptitude + 30% from your highest Dao Comprehension.</b> Raise either to make breakthroughs more reliable.
   <br><br>Crossing into a new <b>big realm</b> is <b>floor-gated</b> — you must first clear a tower floor:
@@ -1798,41 +2015,49 @@ export function viewCodex() {
     <li><b>Rank 4</b> — clear Floor 150</li>
     <li><b>Rank 5</b> — clear Floor 200</li>
   </ul>
-  Small-realm steps (Initial→Middle…) have no gate. Each success grants attribute points — and high aptitude adds bonus points on top. Immortals (Rank 6+) advance differently: by surviving <b>Tribulations</b> on the <b>Dao</b> tab.</div></div></section>
+  Small-realm steps (Initial→Middle…) have no gate. Each success grants attribute points — and high aptitude adds bonus points on top. Immortals (Rank 6+) advance differently: by surviving <b>Tribulations</b> on the <b>Dao</b> tab.</div></div></details>
 
-  <section id="cdx-4">${secHead(4, 'Aptitude &amp; the Aperture', 'how much essence you hold')}
+  <details class="cdx-sec" id="cdx-4"><summary>${secHead(4, 'Aptitude &amp; the Aperture', 'how much essence you hold')}</summary>
   <div class="card"><div class="body"><b>Aptitude does not speed up cultivation.</b> It sets your <b>aperture capacity</b> — the share of the primeval-essence pool you can actually fill, graded <b>D → C → B → A → Extreme</b>. (Fang Yuan opens with an <b>Extreme</b> aperture.)
-  <br><br>Essence powers your Gu in battle: every action channels your Gu, paying each one's essence cost. Your Gu fire <b>in loadout order</b> (slot 1 first), and each action lights up as many as your essence can afford — if your aperture can't cover the whole kit, the Gu past that point simply <b>stay dark</b> for that swing (an unlit Gu adds nothing — not its attack, defence, HP, nor status). A Gu rises again the moment your essence recovers. With <b>no</b> Gu lit you still fight bare-handed, so equipping Gu can never make you weaker. Put your most important Gu in the <b>early slots</b>; aptitude (aperture) and <b>INT</b>/<b>rank</b> decide how deep into the loadout you can sustain.</div></div></section>
+  <br><br>Essence powers your Gu in battle: every action channels your Gu, paying each one's essence cost. Your Gu fire <b>in loadout order</b> (slot 1 first), and each action lights up as many as your essence can afford — if your aperture can't cover the whole kit, the Gu past that point simply <b>stay dark</b> for that swing (an unlit Gu adds nothing — not its attack, defence, HP, nor status). A Gu rises again the moment your essence recovers. With <b>no</b> Gu lit you still fight bare-handed, so equipping Gu can never make you weaker. Put your most important Gu in the <b>early slots</b>; aptitude (aperture) and <b>INT</b>/<b>rank</b> decide how deep into the loadout you can sustain.</div></div></details>
 
-  <section id="cdx-5">${secHead(5, 'Gu — One Gu, One Power', 'your equipment')}
+  <details class="cdx-sec" id="cdx-5"><summary>${secHead(5, 'Gu — One Gu, One Power', 'your equipment')}</summary>
   <div class="card"><div class="body">A Gu is a living treasure that does exactly <b>one</b> thing — only its strength scales with its <b>tier (1–10)</b>. Tiers <b>1–5 are common</b> (you may own many); tiers <b style="color:var(--t6)">6–10 are unique</b> — a single copy exists in the entire world.
-  <br><br>Stat Gu (ATK / DEF / HP) grant a <b>percentage</b> of your attribute base, so they stay relevant at any depth. Equip Gu in the loadout slots on a <b>Character</b> sheet — you open with <b>3 slots at Rank 1</b> and gain one per big realm, up to <b>7 at Rank 5</b>.</div></div></section>
+  <br><br>Stat Gu (ATK / DEF / HP) grant a <b>percentage</b> of your attribute base, so they stay relevant at any depth. Equip Gu in the loadout slots on a <b>Character</b> sheet — you open with <b>3 slots at Rank 1</b> and gain one per big realm, up to <b>7 at Rank 5</b>.</div></div></details>
 
-  <section id="cdx-6">${secHead(6, 'The Refinery — Crafting &amp; Refining', 'making Gu')}
+  <details class="cdx-sec" id="cdx-6"><summary>${secHead(6, 'The Refinery — Crafting &amp; Refining', 'making Gu')}</summary>
   <div class="card"><div class="body">Every Gu is built from a recipe in the <b>Gu Refinery</b>: <span style="color:var(--stone)">石 Stones</span> + that path's <b>resources</b> (no essence). Resources <b>drop from tower floors</b> and can also be bought in the <b>Market</b>.
   <br><br>Higher tiers are <b>refined</b>: besides materials, the recipe consumes <b>spare Gu of the same path exactly one tier lower</b>, whose effect <b>tags</b> cover the new Gu's tags (at least two pieces of fodder, every one on-tag). To forge a Tier 3 [ATK] Gu, you feed it Tier 2 ATK Gu of that path.
-  <br><br>A path's Gu only become craftable once the tower runs deep enough — <b>common</b> paths from Floor 1, <b>uncommon</b> from 51, <b>rare</b> from 101, <b>esoteric</b> from 201.</div></div></section>
+  <br><br>A path's Gu only become craftable once the tower runs deep enough — <b>common</b> paths from Floor 1, <b>uncommon</b> from 51, <b>rare</b> from 101, <b>esoteric</b> from 201.</div></div></details>
 
-  <section id="cdx-7">${secHead(7, 'Dao Paths &amp; Comprehension', 'mastery over time')}
+  <details class="cdx-sec" id="cdx-7"><summary>${secHead(7, 'Dao Paths &amp; Comprehension', 'mastery over time')}</summary>
   <div class="card"><div class="body">Every Gu belongs to a <b>Dao Path</b>. Fighting with a path's Gu raises your <b>Comprehension</b> of it (0–10, capped by your rank), which amplifies every Gu of that path — under-comprehension weakens it, mastery rewards it, and <b>level 10</b> is a prerequisite for Venerable.
   <br><br>Your starting path is your <b>Dao Affinity</b>: it grants <b>+10% effectiveness</b> and <b>+25% comprehension gain</b> on that path. Immortals additionally earn <b>Dao Marks</b> from tribulations, which further amplify their paths.
-  <br><br><b>Resonance</b> rewards focusing one path: equipping several Gu of the <b>same path</b> on a cultivator grants a set bonus to that path's effect — <b>+5%</b> with 2, then +10% · +15% · +20%, up to <b>+25% with 6</b>. It applies to <b>everyone</b> (not just immortals) and <b>stacks</b> with affinity and comprehension, so a focused single-path loadout outperforms a scattered one. Track all of this on the <b>Dao</b> and <b>Attainment</b> tabs.</div></div></section>
+  <br><br><b>Resonance</b> rewards focusing one path: equipping several Gu of the <b>same path</b> on a cultivator grants a set bonus to that path's effect — <b>+5%</b> with 2, then +10% · +15% · +20%, up to <b>+25% with 6</b>. It applies to <b>everyone</b> (not just immortals) and <b>stacks</b> with affinity and comprehension, so a focused single-path loadout outperforms a scattered one. Track all of this on the <b>Dao</b> and <b>Attainment</b> tabs.</div></div></details>
 
-  <section id="cdx-8">${secHead(8, 'The Market', 'when floors are slow to drop')}
-  <div class="card"><div class="body">The <b>Market</b> stocks every resource you've <b>unlocked</b>, so you can buy what the floors are slow to drop. A resource unlocks only when <b>both</b> are true: you've <b>cleared a floor it drops from</b>, and you have a cultivator whose <b>rank is at least the resource's tier</b> (a Rank-3 roster can't buy Epic / tier-4 materials yet). Prices climb steeply with tier, so deep materials are a serious <span style="color:var(--stone)">石</span> sink.</div></div></section>
+  <details class="cdx-sec" id="cdx-8"><summary>${secHead(8, 'The Market', 'when floors are slow to drop')}</summary>
+  <div class="card"><div class="body">The <b>Market</b> stocks every resource you've <b>unlocked</b>, so you can buy what the floors are slow to drop. A resource unlocks only when <b>both</b> are true: you've <b>cleared a floor it drops from</b>, and you have a cultivator whose <b>rank is at least the resource's tier</b> (a Rank-3 roster can't buy Epic / tier-4 materials yet). Prices climb steeply with tier, so deep materials are a serious <span style="color:var(--stone)">石</span> sink.</div></div></details>
 
-  <section id="cdx-9">${secHead(9, 'Currencies, Combat &amp; Idle', 'the daily loop')}
+  <details class="cdx-sec" id="cdx-9"><summary>${secHead(9, 'Currencies, Combat &amp; Idle', 'the daily loop')}</summary>
   <div class="card"><div class="body"><b>Two currencies.</b> <b style="color:var(--stone)">石 Primeval Stones</b> buy resources and fund breakthroughs &amp; Gu crafting. <b style="color:var(--jade)">✦ Immortal Essence</b> funds recruiting (<b>Recruit</b> tab) and ascension. You earn an essence lump the <b>first</b> time you clear each floor (bosses far more), plus a small trickle from farming any cleared floor.
-  <br><br><b>Combat is automatic.</b> Your team (max 6) fights on a <b>2×5 board</b> — a front-row unit shields the back-liner <i>in its own lane</i> until it falls, and each fighter acts when its movement gauge fills, so higher <b>SPD</b> means more frequent turns. Leave <b>Idle Farm</b> running on any cleared floor to gather while you're away, press <b>Attempt Floor</b> to push your frontier, or <b>Auto-Challenge</b> to climb until you fall.</div></div></section>
+  <br><br><b>Combat is automatic.</b> Your team (max 6) fights on a <b>2×5 board</b> — a front-row unit shields the back-liner <i>in its own lane</i> until it falls, and each fighter acts when its movement gauge fills, so higher <b>SPD</b> means more frequent turns. Leave <b>Idle Farm</b> running on any cleared floor to gather while you're away, press <b>Attempt Floor</b> to push your frontier, or <b>Auto-Challenge</b> to climb until you fall.</div></div></details>
 
-  <section id="cdx-10">${secHead(10, 'Soul Imprint', 'strengthen a copy with its duplicates')}
+  <details class="cdx-sec" id="cdx-10"><summary>${secHead(10, 'Soul Imprint', 'strengthen a copy with its duplicates')}</summary>
   <div class="card"><div class="body">Recruiting can hand you <b>duplicates</b> — two or more copies of the same cultivator. Instead of dismissing the spares, you can <b>imprint</b> them: sacrifice a benched duplicate into one copy to raise its <b>Soul Imprint</b> (<span class="cjk">魂印</span>), from <b>Lv 0 up to Lv 10</b>. Each level permanently grants that copy:
   <ul class="cdx-list">
     <li><b>+5% to all five attributes</b> <span class="muted">— a flat multiplier, so +50% at Lv 10</span></li>
     <li><b>+0.1 aptitude</b> <span class="muted">— up to +1.0 at Lv 10</span></li>
   </ul>
   Because aptitude does so much, that bonus ripples outward: a <b>fuller aperture</b>, <b>better breakthrough odds</b>, and even the <b>bonus attribute points</b> you'd have earned crossing past realms at the higher aptitude — all granted retroactively.
-  <br><br>Open the kept copy's <b>Character</b> sheet and use <b>Imprint · Sacrifice a Duplicate</b>, then choose which spare to consume (it must be <b>benched</b>, and it's destroyed). Pour your duplicates into one carry to forge it far beyond a lone copy.</div></div></section>
+  <br><br>Open the kept copy's <b>Character</b> sheet and use <b>Imprint · Sacrifice a Duplicate</b>, then choose which spare to consume (it must be <b>benched</b>, and it's destroyed). Pour your duplicates into one carry to forge it far beyond a lone copy.</div></div></details>
+
+  <details class="cdx-sec" id="cdx-11"><summary>${secHead(11, 'Killer Moves', 'your Gu-built ultimate')}</summary>
+  <div class="card"><div class="body">A <b>killer move</b> is a special move you build on a cultivator's <b>Character</b> sheet from the Gu it already wields. Three steps: pick an <b>archetype</b> (the move's shape) → a <b>CORE</b> Gu of that archetype's <b>favored domain</b> (e.g. an ATK/lifesteal Gu for an offense move) → <b>2+ SUPPORT</b> Gu that all share the core's <b>Dao path</b>. The path sets the move's name and the status it inflicts. Hit <b>✦ Suggest</b> to auto-fill.
+  <br><br><b>Unlocking.</b> Killer moves are a mid-game art: they become available only after you <b>clear Floor 100</b>, and only on cultivators of <b>Rank 3 or higher</b>. Enemies of Rank 3+ wield them too.
+  <br><br><b>Effect domains</b> group Gu by role: <b>Offense</b> (atk · crit · armour-pen · lifesteal) · <b>Guard</b> (def · resist · thorns) · <b>Motion</b> (spd · evasion) · <b>Mystic</b> (potency · status · luck) · <b>Vigor</b> (HP · regen · essence pool/regen). Each archetype is gated to one domain's core.
+  <br><br><b>Synergy.</b> Your support is already one path; the more of it that <b>also matches the favored domain</b> (★), the stronger the move — a fully on-domain support reads <b>High</b> synergy, an all-off-domain one sits at the floor.
+  <br><br><b>Power.</b> Single-target moves hit far harder <i>per foe</i> than AoE — AoE trades raw punch for spread. A deeper set (4–5 Gu) and higher-tier Gu both scale it up.
+  <br><br><b>Casting.</b> A killer move spends a chunk of <b>essence</b> on top of normal Gu channeling, so it fires only once you've <b>banked enough surplus</b> — a high aperture (INT, aptitude, the right Gu) charges it faster. After firing it has a short <b>3-turn cooldown</b>. Enemies — especially bosses — wield killer moves too, so read their loadouts.</div></div></details>
 
   ${secHead(0, 'Your Records')}
   <div class="cs-statgrid">

@@ -21,6 +21,7 @@ import { statusForPath, STATUS, statusDuration } from './status.js';
 import { essenceQualityByRank, guSlots } from './realms.js';
 import { NPC_TEMPLATES, RARITY_ORDER } from './rarities.js';
 import { LINES, AFFINITY_EFFECT_MULT } from './traits.js';
+import { autoConfigure, assemble, guInDomain, KILLER_COST_MULT, KILLER_COOLDOWN, KILLER_MIN_RANK } from './combos.js';
 
 const MOBS = ['Bog Toad', 'Stone Lizard', 'Vicious Wolf Gu', 'Bone Sparrow', 'Venom Centipede',
   'Moonbug Swarm', 'Iron Skin Boar', 'Specter Moth', 'Blood Bat', 'Clay Sentinel'];
@@ -65,11 +66,19 @@ function floorThemePaths(floor) {
 // the data layer free of a systems import): 2→1.05 · 3→1.10 · 4→1.15 · 5→1.20 · 6+→1.25 · else 1.
 const enemyResonance = (n) => (n >= 6 ? 1.25 : n >= 2 ? 1 + 0.05 * (n - 1) : 1);
 
+// The signature core KIND each killer DOMAIN wants in a loadout — the role's defining stat, so the
+// forced core reads as that role (a tank cores DEF, a striker ATK, …). For mystic, prefer an actual
+// STATUS Gu so the move's status ops land; falls back to any in-domain Gu (e.g. potency). See
+// enemyGuLoadout's coreDomain arg + lineKillerConfig.
+const DOMAIN_CORE_KIND = { offense: 'atk', guard: 'def', motion: 'spd', vigor: 'hp', mystic: 'status' };
+
 // An enemy's Gu loadout: `count` Gu of ONE unlocked theme path (tier ~ realm) — a SAME-PATH, RESONANCE-
 // enabled kit (like a player who stacks one Dao), so foes are properly synergized, not a scattered grab-bag.
 // Paths are commonality-gated (floors 1-50 common only, uncommon at 51, rare 101, esoteric 201), and the
-// loadout repeats the path's Gu to fill every slot so the resonance bonus is real.
-function enemyGuLoadout(floor, rank, rng, count) {
+// loadout repeats the path's Gu to fill every slot so the resonance bonus is real. When `coreDomain` is
+// given (a killer-capable line wants its move to match its role), the loadout is guaranteed to field one
+// Gu of that domain — always possible since every path stocks a Gu for every universal kind.
+function enemyGuLoadout(floor, rank, rng, count, coreDomain) {
   const allowedPath = (p) => commOf(p).floorReq <= floor;       // only paths this floor has unlocked
   const cap = Math.max(1, Math.min(5, rank + 1));
   const lo = Math.max(1, cap - 2);
@@ -87,6 +96,13 @@ function enemyGuLoadout(floor, rank, rng, count) {
   for (let i = 0; i < count; i++) {
     if (!avail.length) { if (!pool.length) break; avail.push(...pool); } // repeat to fill slots (stays same-path)
     out.push(avail.splice(Math.floor(rng() * avail.length), 1)[0]);
+  }
+  // COHERENCE: guarantee a CORE Gu of the line's favored domain so the mob's killer move can match its
+  // archetype. Prefer the domain's signature kind (a real status Gu for mystic); else any in-domain Gu.
+  if (coreDomain && out.length && !out.some((g) => guInDomain(g, coreDomain))) {
+    const want = DOMAIN_CORE_KIND[coreDomain];
+    const core = pool.find((g) => (g.effects || []).some((e) => e.kind === want)) || pool.find((g) => guInDomain(g, coreDomain));
+    if (core) out[0] = core; // replace one slot — stays same-path (drawn from the same pool)
   }
   return out;
 }
@@ -140,6 +156,9 @@ function enemyPool(realmIdx, rarity, apt) {
 const DIFF_START = 0.5;    // invested-pool factor at a band's FIRST floor (gentle post-rank-up on-ramp)
 const DIFF_END   = 2.0;    // …and at the band's GATE boss (enemies ~2× an equal player's invested pool)
 const BOSS_POOL_MULT = 1.35; // a boss fields this × the floor's invested pool on top of the ramp
+// Mirror of battle.js ESS_REGEN_SCALE (essence regenerated per unit of gauge-time) — used to size a foe's
+// aperture so it sustains its loadout channel + killer cadence without self-starving (see enemyUnit).
+const ESS_REGEN_SCALE = 0.16;
 function difficultyMult(floor) {
   const within = ((floor - 1) % FLOORS_PER_REALM) / FLOORS_PER_REALM;     // 0 .. ~1 across the band
   return DIFF_START + (DIFF_END - DIFF_START) * within;
@@ -234,11 +253,27 @@ function applyEnemyAura(wave, squad, floor) {
   const a = auraLine.aura[lead.rarity];
   if (!a) return wave;
   for (const u of wave) {
-    if (a.atkMul) u.atk = Math.round(u.atk * (1 + a.atkMul));
-    if (a.defMul) u.def = Math.round(u.def * (1 + a.defMul));
-    if (a.spdMul) u.spd = Math.max(1, Math.round(u.spd * (1 + a.spdMul)));
-    if (a.thorns) u.effects.thorns = Math.min(0.6, (u.effects.thorns || 0) + a.thorns);
-    if (a.regenPct) u.effects.regen = (u.effects.regen || 0) + Math.round((u.maxHp || 0) * a.regenPct);
+    const rungs = (u.tiers && u.tiers.length) ? u.tiers : null;
+    if (rungs) {
+      // bake the aura into EVERY channel rung so it survives applyChannel's per-action profile swap
+      // (mirrors the ally side's applyTeamAuras), then re-sync the flat display fields from the top rung.
+      for (const t of rungs) {
+        if (a.atkMul) t.atk = Math.round(t.atk * (1 + a.atkMul));
+        if (a.defMul) t.def = Math.round(t.def * (1 + a.defMul));
+        if (a.spdMul) t.spd = Math.max(1, Math.round(t.spd * (1 + a.spdMul)));
+        if (a.thorns) t.fx.thorns = Math.min(0.6, (t.fx.thorns || 0) + a.thorns);
+        if (a.regenPct) t.fx.regen = (t.fx.regen || 0) + Math.round((t.max || 0) * a.regenPct);
+      }
+      const top = rungs[rungs.length - 1];
+      u.atk = top.atk; u.def = top.def; u.spd = top.spd;
+      u.effects.thorns = top.fx.thorns || 0; u.effects.regen = top.fx.regen || 0;
+    } else {                                   // legacy single-tier path (no ladder)
+      if (a.atkMul) u.atk = Math.round(u.atk * (1 + a.atkMul));
+      if (a.defMul) u.def = Math.round(u.def * (1 + a.defMul));
+      if (a.spdMul) u.spd = Math.max(1, Math.round(u.spd * (1 + a.spdMul)));
+      if (a.thorns) u.effects.thorns = Math.min(0.6, (u.effects.thorns || 0) + a.thorns);
+      if (a.regenPct) u.effects.regen = (u.effects.regen || 0) + Math.round((u.maxHp || 0) * a.regenPct);
+    }
   }
   wave.aura = squad.aura; // tag for UI/debug
   return wave;
@@ -246,9 +281,45 @@ function applyEnemyAura(wave, squad, floor) {
 
 // the realm a rank's PEAK sits at (for full-loadout slot counts) — mortal (R-1)*4+3, immortal 20+(R-6).
 const rankPeakRealm = (rank) => (rank <= 5 ? (rank - 1) * 4 + 3 : 20 + (rank - 6));
+
+// ---- LINE-COHERENT KILLER MOVES -------------------------------------------------------------------
+// Map each combat LINE (the squad's role→trait assignment) → a fitting killer-move DOMAIN + a small
+// archetype pool, so a cultivator's special move matches its battlefield ROLE (tanks shield, strikers
+// nuke, afflictors hex, skirmishers blitz) while the move's NAME + status still come from its loadout's
+// DAO PATH. Every path stocks a Gu for every universal kind, so the domain core is always craftable.
+const LINE_KILLER = {
+  vanguard:   { domain: 'offense', archs: ['onslaught', 'cataclysm'] },                 // front bruiser → burst
+  slayer:     { domain: 'offense', archs: ['execution', 'annihilation', 'onslaught'] }, // glass carry → nukes/AoE
+  assassin:   { domain: 'offense', archs: ['execution', 'onslaught'] },                 // crit kill-securer
+  reaver:     { domain: 'offense', archs: ['bloodrush', 'whirlwind'] },                 // vampire → lifesteal strikes
+  afflictor:  { domain: 'mystic',  archs: ['hexweave', 'soulrend', 'contagion', 'anathema'] }, // debuffer → hexes
+  tempest:    { domain: 'motion',  archs: ['flurry', 'blur', 'tempest'] },              // skirmisher → tempo/blitz
+  wall:       { domain: 'guard',   archs: ['aegis', 'sentinel', 'reprisal', 'bulwark'] }, // anchor → shields/taunt
+  foundation: { domain: 'vigor',   archs: ['lifesurge', 'renewal'] },                   // channeler → sustain
+  fortune:    { domain: 'offense', archs: ['onslaught', 'execution'] },                 // luck-striker → burst
+  adept:      { domain: 'offense', archs: ['onslaught', 'cataclysm'] },                 // amplifier → burst
+  warden:     { domain: 'guard',   archs: ['bulwark', 'bastion'] },                     // (support lines, if ever a role line)
+  commander:  { domain: 'offense', archs: ['warcry', 'onslaught'] },
+  mender:     { domain: 'vigor',   archs: ['renewal', 'sanctuary'] },
+};
+// Build a LINE-COHERENT killer config from a resolved loadout (`items` = [{uid, gu}]): core = a loadout
+// Gu in the line's favored domain (the loadout guarantees one via enemyGuLoadout's coreDomain), support =
+// the rest of the core's path, archetype = a deterministic pick from the line's pool (varies by mob/floor,
+// no rng draw so the spawn stream is unperturbed). Returns null → caller falls back to generic autoConfigure.
+function lineKillerConfig(lineId, items, name, floor) {
+  const lk = lineId && LINE_KILLER[lineId];
+  if (!lk || !items || items.length < 3) return null;
+  const core = items.find((it) => guInDomain(it.gu, lk.domain));
+  if (!core) return null;
+  const support = items.filter((it) => it !== core && it.gu.daoPath === core.gu.daoPath);
+  if (support.length < 2) return null;
+  const archetype = lk.archs[hash32(name + floor + lineId) % lk.archs.length];
+  return { core: core.uid, coreGu: core.gu, support: support.map((it) => it.uid), supportGu: support.map((it) => it.gu), archetype };
+}
 function enemyUnit(floor, name, { boss = false, difficulty = 0, kind = 'beast', rng = Math.random, squad = SQUADS.rabble, fullGu = false } = {}) {
   const rank = floorRealm(floor);
   const role = boss ? 'boss' : roleOf(name);
+  const lineId = squad.lines[role] || null;       // the squad's trait LINE for this role (drives the killer archetype)
   const rarity = enemyRarity(floor, boss, difficulty, rng);    // gradient rarity → aptitude + trait tier
   const apt = (NPC_TEMPLATES[rarity] || NPC_TEMPLATES.Common).aptitude;
   // parity baseline (rank-1→realm pool for this rarity) × difficulty multiplier (within-band sawtooth),
@@ -268,7 +339,9 @@ function enemyUnit(floor, name, { boss = false, difficulty = 0, kind = 'beast', 
   // ordinary foes carry fewer (cultivators a kit, beasts a couple of wild Gu).
   const guCount = fullGu ? guSlots(rankPeakRealm(rank))
     : cultivator ? Math.min(4, 2 + Math.floor(rank / 3)) : Math.min(2, 1 + Math.floor(rank / 4));
-  const loadout = wantGu ? enemyGuLoadout(floor, rank, rng, guCount) : [];
+  // a killer-capable line steers the loadout to field a core of its favored domain (so its move fits its role)
+  const coreDomain = (rank >= KILLER_MIN_RANK && lineId && LINE_KILLER[lineId]) ? LINE_KILLER[lineId].domain : null;
+  const loadout = wantGu ? enemyGuLoadout(floor, rank, rng, guCount, coreDomain) : [];
   const affPath = (loadout[0] && loadout[0].daoPath) || themePath(name); // DAO PATH AFFINITY trait (its theme path)
   const RATE_MAP = { crit: 'crit', critDmg: 'critDamage', critRes: 'critResist', statusRes: 'statusResist',
     evasion: 'dodge', hit: 'hitChance', armorPen: 'armorPen', lifesteal: 'lifesteal', thorns: 'thorns',
@@ -282,15 +355,14 @@ function enemyUnit(floor, name, { boss = false, difficulty = 0, kind = 'beast', 
     const gt = Math.max(1, Math.min(6, 1 + Math.floor(rank * 0.7)));
     cAtk = 1.10 + gt * 0.02; cDef = 1.14 + gt * 0.03; cHp = 1.08 + gt * 0.02;
   }
-  const lineId = squad.lines[role] || null;
   const lb = (lineId && LINES[lineId] && LINES[lineId].tiers) ? LINES[lineId].tiers[rarity] : null;
   const lineRate = {}; let essPoolPct = 0, essRcvPct = 0, apBase = 0;
   if (lb) { for (const k in RATE_MAP) if (lb[k]) lineRate[RATE_MAP[k]] = (lineRate[RATE_MAP[k]] || 0) + lb[k];
     essPoolPct = lb.essPoolPct || 0; essRcvPct = lb.essRcvPct || 0; apBase = lb.apBase || 0; }
   // aperture pool/regen carry NO Gu contribution for enemies (Gu lines don't grant essPool/essRcv), so
   // they're the same across tiers — aptitude (by rarity) still caps the usable fraction, like allies.
-  const essencePool = Math.round((base.essencePool + apBase) * essenceQualityByRank(rank - 1) * apertureCapacity(apt) * (1 + essPoolPct));
-  const essenceRegen = base.essenceRegen * apertureRegenFactor(apt) * (1 + essRcvPct);
+  let essencePool = Math.round((base.essencePool + apBase) * essenceQualityByRank(rank - 1) * apertureCapacity(apt) * (1 + essPoolPct));
+  let essenceRegen = base.essenceRegen * apertureRegenFactor(apt) * (1 + essRcvPct);   // both may be RAISED below to sustain a killer-capable foe's kit
   const CAP = { lifesteal: 0.9, crit: 0.95, critResist: 0.95, statusResist: 0.95, armorPen: 0.95, thorns: 0.6, extra_turn: 0.5 }; // dodge UNCAPPED (parity with allies)
 
   // Aggregate the Gu-derived modifiers for a loadout PREFIX (resonance recomputed from the prefix's
@@ -314,11 +386,11 @@ function enemyUnit(floor, name, { boss = false, difficulty = 0, kind = 'beast', 
     }
     return { rate, riders, aM, dM, hM, sM, regenFrac, cost };
   };
-  // Build the enemy's stat/effect profile from its loadout. Gu → cultivator → line multipliers apply in
-  // that order (matching the old single-pass build). NOTE: per-Gu essence gating is PLAYER-ONLY for now —
-  // enemies always field their FULL loadout (no channel ladder is emitted), so the battle engine resolves
-  // them on a single full-loadout tier. `buildTier` is written to take a prefix so the ladder can be
-  // re-enabled for foes later by emitting `loadout.slice(0,k)` tiers, but today it's only called once.
+  // Build the enemy's stat/effect profile from a loadout PREFIX. Gu → cultivator → line multipliers apply
+  // in that order (matching the old single-pass build). Called once per ladder rung (loadout.slice(0,k))
+  // below to emit `tiers`, so per-Gu essence gating now applies to ENEMIES too (parity with the player):
+  // a starved foe drops whole Gu via battle.js applyChannel. Cultivator honing + line traits are non-Gu, so
+  // they live in EVERY rung (including k=0); only the Gu effects + their cumulative essence cost vary by k.
   const buildTier = (prefix) => {
     const g = guAgg(prefix);
     // build each combined multiplier (Gu × cultivator × line) FIRST, then multiply base once — the exact
@@ -351,7 +423,15 @@ function enemyUnit(floor, name, { boss = false, difficulty = 0, kind = 'beast', 
     for (const k in CAP) if (effects[k]) effects[k] = Math.min(effects[k], CAP[k]);
     return { cost: g.cost, atk, def, spd, max: maxHp, essMax: essencePool, essRegen: essenceRegen, fx: effects };
   };
-  const full = buildTier(loadout); // full loadout only (no per-Gu gating for enemies yet)
+  // PER-GU ESSENCE LADDER (parity with the player): tiers[k] = the profile when only the first k loadout
+  // Gu are channelled — k=0 the bare-handed attribute swing (cultivator honing + line traits still apply),
+  // k=N the full kit — each with its CUMULATIVE essence cost. battle.js applyChannel gates EVERY unit to the
+  // largest affordable prefix each action, so an essence-starved foe now DROPS whole Gu (and their HP/aperture/
+  // riders), exactly like an over-reaching player — never weaker than bare-handed. Resonance recomputes per
+  // prefix (guAgg counts same-path Gu in the slice), so a shortened loadout also loses resonance.
+  const tiers = [];
+  for (let k = 0; k <= loadout.length; k++) tiers.push(buildTier(loadout.slice(0, k)));
+  const full = tiers[tiers.length - 1]; // top rung = full loadout (the fight starts here, then gates down)
 
   const compCap = ENEMY_COMP_CAP[rank - 1];
   const comprehension = Math.min(compCap, Math.round(compCap * jitter(name + floor)));
@@ -361,16 +441,52 @@ function enemyUnit(floor, name, { boss = false, difficulty = 0, kind = 'beast', 
     daoMarks = Math.round((lo + (hi - lo) * (boss ? 1 : difficulty)) * jitter('m' + name + floor));
   }
 
+  // KILLER MOVE: a rank-3+ cultivator's special move is built to fit its trait LINE (lineKillerConfig:
+  // a tank guards, a striker nukes, an afflictor hexes) off its loadout's core+support, with the move's
+  // name + status flavored by its Dao path. Falls back to the generic loadout-driven autoConfigure when
+  // the unit has no line (e.g. rabble) or can't field a domain core. Costed like an ally's core
+  // (KILLER_COST_MULT × Σ the core/support Gu's rank-adjusted channel cost).
+  // PROGRESSION GATE: only rank 3+ foes get a killer move (combos.js KILLER_MIN_RANK), mirroring the player
+  // gate. Rank-3+ enemies appear only on Floor 101+ (where the player has cleared Floor 100), so it's symmetric.
+  let killer = null, comboCost = 0;
+  if (rank >= KILLER_MIN_RANK) {
+    const items = loadout.map((g, i) => ({ uid: 'e' + i, gu: g }));
+    const autoK = lineKillerConfig(lineId, items, name, floor) || autoConfigure(items); // line-coherent first, generic fallback
+    if (autoK) {
+      const spec = assemble(autoK.archetype, autoK.coreGu, autoK.supportGu);
+      if (spec) { killer = spec; comboCost = Math.round(KILLER_COST_MULT * [autoK.coreGu, ...autoK.supportGu].reduce((s, g) => s + guEssenceCostFor(g, rank), 0)); }
+    }
+  }
+
+  // SELF-SUFFICIENT APERTURE: a killer's comboCost (≈3× a channel) on top of per-action channelling would
+  // otherwise starve a killer-capable foe's OWN Gu right after it casts (they'd gate off until regen caught
+  // up). Size the pool + regen to its loadout so it sustains its full-loadout channel AND its killer cadence:
+  //   • regen covers one channel/action + the killer amortised over ~2 cooldowns (so killers recur but don't
+  //     drain it dry). per-action regen ≈ essRegen × (1000/spd) × ESS_REGEN_SCALE → invert for the stat.
+  //   • pool banks a full killer + ~2 actions of channel buffer, so casting near-full never drops below the
+  //     channel cost. Floors only RAISE — a naturally rich aperture is left alone. The essence GATING still
+  //     bites under EXTERNAL pressure (player essence-drain / Enervate) or a genuinely over-tier loadout.
+  if (comboCost > 0 && loadout.length) {
+    const channel = full.cost;                                           // full-loadout essence per action
+    const perActionNeed = channel + comboCost / (2 * KILLER_COOLDOWN);   // sustain channel + amortised killer
+    const regenFloor = perActionNeed * Math.max(1, full.spd) / (1000 * ESS_REGEN_SCALE) * 1.15; // +15% margin
+    const poolFloor = comboCost + channel * 2;
+    if (essenceRegen < regenFloor) essenceRegen = regenFloor;
+    if (essencePool < poolFloor) essencePool = Math.round(poolFloor);
+    for (const t of tiers) { t.essMax = essencePool; t.essRegen = essenceRegen; } // ladder rungs share the aperture
+  }
+
   return {
     name, isBoss: boss, kind: cultivator ? 'cultivator' : 'beast', rank, realm: realmIdx, role, rarity, line: lineId,
-    daoPath: affPath,
+    daoPath: affPath, killer, comboCost,
     comprehension, daoMarks, gu: loadout.map((g) => g.name),
     guInfo: loadout.map((g) => ({ name: g.name, eff: effectText(g) })), // name + effect text for the arena traits panel
 
     maxHp: full.max, hp: full.max, atk: full.atk, def: full.def, spd: full.spd,
     essencePool, essenceRegen,
-    essenceCost: full.cost,    // Σ all Gu — battle's enemyCombatant builds a single full-loadout tier from this
+    essenceCost: full.cost,    // Σ all Gu (full kit) — display/legacy fallback; live gating reads `tiers`
     effects: full.fx,
+    tiers,                     // per-Gu channel ladder → battle.js applyChannel gates the foe by essence
   };
 }
 

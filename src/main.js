@@ -12,6 +12,7 @@ import { generateEncounter, isBossFloor, MAX_FLOORS } from './data/floors.js';
 import { guOf } from './systems/cultivation.js';
 import { GU_LIB, effectText, guEssenceCost, isUnique } from './data/gu.js';
 import { pathName } from './data/daoPaths.js';
+import { autoConfigure, guInDomain, archetypeDomain } from './data/combos.js';
 import { resourceName, RESOURCES } from './data/resources.js';
 import { isImmortalRealm, realmName } from './data/realms.js';
 import { rarityTier } from './data/rarities.js';
@@ -849,6 +850,70 @@ const G = {
     if (j < 0 || j >= c.gu.length || !c.gu[j]) return;       // no neighbour that way → already at the end
     const t = c.gu[slot]; c.gu[slot] = c.gu[j]; c.gu[j] = t;
     UI.render(activeTab === 'battle' ? 'team' : activeTab); save();
+  },
+  // KILLER MOVE config (character sheet). CORE = 1 Gu of the archetype's favored domain; SUPPORT = 2+ Gu
+  // of the core's Dao path. setKillerArchetype picks the archetype (clears a core that no longer matches
+  // its domain). autoKiller pre-fills core+support+archetype.
+  setKillerCore(charId, uid) {
+    const c = S().roster.find((x) => x.id === charId); if (!c) return;
+    c.killer = c.killer || { core: null, support: [], archetype: null };
+    if (c.killer.core === uid) { c.killer.core = null; c.killer.support = []; } // toggle off → clear the set
+    else {
+      const g = guOf(uid); if (!g) return;
+      c.killer.core = uid;
+      // keep only support that's a different Gu of the new core's path
+      c.killer.support = (c.killer.support || []).filter((u) => u !== uid && (guOf(u) || {}).daoPath === g.daoPath);
+    }
+    UI.render(activeTab === 'battle' ? 'team' : activeTab); save();
+  },
+  setKillerSupport(charId, uid) {
+    const c = S().roster.find((x) => x.id === charId); if (!c) return;
+    c.killer = c.killer || { core: null, support: [], archetype: null };
+    if (!c.killer.core) return UI.toast('Pick a core Gu first.');
+    if (uid === c.killer.core) return;
+    const cg = guOf(c.killer.core), g = guOf(uid); if (!cg || !g) return;
+    if (g.daoPath !== cg.daoPath) return UI.toast("Support Gu must share the core's Dao path.");
+    const sup = c.killer.support = (c.killer.support || []).slice();
+    const i = sup.indexOf(uid);
+    if (i >= 0) sup.splice(i, 1); else sup.push(uid);
+    UI.render(activeTab === 'battle' ? 'team' : activeTab); save();
+  },
+  setKillerArchetype(charId, id) {
+    const c = S().roster.find((x) => x.id === charId); if (!c) return;
+    c.killer = c.killer || { core: null, support: [], archetype: null };
+    c.killer.archetype = c.killer.archetype === id ? null : id; // re-click clears it
+    const dom = archetypeDomain(c.killer.archetype); // a core that no longer matches the favored domain is dropped
+    if (dom && c.killer.core) { const cg = guOf(c.killer.core); if (!cg || !guInDomain(cg, dom)) { c.killer.core = null; c.killer.support = []; } }
+    UI.render(activeTab === 'battle' ? 'team' : activeTab); save();
+  },
+  autoKiller(charId) {
+    const c = S().roster.find((x) => x.id === charId); if (!c) return;
+    const items = (c.gu || []).filter(Boolean).map((uid) => ({ uid, gu: guOf(uid) })).filter((it) => it.gu);
+    const auto = autoConfigure(items);
+    if (!auto) return UI.toast('Equip 3+ Gu of one Dao path to form a killer move.');
+    c.killer = { core: auto.core, support: auto.support, archetype: auto.archetype };
+    UI.render(activeTab === 'battle' ? 'team' : activeTab); save();
+  },
+  // Team tab: expand/collapse the inline killer-move editor on a roster card.
+  toggleKillerEdit(charId) {
+    const s = S().settings; const o = s.killerOpen || (s.killerOpen = {});
+    if (o[charId]) delete o[charId]; else o[charId] = true;
+    UI.render(activeTab === 'battle' ? 'team' : activeTab); save();
+  },
+  // Guide (Codex): collapsible <details class="cdx-sec"> sections. Pure DOM helpers (no state) — sections
+  // default collapsed each render so the page opens short. cdxOpen expands + scrolls to a TOC target;
+  // cdxToggleAll flips every section and relabels its own button.
+  cdxOpen(id) {
+    const d = document.getElementById(id);
+    if (!d) return;
+    d.open = true;
+    d.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  },
+  cdxToggleAll(btn) {
+    const secs = [...document.querySelectorAll('.cdx-sec')];
+    const expand = secs.some((d) => !d.open); // any collapsed → expand all; otherwise collapse all
+    secs.forEach((d) => { d.open = expand; });
+    if (btn) btn.textContent = expand ? '⊖ Collapse all' : '⊕ Expand all';
   },
   // One-time bonus for completing EVERY First-Steps tutorial goal. Idempotent — the persistent
   // onboarding.rewarded flag guards it, so re-arming the guide (or repeated renders) can't farm it.

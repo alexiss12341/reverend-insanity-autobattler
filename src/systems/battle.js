@@ -12,11 +12,13 @@
 //  - Models crit, dodge, lifesteal, thorns, burn (applied on the burner's turn), regen
 //    (applied on the unit's own turn), and extra_turn (chance to act again immediately).
 import { S, activeTeam, rowOf, laneOf } from '../state.js';
-import { effectiveStats } from './cultivation.js';
+import { effectiveStats, guOf } from './cultivation.js';
 import { STATUS } from '../data/status.js';
 import { lineAura, affinityPaths, allyAuraSummary, enemyWaveAura } from '../data/traits.js';
 import { rarityTier } from '../data/rarities.js';
-import { resolveOwned, effectText } from '../data/gu.js';
+import { resolveOwned, effectText, guEssenceCostFor } from '../data/gu.js';
+import { rankOf } from '../data/realms.js';
+import { validateKiller, assemble, KILLER_COST_MULT, KILLER_COOLDOWN, KILLER_UNLOCK_FLOOR, KILLER_MIN_RANK } from '../data/combos.js';
 
 // An ally's equipped Gu as { name, eff } for the arena traits panel (resolves each uid via guInv).
 const guInfoFor = (ch) => ((ch && ch.gu) || []).map((uid) => {
@@ -74,13 +76,50 @@ function initFromFull(u) {
   u.atk = t.atk; u.def = t.def; u.spd = Math.max(1, t.spd); u.fx = t.fx;
   u.max = t.max; u.hp = t.max; u.essMax = t.essMax; u.essRegen = t.essRegen; u.ess = t.essMax;
   u.activeGu = u.tiers.length - 1;
+  u.shield = 0;        // KILLER MOVE: temporary absorb pool (drained before HP by damageUnit); starts empty
+  u.killerCd = 0;      // KILLER MOVE: actions-until-next-cast cooldown (0 = ready)
   return u;
+}
+// KILLER MOVE: set a unit to its FULL (top) tier profile WITHOUT spending essence — used when a killer
+// move fires (comboCost was already paid), so the move always lands at full power. Mirrors applyChannel's
+// field set + overflow clamps, minus the essence cost.
+function applyTopTier(u) {
+  const t = u.tiers[u.tiers.length - 1]; if (!t) return;
+  u.atk = t.atk; u.def = t.def; u.spd = Math.max(1, t.spd); u.fx = t.fx;
+  u.max = t.max; u.essMax = t.essMax; u.essRegen = t.essRegen;
+  if (u.hp > u.max) u.hp = u.max;
+  if (u.ess > u.essMax) u.ess = u.essMax;
+  u.activeGu = u.tiers.length - 1;
+}
+// KILLER MOVE: resolve a character's saved killer config into a combat spec + essence cost on the
+// combatant. No-op (leaves u.killer undefined) when there's no valid core/archetype. `comboCost` =
+// KILLER_COST_MULT × Σ the CORE Gu's rank-adjusted channel cost (the same guEssenceCostFor the engine
+// already uses), so the cost self-scales with core size/tier and the wielder's rank.
+function attachKiller(u, ch) {
+  // PROGRESSION GATE: allies wield killer moves only on rank 3+ AND after the player has cleared Floor
+  // 100 (combos.js KILLER_MIN_RANK / KILLER_UNLOCK_FLOOR). Gated units leave u.killer undefined, so a
+  // move saved before unlocking simply never fires.
+  if (rankOf(ch.realm) + 1 < KILLER_MIN_RANK) return;
+  if (!S().clearedFloors[KILLER_UNLOCK_FLOOR]) return;
+  const cfg = ch && ch.killer;
+  if (!cfg || !cfg.archetype || !cfg.core || !Array.isArray(cfg.support) || cfg.support.length < 2) return;
+  if (!validateKiller(cfg, ch.gu, guOf)) return;
+  const coreGu = guOf(cfg.core);
+  const supportGu = cfg.support.map(guOf).filter(Boolean);
+  const spec = assemble(cfg.archetype, coreGu, supportGu);
+  if (!spec) return;
+  const rank = rankOf(ch.realm) + 1;
+  const sum = [coreGu, ...supportGu].reduce((s, g) => s + guEssenceCostFor(g, rank), 0);
+  u.killer = spec;
+  u.comboCost = Math.round(KILLER_COST_MULT * sum);
 }
 function allyCombatant(ch, pos) {
   // `ch` + `actions` let the caller bank per-action Comprehension after the encounter.
   // `side`/`idx` give the UI a stable handle; `row`/`lane` place the unit on the 2×5 board.
-  return initFromFull({ ch, name: ch.name, ally: true, side: 'ally', idx: pos, row: rowOf(ch), lane: laneOf(ch),
+  const u = initFromFull({ ch, name: ch.name, ally: true, side: 'ally', idx: pos, row: rowOf(ch), lane: laneOf(ch),
     gauge: 0, actions: 0, tiers: allyTiers(ch) });
+  attachKiller(u, ch); // KILLER MOVE: resolve the saved config into u.killer + u.comboCost (if valid)
+  return u;
 }
 function enemyCombatant(u, pos) {
   // enemyUnit now bakes a per-Gu channel ladder (`u.tiers`); fall back to a single full-loadout rung for
@@ -92,6 +131,7 @@ function enemyCombatant(u, pos) {
     name: u.name, ally: false, side: 'foe', idx: pos, isBoss: u.isBoss,
     row: u.row || (pos < FRONT ? 'front' : 'back'), lane: u.lane != null ? u.lane : pos % FRONT,
     gauge: 0, tiers,
+    killer: u.killer, comboCost: u.comboCost, // KILLER MOVE: enemy spec + cost precomputed in floors.js (autoConfigure)
   });
 }
 // Pick the largest affordable Gu prefix from CURRENT essence, swap the unit onto that tier's profile,
@@ -199,6 +239,7 @@ export function cleanseTeam(actor, allies) {
     if (a.hp <= 0 || !a.statuses) continue;
     for (const k of Object.keys(a.statuses)) {
       if (removed >= actor.cleanseMax) break;
+      if (!STATUS[k]) continue; // skip buff_*/taunt_t — cleanse only strips real debuffs
       delete a.statuses[k]; removed++;
     }
   }
@@ -237,8 +278,9 @@ function chooseTarget(actor, foeSide) {
   const near = all.filter((u) => Math.abs((u.lane | 0) - (actor.lane | 0)) <= 1);
   const valid = near.length ? near : all; // expand beyond ±1 only when nothing valid is in range
   if (actor.ally) return randOf(valid);
-  // Warden TAUNT: enemies prefer a taunting ally when one is reachable/valid (respects lane protection).
-  const taunters = valid.filter((u) => u.taunt);
+  // TAUNT: enemies prefer a taunting ally when one is reachable/valid (respects lane protection) —
+  // the permanent Warden flag or a timed Sentinel killer-move taunt.
+  const taunters = valid.filter(taunting);
   if (taunters.length) return randOf(taunters);
   const reach = new Set(valid.map((u) => u.lane));
   const roll = 1 + Math.floor(Math.random() * 100);
@@ -259,13 +301,37 @@ function chooseTarget(actor, foeSide) {
 // Active debuffs are read live: Slow lowers effective SPD, Weaken lowers ATK, Sunder lowers DEF, and
 // Frail raises damage taken. Burn/Poison/Bleed are DoTs ticked on the victim's own turn.
 const DOT_TYPES = Object.keys(STATUS).filter((t) => STATUS[t].dot); // burn/poison/bleed — stored as instance arrays
+const STAT_BUFF = { buff_atk: 'atk', buff_def: 'def', buff_spd: 'spd', buff_thorns: 'thorns', buff_evasion: 'evasion' }; // killer-move positive buffs → display stat
+const debuffCount = (u) => (u.statuses ? Object.keys(u.statuses).filter((k) => STATUS[k]).length : 0); // real debuffs only (powers Anathema)
 const stMag = (u, type) => (u.statuses && u.statuses[type] ? u.statuses[type].mag || 0 : 0);
-const effSpd = (u) => Math.max(1, u.spd * (1 - stMag(u, 'slow')));
+// KILLER MOVE: timed POSITIVE buffs are stored as `buff_<stat>` entries in u.statuses (the positive
+// mirror of slow/weaken/sunder debuffs), aged by the same tickStatuses loop. buffMag reads the magnitude.
+const buffMag = (u, stat) => (u.statuses && u.statuses['buff_' + stat] ? u.statuses['buff_' + stat].mag || 0 : 0);
+function applyBuff(u, stat, amount, dur) {
+  u.statuses = u.statuses || {};
+  const k = 'buff_' + stat, cur = u.statuses[k];
+  u.statuses[k] = { turns: Math.max(cur ? cur.turns : 0, dur || 1), mag: Math.max(cur ? cur.mag : 0, amount || 0) };
+}
+// A unit draws aggro if it carries the permanent Warden taunt flag OR a timed Sentinel taunt (taunt_t).
+const taunting = (u) => !!(u.taunt || (u.statuses && u.statuses.taunt_t));
+const effSpd = (u) => Math.max(1, u.spd * (1 - stMag(u, 'slow')) * (1 + buffMag(u, 'spd')));
 // u.atk already reflects the active Gu prefix (applyChannel set it for this action) — Weaken just scales
-// it down. A starved unit's atk is its bare-handed tier, so equipping Gu can never make it hit softer.
-const effAtk = (u) => u.atk * (1 - stMag(u, 'weaken'));
-const effDef = (u) => u.def * (1 - stMag(u, 'sunder'));
+// it down, a SPD/ATK buff scales it up. A starved unit's atk is its bare-handed tier, so equipping Gu can
+// never make it hit softer.
+const effAtk = (u) => u.atk * (1 - stMag(u, 'weaken')) * (1 + buffMag(u, 'atk'));
+const effDef = (u) => u.def * (1 - stMag(u, 'sunder')) * (1 + buffMag(u, 'def'));
+const thornsOf = (u) => (u.fx.thorns || 0) + buffMag(u, 'thorns'); // reflect % incl. any Bulwark thorns buff
 const frailMult = (u) => 1 + stMag(u, 'frail');
+// KILLER MOVE: route ALL incoming damage through a unit's shield (temp HP) before its real HP. The
+// shield is a plain pool — no duration; it stacks additively and is gone when depleted. Status riders
+// are applied separately (inflictStatuses), so a fully-absorbed hit still lands its afflictions.
+export function damageUnit(u, amt) {
+  if (!(amt > 0)) return 0;
+  let rem = amt;
+  if (u.shield > 0) { const a = Math.min(u.shield, rem); u.shield -= a; rem -= a; }
+  u.hp -= rem;
+  return amt;
+}
 
 // Fire shatters any fire-dispellable status (Frozen). Returns the labels removed, for logging.
 function dispelByFire(tgt) {
@@ -323,7 +389,7 @@ function tickStatuses(u, log, touched) {
     let d = 0; for (const inst of arr) d += inst.per;
     if (d > 0) { (dots = dots || {})[type] = d; dot += d; }
   }
-  if (dot > 0) { u.hp -= dot; touched.add(u); log(`${u.name} suffers ${dot} from afflictions.`); }
+  if (dot > 0) { damageUnit(u, dot); touched.add(u); log(`${u.name} suffers ${dot} from afflictions.`); } // DoTs drain the shield first
   let stunned = false;
   for (const k of Object.keys(st)) if (STATUS[k] && STATUS[k].stun) stunned = true; // Stun or Frozen skip the action
   const frozen = !!st.frozen;
@@ -338,81 +404,174 @@ function tickStatuses(u, log, touched) {
 // Performs one ATTACK and returns a description of it (for timeline playback). Status ticking/stun is
 // handled once per activation by the caller; `seed` carries any HP changes (DoT) already applied so
 // they ride along in this event's `touched`. `touched` lists every unit whose HP changed.
+// ONE strike's damage resolution, shared by basic attacks AND killer-move `damage` ops. `mult` scales
+// the base swing (1 for a basic attack); `opts.exec` adds bonus damage vs the target's missing HP;
+// `opts.armorPenBonus` adds armour pen; `opts.inflict` (default true) rolls the wielder's status riders
+// — killer `damage` ops pass false because the move's own `status` op handles afflictions. `foes` is the
+// target's side (for Afflictor DoT-spread on a kill). Returns the hit record; HP changes go via damageUnit
+// (so a target's shield soaks it). Does NOT do the legacy burn aura — that stays per-action in takeAction.
+function dealHit(u, tgt, mult, opts, log, touched, foes) {
+  opts = opts || {};
+  if (!tgt || tgt.hp <= 0) return { tgt, dmg: 0, crit: false, lucky: false, dodged: false, applied: [] };
+  let dmg = 0, crit = false, dodged = false, lucky = false, applied = [];
+  // (1) HIT — 85% base + attacker Hit-bonus − target Evasion, clamped to [1%,99%].
+  const hitP = clampP(BASE_HIT + (u.fx.hitChance || 0) - ((tgt.fx.dodge || 0) + buffMag(tgt, 'evasion')));
+  if (Math.random() > hitP) { dodged = true; log(`${tgt.name} evades ${u.name}.`); return { tgt, dmg, crit, lucky, dodged, applied }; }
+  // base damage; Armor Penetration (+ any op bonus) ignores a % of the target's (Sunder-reduced) mitigated DEF.
+  const armorPen = Math.min(0.95, (u.fx.armorPen || 0) + (opts.armorPenBonus || 0));
+  const def = effDef(tgt) * 0.6 * Math.max(0, 1 - armorPen);
+  dmg = Math.max(1, Math.round(effAtk(u) * (mult || 1) - def));
+  if (opts.exec) dmg = Math.round(dmg * (1 + opts.exec * Math.max(0, 1 - tgt.hp / tgt.max))); // Execution: bonus vs missing HP
+  if (opts.perStatus) dmg = Math.round(dmg * (1 + opts.perStatus * debuffCount(tgt)));        // Anathema: bonus per debuff on the target
+  // (2) LUCKY HIT — forced crit that IGNORES Crit Resistance and hits for ×1.5×CritDamage (unclamped).
+  if (Math.random() < (u.fx.luckyHit || 0)) { lucky = crit = true; dmg = Math.round(dmg * 1.5 * (u.fx.critDamage || 1.5)); }
+  else if ((u.fx.crit || 0) > 0) { // (3) CRIT — CritChance − target Crit Resistance, clamped → ×CritDamage.
+    if (Math.random() < clampP((u.fx.crit || 0) - (tgt.fx.critResist || 0))) { crit = true; dmg = Math.round(dmg * (u.fx.critDamage || 1.5)); }
+  }
+  if (stMag(tgt, 'frail')) dmg = Math.max(1, Math.round(dmg * frailMult(tgt))); // Frail amplifies hits
+  damageUnit(tgt, dmg); touched.add(tgt); // shield soaks first, then HP
+  if (isFirePath(u) && dispelByFire(tgt).length) log(`${tgt.name}'s ice shatters in the flames.`);
+  if (u.fx.lifesteal > 0) { u.hp = Math.min(u.max, u.hp + Math.round(dmg * u.fx.lifesteal)); touched.add(u); }
+  if ((u.fx.essDrain || 0) > 0 && (tgt.essMax || 0) > 0) { // Reaver: steal a slice of the target's essence on hit
+    const d = Math.round(tgt.essMax * u.fx.essDrain);
+    if (d > 0) { tgt.ess = Math.max(0, (tgt.ess || 0) - d); u.ess = Math.min(u.essMax || u.ess || 0, (u.ess || 0) + d); }
+  }
+  const thorns = thornsOf(tgt);
+  if (thorns > 0 && tgt.hp > 0) { // reflect, mitigated by the ATTACKER's DEF; plain damage (no thorns-loop)
+    const rdef = effDef(u) * 0.6 * Math.max(0, 1 - (tgt.fx.armorPen || 0));
+    damageUnit(u, Math.max(1, Math.round(dmg * thorns - rdef))); touched.add(u);
+  }
+  if (opts.inflict !== false) applied = inflictStatuses(u, tgt, log, touched); // Potency vs Status Resistance per rider
+  log(`${u.name} hits ${tgt.name} for ${dmg}${lucky ? ' (lucky crit!)' : crit ? ' (crit!)' : ''}.`);
+  if (tgt.hp <= 0) log(`${tgt.name} is slain.`);
+  if (tgt.hp <= 0 && (u.fx.dotSpread || 0) > 0 && tgt.statuses && foes && Math.random() < u.fx.dotSpread) {
+    let spread = false; // Afflictor: the dying victim's DoTs leap to its surviving allies
+    for (const type of DOT_TYPES) {
+      const arr = tgt.statuses[type]; if (!arr || !arr.length) continue;
+      for (const f of alive(foes)) { if (f === tgt) continue;
+        (f.statuses = f.statuses || {})[type] = (f.statuses[type] || []).concat(arr.map((i) => ({ turns: i.turns, per: i.per })));
+        touched.add(f); spread = true;
+      }
+    }
+    if (spread) log(`${tgt.name}'s afflictions spread as it falls!`);
+  }
+  return { tgt, dmg, crit, lucky, dodged, applied };
+}
+
+// Performs one basic ATTACK (regen tick + single-target strike + legacy burn aura). Returns a description
+// for timeline playback. Status ticking/stun is handled once per activation by the caller.
 function takeAction(u, foes, log, seed) {
   if (u.ally) u.actions++; // every action (incl. extra turns) trains the wielder's Gu paths
   const touched = seed || new Set();
   if (u.fx.regen > 0) { const h = Math.min(u.max, u.hp + u.fx.regen); if (h !== u.hp) { u.hp = h; touched.add(u); } }
   const tgt = chooseTarget(u, foes);
   if (!tgt) return { target: null, dmg: 0, crit: false, lucky: false, dodged: false, touched: [...touched] };
+  const r = dealHit(u, tgt, 1, { inflict: true }, log, touched, foes);
+  // legacy AoE burn aura (themed enemy effect) — applies to all living foes when present; melts Frozen.
+  if (u.fx.burn > 0) for (const f of alive(foes)) { damageUnit(f, u.fx.burn); touched.add(f); dispelByFire(f); if (f.hp <= 0) log(`${f.name} burns away.`); }
+  return { target: tgt, dmg: r.dmg, crit: r.crit, lucky: r.lucky, dodged: r.dodged, applied: r.applied, touched: [...touched] };
+}
 
-  let dmg = 0, crit = false, dodged = false, lucky = false, applied = [];
-  // (1) HIT — 85% base + attacker Hit-bonus − target Evasion, clamped to [1%,99%].
-  const hitP = clampP(BASE_HIT + (u.fx.hitChance || 0) - (tgt.fx.dodge || 0));
-  if (Math.random() > hitP) { dodged = true; log(`${tgt.name} evades ${u.name}.`); }
-  else {
-    // base damage; Armor Penetration ignores a % of the target's (Sunder-reduced) mitigated DEF.
-    const def = effDef(tgt) * 0.6 * Math.max(0, 1 - (u.fx.armorPen || 0));
-    dmg = Math.max(1, Math.round(effAtk(u) - def));
-    // (2) LUCKY HIT — forced crit that IGNORES Crit Resistance and hits for ×1.5×CritDamage (unclamped).
-    if (Math.random() < (u.fx.luckyHit || 0)) {
-      lucky = crit = true;
-      dmg = Math.round(dmg * 1.5 * (u.fx.critDamage || 1.5));
-    } else if ((u.fx.crit || 0) > 0) {
-      // (3) CRIT — CritChance − target Crit Resistance, clamped [1%,99%] → ×CritDamage.
-      if (Math.random() < clampP((u.fx.crit || 0) - (tgt.fx.critResist || 0))) {
-        crit = true; dmg = Math.round(dmg * (u.fx.critDamage || 1.5));
+// KILLER MOVE execution: run a spec's op list. Each op resolves its selector to a target set, then a
+// small handler applies it (reusing dealHit / applyStatus / heal / buff / shield). Returns an event with
+// `combo` (name/cjk) + a `hits` list (per-target damage/affliction) for the timeline; `touched` collects
+// every unit whose HP/shield changed. `allies` = the actor's OWN side (for team heals/buffs).
+function executeKillerMove(u, foes, allies, spec, log, seed) {
+  if (u.ally) u.actions++; // a killer move trains the wielder's Gu paths like any action
+  const touched = seed || new Set();
+  const hits = [];
+  let dmgDealt = 0;
+  log(`${u.name} unleashes ${spec.name}!`);
+  for (const op of (spec.ops || [])) {
+    const targets = killerTargets(op.sel, u, foes, allies);
+    if (op.op === 'damage') {
+      const n = op.hits || 1;
+      for (const tgt of targets) { for (let h = 0; h < n && tgt.hp > 0; h++) {
+        const r = dealHit(u, tgt, op.mult, { exec: op.exec, armorPenBonus: op.armorPen, perStatus: op.perStatus, inflict: false }, log, touched, foes);
+        dmgDealt += r.dmg;
+        hits.push({ tgt: { side: tgt.side, i: tgt.idx }, dmg: r.dmg, crit: r.crit, lucky: r.lucky, dodged: r.dodged, applied: r.applied });
+      } }
+    } else if (op.op === 'status') {
+      for (const tgt of targets) { if (tgt.hp <= 0) continue;
+        const a = applyKillerStatus(u, tgt, spec.statuses, op, log, touched);
+        if (a.length) hits.push({ tgt: { side: tgt.side, i: tgt.idx }, dmg: 0, crit: false, lucky: false, dodged: false, applied: a });
       }
-    }
-    if (stMag(tgt, 'frail')) dmg = Math.max(1, Math.round(dmg * frailMult(tgt))); // Frail amplifies hits
-    tgt.hp -= dmg; touched.add(tgt);
-    // a fire-path strike shatters Frozen (even if its Burn doesn't catch)
-    if (isFirePath(u) && dispelByFire(tgt).length) log(`${tgt.name}'s ice shatters in the flames.`);
-    if (u.fx.lifesteal > 0) { u.hp = Math.min(u.max, u.hp + Math.round(dmg * u.fx.lifesteal)); touched.add(u); }
-    if ((u.fx.essDrain || 0) > 0 && (tgt.essMax || 0) > 0) { // Reaver: steal a slice of the target's essence on hit
-      const d = Math.round(tgt.essMax * u.fx.essDrain);
-      if (d > 0) { tgt.ess = Math.max(0, (tgt.ess || 0) - d); u.ess = Math.min(u.essMax || u.ess || 0, (u.ess || 0) + d); }
-    }
-    if (tgt.fx.thorns > 0 && tgt.hp > 0) {
-      // reflected thorns is mitigated by the ATTACKER's DEF, same calc as a normal hit (def×0.6, pierced
-      // by the wearer's armorPen), floored at 1 — so the attacker's defense damps thorns like any other hit.
-      // NOTE: this is DIRECT HP loss, NOT a re-run attack — it never checks u.fx.thorns, so reflected
-      // damage can never re-trigger thorns. Keep it a plain hp subtraction here (no attack call) to avoid
-      // a thorns-vs-thorns ping-pong loop.
-      const rdef = effDef(u) * 0.6 * Math.max(0, 1 - (tgt.fx.armorPen || 0));
-      u.hp -= Math.max(1, Math.round(dmg * tgt.fx.thorns - rdef)); touched.add(u);
-    }
-    applied = inflictStatuses(u, tgt, log, touched); // (status) Potency vs Status Resistance per rider
-    log(`${u.name} hits ${tgt.name} for ${dmg}${lucky ? ' (lucky crit!)' : crit ? ' (crit!)' : ''}.`);
-    if (tgt.hp <= 0) log(`${tgt.name} is slain.`);
-    if (tgt.hp <= 0 && (u.fx.dotSpread || 0) > 0 && tgt.statuses && Math.random() < u.fx.dotSpread) {
-      let spread = false; // Afflictor: the dying victim's DoTs leap to its surviving allies
-      for (const type of DOT_TYPES) {
-        const arr = tgt.statuses[type]; if (!arr || !arr.length) continue;
-        for (const f of alive(foes)) { if (f === tgt) continue;
-          (f.statuses = f.statuses || {})[type] = (f.statuses[type] || []).concat(arr.map((i) => ({ turns: i.turns, per: i.per })));
-          touched.add(f); spread = true;
-        }
+    } else if (op.op === 'heal') {
+      for (const tgt of targets) { if (tgt.hp <= 0) continue;
+        const amt = op.of === 'dmg' ? Math.round((op.pct || 0) * dmgDealt) : Math.round((op.pct || 0) * tgt.max);
+        if (amt > 0) { const h = Math.min(tgt.max, tgt.hp + amt); if (h !== tgt.hp) { tgt.hp = h; touched.add(tgt); } }
       }
-      if (spread) log(`${tgt.name}'s afflictions spread as it falls!`);
+    } else if (op.op === 'cleanse') {
+      for (const tgt of targets) cleanseOne(tgt, op.max || 1);
+    } else if (op.op === 'buff') {
+      for (const tgt of targets) { if (tgt.hp <= 0) continue; applyBuff(tgt, op.stat, op.amount, op.dur); touched.add(tgt); }
+    } else if (op.op === 'shield') {
+      const amt = Math.round((op.pct || 0) * u.max); // % of the CASTER's max HP
+      for (const tgt of targets) { if (tgt.hp <= 0) continue; tgt.shield = (tgt.shield || 0) + amt; touched.add(tgt); }
+    } else if (op.op === 'taunt') {
+      for (const tgt of targets) { if (tgt.hp <= 0) continue; (tgt.statuses = tgt.statuses || {}).taunt_t = { turns: op.dur || 3 }; }
+    } else if (op.op === 'essence') {
+      // signed: +pct refuels allies' channeling/killer essence (Wellspring); −pct drains foes (Enervate)
+      for (const tgt of targets) { if (tgt.hp <= 0 || !(tgt.essMax > 0)) continue;
+        tgt.ess = Math.max(0, Math.min(tgt.essMax, (tgt.ess || 0) + (op.pct || 0) * tgt.essMax)); touched.add(tgt); }
     }
   }
-  // legacy AoE burn aura (themed enemy effect) — applies to all living foes when present; melts Frozen.
-  if (u.fx.burn > 0) for (const f of alive(foes)) { f.hp -= u.fx.burn; touched.add(f); dispelByFire(f); if (f.hp <= 0) log(`${f.name} burns away.`); }
-  return { target: tgt, dmg, crit, lucky, dodged, applied, touched: [...touched] };
+  return { target: null, dmg: 0, crit: false, lucky: false, dodged: false, applied: [], combo: { name: spec.name, cjk: spec.cjk }, hits, touched: [...touched] };
+}
+
+// Resolve a killer-move op selector → the list of target units. foes = enemy side, allies = own side.
+function killerTargets(sel, u, foes, allies) {
+  if (sel === 'self') return [u];
+  if (sel === 'team') return alive(allies);
+  if (sel === 'lowestAlly') { const a = alive(allies); return a.length ? [a.reduce((b, x) => (x.hp / x.max < b.hp / b.max ? x : b), a[0])] : []; }
+  if (sel === 'target' || sel === 'lane') { const t = chooseTarget(u, foes); return t ? [t] : []; }
+  const all = targetList(foes); // reach = ±1 lane window (expand only if empty); allFoes = every targetable foe
+  if (sel === 'reach') { const near = all.filter((x) => Math.abs((x.lane | 0) - (u.lane | 0)) <= 1); return near.length ? near : all; }
+  return all;
+}
+
+// Apply the core's status riders to a target (killer `status` op). `forced` skips the chance roll; for
+// DoTs an `op.stacks` applies multiple independent instances. Returns the applied status types.
+function applyKillerStatus(u, tgt, statuses, op, log, touched) {
+  const applied = [];
+  for (const st of (statuses || [])) {
+    const def = STATUS[st.type]; if (!def) continue;
+    const reps = (op.stacks && def.dot) ? op.stacks : 1;
+    for (let r = 0; r < reps; r++) applyStatus(tgt, st.type, u, st.dur, st.mag);
+    touched.add(tgt); applied.push(st.type);
+    log(`${tgt.name} is afflicted with ${def.label}.`);
+  }
+  return applied;
+}
+
+// Strip up to `max` real debuffs from a unit (killer `cleanse` op). Only STATUS-registry entries are
+// debuffs; buff_* / taunt_t entries are skipped so a cleanse never removes a friendly buff.
+function cleanseOne(tgt, max) {
+  if (!tgt.statuses) return 0;
+  let removed = 0;
+  for (const k of Object.keys(tgt.statuses)) { if (removed >= max) break; if (!STATUS[k]) continue; delete tgt.statuses[k]; removed++; }
+  return removed;
 }
 
 // Serialize an action into a compact, side/index-addressed event for the UI timeline.
 function serializeAct(actor, ev) {
-  return {
+  const a = {
     side: actor.side, i: actor.idx,
     tgt: ev.target ? { side: ev.target.side, i: ev.target.idx } : null,
     dmg: ev.dmg, crit: ev.crit, lucky: ev.lucky, dodged: ev.dodged,
     stun: !!ev.stunned, frozen: !!ev.frozen, dot: ev.dot || 0, // self-affliction: DoT tick / skipped action
     dots: ev.dots || null, // per-type DoT breakdown ({burn,poison,bleed}) for distinct floating numbers
     applied: ev.applied && ev.applied.length ? ev.applied.slice() : null, // statuses landed on the target
-    hp: ev.touched.map((u) => ({ side: u.side, i: u.idx, hp: Math.max(0, Math.round(u.hp)) })),
+    // every touched unit's HP + shield after this action (shield = killer-move temp HP overlay)
+    hp: ev.touched.map((u) => ({ side: u.side, i: u.idx, hp: Math.max(0, Math.round(u.hp)), shield: Math.round(u.shield || 0) })),
     ess: Math.round(actor.ess), // actor's essence after channeling this action (for the arena bar)
   };
+  if (ev.combo) { // KILLER MOVE: name banner + per-target hit list (multi-target / heal events)
+    a.combo = ev.combo;
+    a.hits = (ev.hits || []).map((h) => ({ tgt: h.tgt, dmg: h.dmg, crit: h.crit, lucky: h.lucky, dodged: h.dodged,
+      applied: h.applied && h.applied.length ? h.applied.slice() : null }));
+  }
+  return a;
 }
 
 // Resolve one encounter. `onLog` optional callback(message). `opts.record` builds a step-by-step
@@ -429,7 +588,7 @@ export function resolveEncounter(encounter, onLog, opts = {}) {
 
   // line/affinity/rarity ride along so the arena can show each unit's trait seal + the per-side panel.
   // Allies expose them via their source character (u.ch); enemy snapshot units carry them directly.
-  const snap = (u) => ({ name: u.name, max: u.max || u.maxHp, hp: u.hp, spd: Math.max(1, u.spd),
+  const snap = (u) => ({ name: u.name, max: u.max || u.maxHp, hp: u.hp, spd: Math.max(1, u.spd), shield: u.shield || 0,
     row: u.row || 'front', lane: (u.lane | 0), kind: u.kind, gu: u.gu,
     guInfo: u.ch ? guInfoFor(u.ch) : (u.guInfo || []), // equipped Gu (name + effect) for the traits panel
     essMax: u.essMax != null ? u.essMax : (u.essencePool || 0),
@@ -448,9 +607,18 @@ export function resolveEncounter(encounter, onLog, opts = {}) {
   const gaugeSnap = (arr) => arr.map((u) => (u.hp > 0 ? Math.round(u.gauge) : 0));
   const essSnap = (arr) => arr.map((u) => (u.hp > 0 ? Math.round(u.ess) : 0));
   // active statuses on each living unit, for the arena badges: [{ t:type, n:instances (DoTs) }]
-  const statusSnap = (arr) => arr.map((u) => (u.statuses && u.hp > 0
-    ? Object.keys(u.statuses).map((k) => ({ t: k, n: Array.isArray(u.statuses[k]) ? u.statuses[k].length : 1 }))
-    : []));
+  // per-living-unit active-effect snapshot: debuffs (STATUS keys, n=instance count) + positive killer-move
+  // buffs (buff_*/taunt_t) tagged `b:1` with magnitude — so the arena badges + trait panel show buffs too.
+  const statusSnap = (arr) => arr.map((u) => {
+    if (!u.statuses || u.hp <= 0) return [];
+    const out = [];
+    for (const k of Object.keys(u.statuses)) {
+      if (STATUS[k]) out.push({ t: k, n: Array.isArray(u.statuses[k]) ? u.statuses[k].length : 1 });
+      else if (STAT_BUFF[k]) out.push({ t: STAT_BUFF[k], b: 1, mag: u.statuses[k].mag || 0 });
+      else if (k === 'taunt_t') out.push({ t: 'taunt', b: 1 });
+    }
+    return out;
+  });
 
   let actions = 0, simTime = 0; // simTime = total gauge-time the fight consumes
 
@@ -475,13 +643,20 @@ export function resolveEncounter(encounter, onLog, opts = {}) {
       for (const u of actors) {
         if (u.hp <= 0) continue;
         u.gauge = 0; // actions always cost the full gauge (no overflow)
+        if (u.killerCd > 0) u.killerCd--; // KILLER MOVE: tick the per-unit cooldown each of its own actions
         const enemySide = u.ally ? foes : allies;
+        const allySide = u.ally ? allies : foes;
         // tick this unit's afflictions once per activation (DoT damage, duration −1, possible Stun/Frozen)
         const pre = new Set();
         const { dot, dots, stunned, frozen } = tickStatuses(u, log, pre);
         let ev;
         if (u.hp <= 0) { log(`${u.name} succumbs to affliction.`); ev = { target: null, dmg: 0, crit: false, lucky: false, dodged: false, dot, dots, touched: [...pre] }; }
         else if (stunned) { log(`${u.name} is ${frozen ? 'frozen' : 'stunned'} and cannot act.`); ev = { target: null, dmg: 0, crit: false, lucky: false, dodged: false, stunned: true, frozen, dot, dots, touched: [...pre] }; }
+        else if (u.killer && u.ess + 1e-9 >= u.comboCost && u.killerCd <= 0) {
+          // KILLER MOVE: enough banked essence + off cooldown → spend comboCost, fire at full power (no channel spend)
+          u.ess = Math.max(0, u.ess - u.comboCost); u.killerCd = KILLER_COOLDOWN; applyTopTier(u);
+          ev = executeKillerMove(u, enemySide, allySide, u.killer, log, pre); ev.dot = dot; ev.dots = dots;
+        }
         else { applyChannel(u); ev = takeAction(u, enemySide, log, pre); ev.dot = dot; ev.dots = dots; // gate Gu by essence → this action's active prefix
           if (u.teamHealPct) { const healed = new Set(ev.touched); teamHeal(u, allies, healed); ev.touched = [...healed]; cleanseTeam(u, allies); } } // Mender: heal + cleanse on its action
         actions++;

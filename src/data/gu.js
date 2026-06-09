@@ -44,6 +44,11 @@ const TAG_SLOT = {
   hp: 3, regen: 3,
   potency: 4, essPool: 4, essRcv: 4, status: 4, lucky: 4,
 };
+// The 5 effect DOMAINS (mirror of TAG_SLOT's 5 type-slots, same order). A Gu effect kind → its domain,
+// used by killer-move composition (data/combos.js) to bucket a core's effects into a dominant theme.
+export const EFFECT_DOMAINS = ['offense', 'guard', 'motion', 'vitality', 'mystic'];
+export const domainOfTag = (tag) => EFFECT_DOMAINS[TAG_SLOT[tag] != null ? TAG_SLOT[tag] : 0] || 'offense';
+
 const PER_SLOT = [0, 2, 3, 4, 5, 6, 7, 9, 11, 14];   // path-resource count per used type-slot, by rank 1-9
 const BINDER   = [0, 1, 1, 2, 2, 3, 3, 4,  5,  6];   // universal binder count, by rank 1-9
 export function recipeFor(path, tier, bp = budgetOf(tier), tags = ['atk']) {

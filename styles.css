@@ -232,6 +232,11 @@ button.mini{font-size:10px;padding:3px 8px;min-width:0;letter-spacing:0.1em}
 .ust{font-family:var(--mono);font-size:8px;font-weight:700;letter-spacing:.06em;line-height:1.4;padding:0 3px;
   border:1px solid;border-radius:0;background:rgba(0,0,0,0.32)}
 .ust>b{font-weight:700;margin-left:2px;opacity:.85}
+/* KILLER MOVE: positive buff chip — subtle glow + tinted backing so gains read apart from debuffs */
+.ust.ust-buff{background:rgba(199,154,69,0.14);text-shadow:0 0 4px currentColor}
+/* active buffs mirrored into the side "Cultivators & Gu" panel row */
+.tp-buffs{display:flex;flex-flow:row wrap;gap:4px;padding:3px 0 1px 25px}
+.trait-panel.foe .tp-buffs{padding:3px 25px 1px 0;justify-content:flex-end}
 .ub-bar{height:7px;background:#1d1611;overflow:hidden;margin-top:4px}
 .ub-bar>i{display:block;height:100%;width:100%}
 /* HP / Essence bars carry their current value overlaid at the right edge */
@@ -266,6 +271,58 @@ button.mini{font-size:10px;padding:3px 8px;min-width:0;letter-spacing:0.1em}
 .dmgpop.status-slow{color:#5aa9e6} .dmgpop.status-weaken{color:#b79bff} .dmgpop.status-sunder{color:#e0a23c}
 .dmgpop.status-frail{color:#ef82c6} .dmgpop.status-stun{color:#e8c777} .dmgpop.status-frozen{color:#8fd9ff}
 @keyframes dmgrise{0%{opacity:0;transform:translate(-50%,6px)}20%{opacity:1}100%{opacity:0;transform:translate(-50%,-24px)}}
+/* KILLER MOVE: shield (temp HP) overlay on the HP bar — translucent cyan hatch, width = shield/maxHP */
+.ub-bar.hp .ub-shield{position:absolute;left:0;top:0;height:100%;z-index:1;pointer-events:none;transition:width .18s ease;
+  background:repeating-linear-gradient(135deg,rgba(143,217,255,.55) 0 4px,rgba(143,217,255,.22) 4px 8px);
+  box-shadow:inset 0 0 0 1px rgba(143,217,255,.5)}
+/* KILLER MOVE: name banner + path glyph float, and the casting actor's glow */
+.dmgpop.combo{color:var(--stone);font-size:14px;font-weight:700;letter-spacing:.06em;text-shadow:0 0 8px rgba(199,154,69,.6),0 1px 2px #000}
+.dmgpop.combo-cjk{color:#fff0bd;font-size:22px;text-shadow:0 0 10px rgba(199,154,69,.7),0 1px 2px #000}
+.ublock.casting{filter:brightness(1.35) drop-shadow(0 0 8px rgba(199,154,69,.7))}
+/* Team-tab inline killer-move editor (on roster cards) — an open card spans the full grid row for room */
+.card.member.km-open{grid-column:1 / -1}
+.km-row{display:flex;align-items:center;gap:10px;margin-top:12px;flex-wrap:wrap}
+.km-row .mini{white-space:nowrap}
+.km-sum{font-size:12px}
+.km-editor{margin-top:12px;border-top:1px solid var(--line);padding-top:12px;cursor:default}
+/* KILLER MOVE config block (character sheet) */
+.killer-block{margin-top:6px}
+.killer-row{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+.killer-row>b{font-family:var(--serif);font-size:16px;color:var(--bone)}
+.killer-block .mini{font-size:11px;padding:3px 10px}
+.killer-gus{display:flex;flex-wrap:wrap;gap:6px}
+.killer-gu{font-family:var(--mono);font-size:11px;padding:5px 9px;border:1px solid var(--line);background:rgba(20,16,12,.5);color:var(--bone-dim);border-radius:5px;cursor:pointer;display:inline-flex;align-items:center;gap:5px}
+.killer-gu .cjk{font-size:14px}
+.killer-gu.on{background:rgba(199,154,69,.14);font-weight:700}
+.killer-gu.off{opacity:.32;cursor:not-allowed}
+.killer-gu:not(.off):hover{border-color:var(--bone-dim)}
+.killer-hint{margin-top:9px;font-size:12px;color:var(--muted);border-left:2px solid var(--line);padding-left:10px}
+/* PROGRESSION GATE: locked killer-move panel (rank 3+ / Floor 100) */
+.killer-locked{opacity:.92}
+.km-reqs{list-style:none;margin:9px 0 2px;padding:0;display:flex;flex-direction:column;gap:5px}
+.km-reqs li{font-family:var(--mono);font-size:12px;padding-left:2px}
+.km-req-ok{color:#6fcf97}
+.km-req-no{color:var(--muted)}
+/* archetype picker, grouped by favored domain */
+.killer-chooser{display:flex;flex-direction:column;gap:10px}
+.killer-domgroup{border:1px solid var(--line-soft);border-radius:6px;padding:8px 10px 10px}
+.killer-domgroup.active{border-color:rgba(199,154,69,.4);background:rgba(199,154,69,.04)}
+.killer-domhead{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:7px;
+  font-family:var(--serif);font-size:14px;color:var(--bone);text-transform:uppercase;letter-spacing:.06em}
+.killer-archgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(172px,1fr));gap:6px}
+.killer-arch{display:flex;flex-direction:column;gap:3px;align-items:stretch;text-align:left;padding:7px 10px;
+  border:1px solid var(--line);background:rgba(20,16,12,.5);border-radius:5px;cursor:pointer;color:var(--bone-dim)}
+.killer-arch .ka-top{display:flex;align-items:baseline;justify-content:space-between;gap:6px}
+.killer-arch b{font-family:var(--serif);font-size:14px}
+.killer-arch .ka-deliv{font-family:var(--mono);font-size:8.5px;color:var(--muted);letter-spacing:.04em;text-transform:uppercase;white-space:nowrap}
+.killer-arch .ka-desc{font-family:var(--mono);font-size:10px;line-height:1.35;color:var(--muted)}
+.killer-arch:hover{border-color:var(--bone-dim)}
+.killer-arch.on{border-color:var(--stone);background:rgba(199,154,69,.14);color:var(--bone)}
+.killer-arch.on .ka-desc{color:var(--bone-dim)}
+.killer-preview{margin-top:14px;border:1px solid rgba(199,154,69,.4);background:rgba(199,154,69,.06);border-radius:6px;padding:12px 14px}
+.killer-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.killer-head b{font-family:var(--serif);font-size:18px;color:var(--bone)}
+.killer-ops{margin:10px 0 6px;padding-left:18px;font-size:12.5px;line-height:1.7;color:var(--bone-dim)}
 
 /* combat feed */
 .log{border:1px solid var(--line);background:rgba(8,6,5,0.6);padding:12px 15px;height:44vh;min-height:280px;overflow:auto;
@@ -599,10 +656,33 @@ button.mini{font-size:10px;padding:3px 8px;min-width:0;letter-spacing:0.1em}
 .cdx-tab{font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;text-decoration:none;
   color:var(--bone-dim);border:1px solid var(--line);border-radius:2px;padding:4px 10px;transition:.16s}
 .cdx-tab:hover{border-color:var(--blood-dim);color:var(--bone);background:rgba(208,186,160,0.04)}
-section[id^="cdx-"]{scroll-margin-top:14px}
+/* Expand/Collapse-all toggle in the TOC row */
+.cdx-allbtn{font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;cursor:pointer;
+  color:var(--muted);border:1px solid var(--line);border-radius:2px;padding:4px 10px;background:none;transition:.16s;margin-left:auto}
+.cdx-allbtn:hover{border-color:var(--blood-dim);color:var(--bone);background:rgba(208,186,160,0.04)}
+/* GUIDE: collapsible sections — native <details>, collapsed by default so the page opens short */
+.cdx-sec{scroll-margin-top:14px}
+.cdx-sec>summary{list-style:none;cursor:pointer;outline:none}
+.cdx-sec>summary::-webkit-details-marker{display:none}
+.cdx-sec>summary::marker{content:""}
+.cdx-sec>summary .sec-head{margin:18px 0 14px}
+.cdx-sec>summary .sec-head::before{content:"▸";order:-1;align-self:center;color:var(--blood);font-size:12px;line-height:1}
+.cdx-sec[open]>summary .sec-head::before{content:"▾"}
+.cdx-sec>summary:hover .sec-title{color:var(--blood-bright)}
+.cdx-sec[open]{margin-bottom:8px}
 .cdx-list{list-style:none;margin:11px 0 4px;padding:0;display:flex;flex-direction:column;gap:6px}
 .cdx-list li{font-size:15.5px;line-height:1.4;padding-left:14px;position:relative}
 .cdx-list li::before{content:"·";position:absolute;left:2px;color:var(--blood-bright);font-weight:700}
+
+/* ---------- what's new (changelog) ---------- */
+.wn-entry{margin-bottom:22px}
+.wn-head{display:flex;align-items:baseline;gap:12px;margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+.wn-tag{font-family:var(--mono);font-size:9.5px;letter-spacing:.18em;text-transform:uppercase;color:#e7a7ad;
+  border:1px solid rgba(200,49,60,0.5);background:rgba(158,27,39,0.14);padding:3px 9px;border-radius:2px}
+.wn-title{font-family:var(--serif);font-size:20px;font-weight:600;color:var(--bone)}
+.wn-date{font-family:var(--mono);font-size:11px;letter-spacing:.12em;color:var(--muted);margin-left:auto}
+.wn-list li{font-size:14.5px}
+.wn-list li b{color:var(--bone)}
 
 /* ---------- new-game starter pickers (Dao path → first Gu) ---------- */
 .starter-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;margin-top:4px}
