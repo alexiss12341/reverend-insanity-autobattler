@@ -46,10 +46,10 @@ const HP_SCALE = envNum('BOUNTY_HP_SCALE', 1), POOL_SCALE = envNum('BOUNTY_POOL_
 // Tuned (tests/bounties.test.mjs) against a FULLY-OPTIMIZED rank/rarity-matched 6-team — comprehension at
 // the rank cap, every Gu slot filled with cap-tier same-path Gu (full resonance), and killer moves — since
 // that's the real team a player brings to a bounty (a comp-0 team's Gu run at 10–25%, which made earlier
-// tuning far too soft). Even that maxed team wins only ~45% on R1/R2 and ~30% on R3–R5 (deliberately the
-// harder, more punishing end on the higher bounties), so ordinary teams face a real raid.
+// tuning far too soft). Win for that maxed team: R1 ~65% (the gentle Common intro), R2 ~45%, and ~30–37%
+// on R3–R5 (deliberately the harder, more punishing end on the higher bounties) — ordinary teams find a raid.
 //                       R1     R2     R3     R4     R5
-const BOUNTY_HP_MULT   = [11,    10,    12,    10,    20];
+const BOUNTY_HP_MULT   = [8,     10,    12,    10,    20];
 const BOUNTY_POOL_MULT = [0.50,  0.50,  0.55,  0.60,  0.70];
 const slotHpMult   = (i) => (BOUNTY_HP_MULT[i]   != null ? BOUNTY_HP_MULT[i]   : 7)    * HP_SCALE;
 const slotPoolMult = (i) => (BOUNTY_POOL_MULT[i] != null ? BOUNTY_POOL_MULT[i] : 0.5)  * POOL_SCALE;

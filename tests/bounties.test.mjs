@@ -137,7 +137,8 @@ for (let i = 0; i < 5; i++) {
   if (REPORT) console.log(`  R${rank} ${rarity}: winrate ${(wr * 100).toFixed(0)}% · avg ${avgAct} actions · avg allies lost ${avgLost.toFixed(1)} · capped ${capped}/${TRIALS}`);
   ok(capped === 0, `slot ${i}: fights resolve (no 3000-action stalemate)`);
   ok(wr >= 0.12, `slot ${i}: still winnable by a fully-optimized team (winrate ${(wr * 100).toFixed(0)}%)`);
-  ok(wr <= 0.60, `slot ${i}: AT MOST 60% team win for a fully-optimized matched team (winrate ${(wr * 100).toFixed(0)}%)`);
+  const cap = i === 0 ? 0.80 : 0.60;   // R1 Common is the deliberately gentle intro; R2-R5 stay ≤60%
+  ok(wr <= cap, `slot ${i}: team win within cap ${Math.round(cap * 100)}% (winrate ${(wr * 100).toFixed(0)}%)`);
   ok(avgLost > 0.5, `slot ${i}: the boss is a real threat (costs casualties — avg ${avgLost.toFixed(1)} lost)`);
 }
 
