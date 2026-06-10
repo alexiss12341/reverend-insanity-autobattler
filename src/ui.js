@@ -1,7 +1,7 @@
 // UI layer. Renders tabs from state and provides the battle feed, arena, toasts and modal.
 // Event handlers are invoked via the global `G` object defined in main.js (onclick="G.foo()").
 import { S, activeTeam, rowOf, laneOf, frontTeam, backTeam, LANES, tileOccupant, save, immortalUnlocked } from './state.js';
-import { effectiveStats, guOf, breakthroughCost, breakthroughChance, breakthroughFloorReq, respecCost } from './systems/cultivation.js';
+import { effectiveStats, guOf, breakthroughCost, breakthroughChance, breakthroughFloorReq, respecCost, RESPEC_ESSENCE_COST } from './systems/cultivation.js';
 import { GU_LIB, guList, effectText, isUnique, guEssenceCost, guEssenceCostFor, guUsingResource, guTags, tagLabel, nextTierOf, starterGusForPath, signatureImmortalGu, signatureGusForPath, pathStatuses } from './data/gu.js';
 import { RESOURCES, resourceList, resourceName, rankRarity } from './data/resources.js';
 const RANKS = [1, 2, 3, 4, 5, 6, 7, 8, 9];
@@ -1063,16 +1063,16 @@ function csAttrBoard(c) {
     </div>`;
   }).join('');
   const invested = spentPoints(c);
-  const rCost = respecCost(c);
-  const canAfford = S().stones >= rCost;
+  const rCost = respecCost(c), rEss = RESPEC_ESSENCE_COST;
+  const canAfford = S().stones >= rCost && S().essence >= rEss;
   return `<div class="cs-alloc">
       <span class="pill${unspent > 0 ? ' glow' : ''}">${compact(unspent)} unspent points</span>
       <span class="muted small">Per click</span><div class="viewtoggle">${allocStepBtns()}</div>
       ${totalStaged > 0 ? `<span class="pill staged-pill">${compact(totalStaged)} staged · ${compact(remaining)} left</span>` : ''}
       <button class="mini primary" ${totalStaged <= 0 ? 'disabled' : ''} onclick="G.allocCommit('${c.id}')">✓ Confirm distribution</button>
       <button class="mini" ${totalStaged <= 0 ? 'disabled' : ''} onclick="G.allocClear('${c.id}')">Reset</button>
-      <button class="mini danger"${invested <= 0 ? ' disabled' : ''}${canAfford || invested <= 0 ? '' : ' style="opacity:.65"'} title="${invested <= 0 ? 'No allocated attributes to respec' : `Release all ${compact(invested)} allocated points for ${rCost.toLocaleString()} 石 (1,000 石 each)${canAfford ? '' : ' — not enough 石'}`}" onclick="G.respecPrompt('${c.id}')">↺ Respec${invested > 0 ? ` · ${compact(rCost)}石` : ''}</button>
-      <span class="muted small">Allocation is permanent unless you Respec (1,000 石 per invested point); every realm grants more points.</span>
+      <button class="mini danger"${invested <= 0 ? ' disabled' : ''}${canAfford || invested <= 0 ? '' : ' style="opacity:.65"'} title="${invested <= 0 ? 'No allocated attributes to respec' : `Release all ${compact(invested)} allocated points for ${rCost.toLocaleString()} 石 (1,000 石 each) + ${rEss.toLocaleString()} ✦${canAfford ? '' : ' — not enough 石/✦'}`}" onclick="G.respecPrompt('${c.id}')">↺ Respec${invested > 0 ? ` · ${compact(rCost)}石 · ${rEss}✦` : ''}</button>
+      <span class="muted small">Allocation is permanent unless you Respec (1,000 石 per invested point + ${rEss} ✦); every realm grants more points.</span>
     </div>
     <div class="cs-attrs">${cells}</div>`;
 }
@@ -1971,10 +1971,14 @@ export function viewFloors() {
 // Player-facing patch notes. Add the newest release to the TOP of this list; each entry is
 // { date, title, items: [[heading, html], …] }. HTML is allowed in the item bodies.
 const WHATS_NEW = [
+  { date: 'Jun 10, 2026', title: 'Cultivation', items: [
+    ['Attribute Respec', 'Regret a build? A new <b>Respec</b> button on each cultivator’s <b>Character</b> sheet releases <b>all</b> of their allocated attribute points back into the unspent pool — ready to redistribute freely — for <b style="color:var(--stone)">1,000 石</b> per invested point plus a flat <b style="color:var(--jade)">100 ✦</b>.'],
+  ] },
   { date: 'Jun 10, 2026', title: 'Balance', items: [
     ['Immortal Gu crafting paused', 'Crafting <b>Immortal Gu</b> (tier 6+, the unique artifacts) is <b>disabled for now</b>. They still appear in the Refinery but can’t be forged; already-owned immortal Gu are unaffected and still <b>ascend</b>.'],
     ['Sovereign Insight nerf', 'The <b>Sovereign Insight</b> prestige boon has been reined in: it is now <b>capped at 5 levels</b> (previously uncapped), and its purchase <b>cost has been increased to 4×</b>.'],
     ['Sovereign Might &amp; Fortune nerf', '<b>Sovereign Might</b> and <b>Sovereign Fortune</b> now cost <b>5× more per level</b> and are <b>capped at 5 levels</b> (matching Sovereign Insight). Existing prestige levels have been <b>recalibrated</b> to what your already-spent souls buy at the new price — and <b>clamped to the cap</b> — with any <b>leftover souls refunded</b>. Nothing is lost; your boons just sit at a level matching the new cost.'],
+    ['Dismiss refund nerf', 'The <b style="color:var(--jade)">✦ Immortal Essence</b> refunded for <b>dismissing</b> a recruit has been cut to <b>a quarter</b> of its former value, across every rarity.'],
   ] },
   { date: 'Jun 9, 2026', title: 'Daily Quests', items: [
     ['Daily Quests', 'A new <b>日 Quests</b> page in the sidebar with five daily goals — win battles, refine Gu, recruit, breakthrough and shop the Market. Each pays <b style="color:var(--jade)">✦ Immortal Essence</b> on <b>claim</b>, and the board <b>resets every day at midnight</b>.'],
@@ -2109,7 +2113,7 @@ export function viewCodex() {
     <li><b>LCK</b> · Luck <span class="muted">— Crit chance, Lucky hits, drop rate</span></li>
   </ul>
   There is <b>no realm multiplier</b> — all your power lives in these points, so a higher realm matters because it grants <b>more</b> of them. Raw stats (HP, ATK) grow steadily; percentage stats (crit, evasion) have diminishing returns and scale relative to your realm.
-  <br><br>Regret a build? <b>Respec</b> on the Character sheet refunds every allocated point back into the unspent pool for <b>1,000 石 per invested point</b>, so you can redistribute freely.</div></div></details>
+  <br><br>Regret a build? <b>Respec</b> on the Character sheet refunds every allocated point back into the unspent pool for <b>1,000 石 per invested point</b> plus a flat <b>100 ✦</b>, so you can redistribute freely.</div></div></details>
 
   <details class="cdx-sec" id="cdx-2"><summary>${secHead(2, 'Realms — Big &amp; Small', 'the cultivation ladder')}</summary>
   <div class="card"><div class="body">Cultivation climbs <b>Ranks 1–9</b> — these are the <b>big realms</b>. Each mortal rank (1–5) is split into four <b>small realms</b>: <b>Initial → Middle → Upper → Peak</b>. So the whole mortal ladder runs Rank 1 Initial … Rank 5 Peak (a "Gu Master").
