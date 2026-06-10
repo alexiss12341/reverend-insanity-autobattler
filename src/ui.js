@@ -329,14 +329,14 @@ export function starterArchetypePicker(opts = {}) {
 
 // ===== REINCARNATION RE-PICK: new Dao affinity (this life's mastered paths) → new archetype =====
 // Reuses the starter pickers with reincarnation handlers/copy. The affinity choices come from
-// prestige.reincarnationPathChoices (previous affinity + every path at Comprehension level 3+).
+// prestige.reincarnationPathChoices (previous affinity + every path at Comprehension level 5+).
 export function reincarnatePathPicker() {
   const paths = reincarnationPathChoices().map((id) => PATH(id)).filter(Boolean);
   return starterPathPicker({
     paths,
     onPick: 'G.reincarnatePath',
     title: 'Choose your new Dao Affinity',
-    intro: `Your reborn cultivator's <b>Dao Affinity</b>. The choices are the paths this life <b>mastered</b> — your previous affinity, plus every path you reached <b>Comprehension level 3+</b> in. No starter Gu is granted on rebirth; craft anew toward your chosen path.`,
+    intro: `Your reborn cultivator's <b>Dao Affinity</b>. The choices are the paths this life <b>mastered</b> — your previous affinity, plus every path you reached <b>Comprehension level 5+</b> in. No starter Gu is granted on rebirth; craft anew toward your chosen path.`,
     footer: '<div class="right"><button onclick="G.closeModal()">Keep cultivating</button></div>',
   });
 }
@@ -2016,7 +2016,7 @@ export function viewFloors() {
 const WHATS_NEW = [
   { date: 'Jun 11, 2026', title: 'Reincarnation', items: [
     ['Re-choose your path on rebirth', 'Reincarnating now lets you <b>re-found your cultivator</b>: enter a <b>new name</b>, pick a <b>new archetype</b>, and choose a <b>new Dao Affinity</b> for the life to come.'],
-    ['Affinity from a mastered life', 'The affinity choices are the paths <b>this life mastered</b> — your <b>previous affinity</b> (always), plus <b>every Dao path you reached Comprehension level 3+</b> in. Spread your comprehension wide and you reincarnate with more paths to choose from.'],
+    ['Affinity from a mastered life', 'The affinity choices are the paths <b>this life mastered</b> — your <b>previous affinity</b> (always), plus <b>every Dao path you reached Comprehension level 5+</b> in. Spread your comprehension wide and you reincarnate with more paths to choose from.'],
   ] },
   { date: 'Jun 10, 2026', title: 'Bounties', items: [
     ['Bounty board', 'A new <b>賞 Bounties</b> page: a <b>daily-rotating</b> roster of <b>lone raid-boss</b> targets, one per rank band (<b>Common → Legendary</b>). Each wanted-poster card shows the boss’s name, rank, rarity, archetype, Dao path and <b>combat stats</b> (HP · ATK · DEF · SPD).'],

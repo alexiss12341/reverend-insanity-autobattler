@@ -56,7 +56,7 @@ export function soulsAward() {
 // Reincarnation lets the player re-pick their Dao affinity from the paths THIS life mastered: the
 // previous affinity (always available) plus every path the player character reached Comprehension
 // level REINCARNATION_COMP_THRESHOLD+ in. Read off the CURRENT life, so call before reincarnate() wipes it.
-export const REINCARNATION_COMP_THRESHOLD = 3;
+export const REINCARNATION_COMP_THRESHOLD = 5;
 export function reincarnationPathChoices() {
   const player = S().roster.find((c) => c.isPlayer) || S().roster[0];
   if (!player) return [];

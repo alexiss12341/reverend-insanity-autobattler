@@ -835,7 +835,7 @@ const G = {
   },
   // Reincarnation is a three-step modal chain (confirm + name → new Dao affinity → new archetype),
   // carried by `pendingReincarnate`. The affinity choices are THIS life's mastered paths (previous
-  // affinity + every path at Comprehension level 3+) — read off the current life before it's wiped.
+  // affinity + every path at Comprehension level 5+) — read off the current life before it's wiped.
   reincarnatePrompt() {
     if (!canReincarnate()) return UI.toast('Reach Floor 20 or forge a Venerable before reincarnating.');
     pendingReincarnate = {};
