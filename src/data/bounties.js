@@ -43,9 +43,14 @@ export const slotUnlockFloor = (i) => (i <= 0 ? 1 : i * 50 + 1);
 // browser, so the per-slot defaults ship.)
 const envNum = (k, d) => { try { const v = typeof process !== 'undefined' && process.env && process.env[k]; return v ? Number(v) : d; } catch { return d; } };
 const HP_SCALE = envNum('BOUNTY_HP_SCALE', 1), POOL_SCALE = envNum('BOUNTY_POOL_SCALE', 1);
+// Tuned (tests/bounties.test.mjs) against a FULLY-OPTIMIZED rank/rarity-matched 6-team — comprehension at
+// the rank cap, every Gu slot filled with cap-tier same-path Gu (full resonance), and killer moves — since
+// that's the real team a player brings to a bounty (a comp-0 team's Gu run at 10–25%, which made earlier
+// tuning far too soft). Even that maxed team wins only ~45% on R1/R2 and ~30% on R3–R5 (deliberately the
+// harder, more punishing end on the higher bounties), so ordinary teams face a real raid.
 //                       R1     R2     R3     R4     R5
-const BOUNTY_HP_MULT   = [10,    8,     8,     10,    11];
-const BOUNTY_POOL_MULT = [0.45,  0.40,  0.45,  0.45,  0.50];
+const BOUNTY_HP_MULT   = [11,    10,    12,    10,    20];
+const BOUNTY_POOL_MULT = [0.50,  0.50,  0.55,  0.60,  0.70];
 const slotHpMult   = (i) => (BOUNTY_HP_MULT[i]   != null ? BOUNTY_HP_MULT[i]   : 7)    * HP_SCALE;
 const slotPoolMult = (i) => (BOUNTY_POOL_MULT[i] != null ? BOUNTY_POOL_MULT[i] : 0.5)  * POOL_SCALE;
 // Stones = a big premium on the rank's REALM-GATE boss clear (limited attempts → premium pay). The

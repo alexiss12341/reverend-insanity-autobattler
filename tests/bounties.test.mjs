@@ -46,6 +46,7 @@ function buildTeam(rank, rarity, n = 6) {
     const w = roleAttrs(role, playerPool(ch));
     ch.attrs = {}; for (const k of ATTR_KEYS) ch.attrs[k] = Math.round(w[k] || 0);
     ch.active = true;
+    ch.comprehension = { [path]: 1e7 };          // DEVELOPED: comprehension at the rank cap → Gu run at full power
     equip(ch, loadoutFor(path, rank, guSlotsOf(ch)));
     if (rank >= 3 && ch.gu.length >= 3) ch.killer = { core: ch.gu[0], support: ch.gu.slice(1, 3), archetype: 'bloodrush' };
     S.roster.push(ch);
@@ -113,8 +114,11 @@ for (let i = 0; i < 5; i++) {
     `slot ${i}: rewards = stones + ${bountyEssence(i)}✦ + a 30% path-Gu chance`);
 }
 
-// ---- the FIGHT is a real, winnable raid ------------------------------------------------------------
-section('bounties: balanced vs an on-level mirror team (winnable, not a stalemate)');
+// ---- the FIGHT is a real, winnable raid vs a FULLY-OPTIMIZED matched team --------------------------
+// The reference is the strongest team a player can field at the band: comprehension at the rank cap (Gu
+// at full power — a comp-0 team's Gu run at only 10–25%), every slot a cap-tier same-path Gu (full
+// resonance), and killer moves. Bosses are tuned so even THAT team wins ≤60% (≈40–50%).
+section('bounties: a real raid vs a fully-optimized matched team (winnable, ≤60%, no stalemate)');
 state.current = newGame('tbounty');
 const TRIALS = 100;   // enough samples that the ≤60% cap check isn't flaky on RNG variance
 for (let i = 0; i < 5; i++) {
@@ -132,8 +136,8 @@ for (let i = 0; i < 5; i++) {
   const wr = wins / TRIALS, avgAct = Math.round(totActions / TRIALS), avgLost = alliesLostTot / TRIALS;
   if (REPORT) console.log(`  R${rank} ${rarity}: winrate ${(wr * 100).toFixed(0)}% · avg ${avgAct} actions · avg allies lost ${avgLost.toFixed(1)} · capped ${capped}/${TRIALS}`);
   ok(capped === 0, `slot ${i}: fights resolve (no 3000-action stalemate)`);
-  ok(wr >= 0.2, `slot ${i}: the raid is winnable by an on-level team (winrate ${(wr * 100).toFixed(0)}%)`);
-  ok(wr <= 0.60, `slot ${i}: AT MOST 60% team win on a rank/rarity-matched team (winrate ${(wr * 100).toFixed(0)}%)`);
+  ok(wr >= 0.12, `slot ${i}: still winnable by a fully-optimized team (winrate ${(wr * 100).toFixed(0)}%)`);
+  ok(wr <= 0.60, `slot ${i}: AT MOST 60% team win for a fully-optimized matched team (winrate ${(wr * 100).toFixed(0)}%)`);
   ok(avgLost > 0.5, `slot ${i}: the boss is a real threat (costs casualties — avg ${avgLost.toFixed(1)} lost)`);
 }
 
