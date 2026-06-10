@@ -334,12 +334,19 @@ resource farming + drops, a stone resource shop (**equipment removed for now**),
 Paths, ~244 path-tagged Gu (every common & mainstream path stocked 2-3 deep at tiers 1-5), Gu crafting (stones+resources, **no essence**; higher tiers **refined from spare
 same-path Gu exactly one tier lower**) with unique enforcement, gacha across 6 rarities with a **pity** system and
 **dismiss-for-essence**, the full **immortal tier** (ascension → tribulations → Dao Marks → Dao
-Wounds/death → Demon Venerable capstone), the **Dao-path progression** — **Comprehension** (use-driven,
+Wounds/death → Demon Venerable capstone — see the ascension-lock note below), the **Dao-path progression** — **Comprehension** (use-driven,
 rank-capped, tier-vs-level effectiveness, for everyone) and **Dao Marks** (`1+marks/1000`, immortals) —
 plus same-path **resonance**, a **prestige/reincarnation** layer (Sovereign Souls + Might/Fortune/Insight
 boons), and 3 saves. **Beginner onboarding**: a new-game **starter choice** (name → Dao path → rank-1 Gu
 → archetype, which sets the player's affinity + archetype line), a **First-Steps checklist widget**, **first-visit tab tips**, and the
 **Codex repurposed as a sectioned beginner's guide** ("典 Guide") — re-armable any time via `G.startOnboarding`.
+
+**Ascension is UI-LOCKED for now** (Rank 6 / Gu Immortal not yet available to players): at Rank 5 Peak
+the character sheet (`csCultivation`) and Dao-tab card (`daoCard`) render a disabled "🔒 Ascension Locked"
+button instead of "Attempt Ascension", gated by the single `ASCENSION_LOCKED` flag at the top of `ui.js`
+(flip to `false` to re-enable). The `tribulation.js ascend()` handler itself is **left intact** (the
+immortal test suite calls it directly), so the whole immortal tier above still works in code — only the
+player-facing button is gated. So when verifying immortal-tier behaviour, drive `ascend()` directly, not the UI.
 
 **Pending / deferred (designed, not built):** the **Holy Land** subsystem — immortal-aperture resource
 sites that produce path resources and steer the tribulation's path by resource mix; the **704

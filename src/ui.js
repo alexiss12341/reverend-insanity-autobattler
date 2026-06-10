@@ -36,6 +36,11 @@ const pct = (x) => Math.round((x || 0) * 100) + '%';
 const fmt = (n) => Math.floor(n).toLocaleString();
 const esc = (s) => String(s).replace(/"/g, '&quot;');
 
+// Immortal tier gate: Rank 6 (Gu Immortal) is not yet available, so the Rank-5-Peak ascension button is
+// disabled in the UI for now. The ascend() handler is left intact (tests/future use) — flip this to
+// false to re-enable the button once immortal cultivation is unlocked.
+const ASCENSION_LOCKED = true;
+
 // CJK glyph that represents a character: demon mark for the player, else their dominant Dao path.
 function charGlyph(c) {
   if (c.isPlayer) return '魔';
@@ -1373,7 +1378,7 @@ function csCultivation(c) {
 
   if (!immortal) {
     if (c.realm >= MORTAL_PEAK) {
-      rows += `<div class="spec-row"><dt>Breakthrough</dt><dd>Rank 5 Peak — the mortal ceiling. Ascension awaits.</dd></div>`;
+      rows += `<div class="spec-row"><dt>Breakthrough</dt><dd>Rank 5 Peak — the mortal ceiling. ${ASCENSION_LOCKED ? 'Ascension to Rank 6 (Gu Immortal) is not yet available.' : 'Ascension awaits.'}</dd></div>`;
     } else {
       const cost = breakthroughCost(c.realm), chance = Math.round(breakthroughChance(c) * 100);
       const gate = breakthroughFloorReq(c.realm), gated = gate && S().frontier <= gate;
@@ -1390,7 +1395,10 @@ function csCultivation(c) {
 
   // action: breakthrough (mortal) / ascension / tribulation / venerable
   let action = '';
-  if (!immortal && canAscend(c)) {
+  if (!immortal && canAscend(c) && ASCENSION_LOCKED) {
+    action = `<div style="margin-top:14px"><button class="primary" disabled>🔒 Ascension Locked</button>
+      <div class="muted small" style="margin-top:6px">Rank 6 (Gu Immortal) is still locked — ascension is unavailable for now.</div></div>`;
+  } else if (!immortal && canAscend(c)) {
     action = `<div style="margin-top:14px"><button class="primary" onclick="G.ascend('${c.id}')">Attempt Ascension · ${ASCEND_COST} ✦</button>
       <div class="muted small" style="margin-top:6px">A solo trial to become a Gu Immortal. Failure costs the essence but is not fatal.</div></div>`;
   } else if (!immortal) {
@@ -2433,10 +2441,15 @@ function daoCard(c) {
 
   if (!immortal) {
     if (canAscend(c)) {
-      return `<div class="card member">${head}
-        <div class="body" style="margin-top:10px">Rank 5 Peak reached — the mortal ceiling. Attempt ascension to become a Gu Immortal.</div>
-        <div style="margin-top:12px"><button class="primary" onclick="G.ascend('${c.id}')">Attempt Ascension · ${ASCEND_COST} ✦</button></div>
-        <div class="muted small" style="margin-top:6px">A solo trial. Failure costs the essence but is not fatal.</div></div>`;
+      return ASCENSION_LOCKED
+        ? `<div class="card member">${head}
+          <div class="body" style="margin-top:10px">Rank 5 Peak reached — the mortal ceiling. Rank 6 (Gu Immortal) is still locked.</div>
+          <div style="margin-top:12px"><button class="primary" disabled>🔒 Ascension Locked</button></div>
+          <div class="muted small" style="margin-top:6px">Ascension is unavailable for now.</div></div>`
+        : `<div class="card member">${head}
+          <div class="body" style="margin-top:10px">Rank 5 Peak reached — the mortal ceiling. Attempt ascension to become a Gu Immortal.</div>
+          <div style="margin-top:12px"><button class="primary" onclick="G.ascend('${c.id}')">Attempt Ascension · ${ASCEND_COST} ✦</button></div>
+          <div class="muted small" style="margin-top:6px">A solo trial. Failure costs the essence but is not fatal.</div></div>`;
     }
     const pctv = Math.min(100, (100 * c.realm) / MORTAL_PEAK);
     return `<div class="card member">${head}
