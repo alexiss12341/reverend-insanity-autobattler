@@ -822,7 +822,9 @@ const G = {
     UI.toast(r.ok ? `Ascended ${r.gu.name} to Tier ${r.tier}.` : r.msg);
     UI.render(activeTab); UI.refreshTop(); save();
   },
-  buyResource(id) { const r = buyResource(id, 1); if (r.ok) bumpQuest('market'); UI.toast(r.ok ? 'Purchased.' : r.msg); if (r.ok) UI.render('shop'); UI.refreshTop(); save(); },
+  // Market buy-amount selector (×1/×10/×100/×1000): sets how many units each Buy click purchases.
+  setShopQty(n) { S().settings.shopQty = Number(n) || 1; UI.render('shop'); save(); },
+  buyResource(id) { const q = S().settings.shopQty || 1; const r = buyResource(id, q); if (r.ok) bumpQuest('market'); UI.toast(r.ok ? `Purchased ×${q}.` : r.msg); if (r.ok) UI.render('shop'); UI.refreshTop(); save(); },
   toggleActive(id) {
     const c = S().roster.find((x) => x.id === id); if (!c) return;
     if (!c.active) {

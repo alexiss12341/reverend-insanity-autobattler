@@ -1677,6 +1677,13 @@ export function viewGu() {
 // ---------- shop ----------
 // Market filter bar, mirroring the Refinery/Almanac: a rarity TOGGLE (colored when active), a Dao-path
 // dropdown (limited to paths with unlocked resources), a name SEARCH box, and a Clear button.
+// Market BUY-AMOUNT selector (×1/×10/×100/×1000), mirroring the character sheet's per-click step buttons.
+// Sets how many units each resource's Buy button purchases (persisted in S().settings.shopQty).
+function shopQtyBtns() {
+  const q = S().settings.shopQty || 1;
+  return [1, 10, 100, 1000].map((n) =>
+    `<button class="mini${q === n ? ' primary' : ''}" onclick="G.setShopQty(${n})">×${n}</button>`).join('');
+}
 function shopControls(rarityF, pathF, searchV) {
   const rb = (r) => `<button class="${rarityF === r ? 'primary' : ''}"${r !== 'all' && rarityF === r ? ` style="color:${rankColor(+r)};border-color:${rankColor(+r)}"` : ''} onclick="G.setView('shopRarity','${r}')">${r === 'all' ? 'All' : 'R' + r}</button>`;
   const rars = ['all', ...RANKS.map(String)].map(rb).join('');
@@ -1686,6 +1693,7 @@ function shopControls(rarityF, pathF, searchV) {
   return `<div class="teamctl">
     <span class="muted small">Rank</span><div class="viewtoggle wrap">${rars}</div>
     <span class="muted small">Path</span><select onchange="G.setView('shopPath',this.value)">${pathOpts}</select>
+    <span class="muted small">Buy</span><div class="viewtoggle">${shopQtyBtns()}</div>
     <input class="searchbox" type="text" placeholder="Search resources…" value="${esc(searchV || '')}" oninput="G.shopSearch(this.value)">
     ${filtered ? '<button class="danger" onclick="G.clearShopFilters()">✕ Clear</button>' : ''}
   </div>`;
@@ -1708,14 +1716,19 @@ export function shopSectionsHtml() {
   if (!items.length) return '<div class="muted" style="margin-top:14px">No resources match these filters.</div>';
 
   const owned = (r) => (S().resources[r.id] || 0);
+  const qty = st.shopQty || 1;            // how many units the Buy button purchases at once
   const byRank = {};
   items.forEach((r) => { (byRank[r.rank] = byRank[r.rank] || []).push(r); });
   const tag = (r) => r.daoPath
     ? `<span class="pill" style="color:${pathColor(r.daoPath)};border-color:${pathColor(r.daoPath)}66"><span class="cjk">${pathCjk(r.daoPath)}</span> ${pathName(r.daoPath)}</span>`
     : '<span class="muted small">universal</span>';
-  const card = (r) => `<div class="card row">
+  const card = (r) => {
+    const total = resourceCost(r.id) * qty;
+    const afford = S().stones >= total;
+    return `<div class="card row">
     <span><b>${r.name}</b> <span class="pill" style="color:${rankColor(r.rank)};border-color:${rankColor(r.rank)}66">Rank ${r.rank}</span> ${tag(r)} <span class="muted small">· held ×${fmt(owned(r))}</span></span>
-    <button class="primary" onclick="G.buyResource('${r.id}')">${fmt(resourceCost(r.id))} 石</button></div>`;
+    <button class="primary"${afford ? '' : ' disabled'} onclick="G.buyResource('${r.id}')">${qty > 1 ? `×${qty} · ` : ''}${fmt(total)} 石</button></div>`;
+  };
   return RANKS.filter((rk) => byRank[rk]).map((rk, i) =>
     `<div class="sec-head"><span class="sec-num" style="color:${rankColor(rk)}">${SEC_NUM[i + 1] || ''}</span>
       <span class="sec-title" style="color:${rankColor(rk)}">Rank ${rk}</span><span class="sec-meta">${byRank[rk].length} kinds · ${fmt(resourceCost(byRank[rk][0].id))} 石 each</span></div>
@@ -1971,6 +1984,13 @@ export function viewFloors() {
 // Player-facing patch notes. Add the newest release to the TOP of this list; each entry is
 // { date, title, items: [[heading, html], …] }. HTML is allowed in the item bodies.
 const WHATS_NEW = [
+  { date: 'Jun 10, 2026', title: 'Market', items: [
+    ['Bulk buy buttons', 'The <b>Market</b> now has <b>×1 / ×10 / ×100 / ×1000</b> buy-amount buttons — stock up on crafting resources in one click. Each <b>Buy</b> button shows the scaled total cost and greys out when you can’t afford that many.'],
+  ] },
+  { date: 'Jun 10, 2026', title: 'Guide', items: [
+    ['Dao Paths &amp; Focus Stats', 'The in-game <b>Guide</b> gains a <b>Dao Paths &amp; Focus Stats</b> section — every Dao path grouped by category with its rarity, craft-gate floor and the <b>attribute focus</b> its affinity rewards.'],
+    ['Archetype Lines', 'A companion <b>Archetype Lines</b> section lists all <b>13</b> combat &amp; support lines with their per-rarity epithet and effect (personal stat, team aura, or Gu amplifier).'],
+  ] },
   { date: 'Jun 10, 2026', title: 'Cultivation', items: [
     ['Attribute Respec', 'Regret a build? A new <b>Respec</b> button on each cultivator’s <b>Character</b> sheet releases <b>all</b> of their allocated attribute points back into the unspent pool — ready to redistribute freely — for <b style="color:var(--stone)">1,000 石</b> per invested point plus a flat <b style="color:var(--jade)">100 ✦</b>.'],
   ] },
