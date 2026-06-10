@@ -8,7 +8,7 @@ import { MORTAL_PEAK, realmName, isImmortalRealm, essenceQuality, rankOf } from 
 import { resonanceMult, attainmentOf, marksIn, woundMult, injuryMult, ATTAIN_RANK, markAmp, comprehensionLevelIn, comprehensionMult, comprehensionCap } from './dao.js';
 import { affinityEffectMult, lineEffects, lineGuAmp } from '../data/traits.js';
 import { prestigeCombatMult } from './prestige.js';
-import { effAttr, deriveStats, ATTR_KEYS, apertureCapacity, apertureRegenFactor, realmPointsTotal, aptThreshold, aptitudeStepBonus, effAptitude } from '../data/attributes.js';
+import { effAttr, deriveStats, ATTR_KEYS, apertureCapacity, apertureRegenFactor, realmPointsTotal, aptThreshold, aptitudeStepBonus, effAptitude, spentPoints } from '../data/attributes.js';
 import { STATUS } from '../data/status.js';
 
 export function guOf(uid) {
@@ -188,4 +188,24 @@ export function attemptBreakthrough(charId) {
   }
   return { ok: true, success: false, cost,
     msg: `${ch.name}'s breakthrough fails — the primeval stones are spent, but the cultivator is unharmed.` };
+}
+
+// Respec: release every allocated attribute point back into the unspent pool for a stone fee.
+// Each point currently invested costs RESPEC_COST_PER_POINT 石 to unbind (so a heavily-built
+// cultivator pays more to reshape). After paying, all five attributes drop to zero and the points
+// become re-distributable. Pure refund — no realm/aptitude change, no risk.
+export const RESPEC_COST_PER_POINT = 1000;
+export const respecCost = (ch) => RESPEC_COST_PER_POINT * (ch ? spentPoints(ch) : 0);
+
+export function respecAttributes(charId) {
+  const ch = S().roster.find((c) => c.id === charId);
+  if (!ch) return { ok: false, msg: 'No such cultivator.' };
+  const invested = spentPoints(ch);
+  if (invested <= 0) return { ok: false, msg: `${ch.name} has no allocated attributes to respec.` };
+  const cost = respecCost(ch);
+  if (S().stones < cost) return { ok: false, msg: `Need ${cost.toLocaleString()} 石 to respec ${ch.name}'s attributes.` };
+  S().stones -= cost;
+  ch.attrs = { str: 0, agi: 0, con: 0, int: 0, luck: 0 };
+  return { ok: true, cost, refunded: invested,
+    msg: `${ch.name}'s attributes reset — ${invested.toLocaleString()} point${invested === 1 ? '' : 's'} unallocated for ${cost.toLocaleString()} 石.` };
 }

@@ -3,7 +3,7 @@
 import { state, S, newGame, load, save, deleteSave, listSaves, SLOT_KEYS, activeTeam, rowOf, laneOf, tileOccupant, rowCount, ROW_CAP, firstFreeTile, normalizeFormation } from './state.js';
 import { effectiveStats } from './systems/cultivation.js';
 import { resolveEncounter, fightWallMs } from './systems/battle.js';
-import { attemptBreakthrough } from './systems/cultivation.js';
+import { attemptBreakthrough, respecAttributes, respecCost } from './systems/cultivation.js';
 import { rollFloorRewards, firstClearEssence, rollFarmEssence, applyDrops, buyResource } from './systems/economy.js';
 import { pull, dismiss, dismissMany, dismissRefund, imprint, imprintCandidates, IMPRINT_CAP, autoImprintAll, duplicateSpares } from './systems/gacha.js';
 import { buyBoon, reincarnate, soulsAward } from './systems/prestige.js';
@@ -20,7 +20,7 @@ import { rarityTier } from './data/rarities.js';
 import { accrue, ascend, resolveTribulation, becomeVenerable } from './systems/tribulation.js';
 import { addMarks, addComprehension } from './systems/dao.js';
 import { affinityCompMult } from './data/traits.js';
-import { ATTR_KEYS, unspentPoints, playerPool } from './data/attributes.js';
+import { ATTR_KEYS, unspentPoints, playerPool, spentPoints } from './data/attributes.js';
 import * as Audio from './systems/audio.js';
 import * as UI from './ui.js';
 
@@ -639,6 +639,30 @@ const G = {
   // Discard the pending draft without committing.
   allocClear(id) {
     if (S().allocDraft && S().allocDraft.id === id) S().allocDraft = null;
+    UI.render(activeTab); save();
+  },
+  // Respec: spend 石 (1000 per invested point) to release every allocated attribute back into the
+  // unspent pool. Confirm first — it wipes the whole distribution.
+  respecPrompt(id) {
+    const c = S().roster.find((x) => x.id === id); if (!c) return;
+    const invested = spentPoints(c);
+    if (invested <= 0) return UI.toast(`${c.name} has no allocated attributes to respec.`);
+    const cost = respecCost(c);
+    const afford = S().stones >= cost;
+    UI.showModal(`<h3>Respec attributes?</h3>
+      <p class="muted">Release all of <b>${c.name}</b>'s allocated attributes back into the unspent pool. This unbinds <b>${invested.toLocaleString()}</b> point${invested === 1 ? '' : 's'} for <b class="stone">${cost.toLocaleString()} 石</b> <span class="muted small">(1,000 石 per invested point)</span> — you can then redistribute them freely.${afford ? '' : `<br><br><span class="blood-text">You only have ${Math.floor(S().stones).toLocaleString()} 石.</span>`}</p>
+      <div class="row gap" style="margin-top:14px">
+        <button class="danger" ${afford ? '' : 'disabled'} onclick="G.respecConfirm('${id}')">Respec · −${cost.toLocaleString()} 石</button>
+        <button onclick="G.closeModal()">Cancel</button>
+      </div>`);
+  },
+  respecConfirm(id) {
+    const r = respecAttributes(id);
+    UI.closeModal();
+    if (!r.ok) return UI.toast(r.msg);
+    if (S().allocDraft && S().allocDraft.id === id) S().allocDraft = null; // any staged draft is now stale
+    UI.toast(r.msg, 5000, 'loot');
+    UI.refreshTop();                          // stones changed
     UI.render(activeTab); save();
   },
   toggleIdle() { if (autoChallenge) return; S().settings.idle = !S().settings.idle; if (S().settings.idle) startIdle(); else stopIdle(); UI.renderBattleControls(); save(); },

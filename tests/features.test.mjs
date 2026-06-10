@@ -4,7 +4,7 @@ import { state, newGame } from '../src/state.js';
 import { generateEncounter } from '../src/data/floors.js';
 import { resolveEncounter, applyTeamAuras, teamHeal, cleanseTeam } from '../src/systems/battle.js';
 import { pull, dismiss, pityCount, PITY_CAP, imprint, imprintCandidates, IMPRINT_CAP } from '../src/systems/gacha.js';
-import { effectiveStats, breakthroughCost, breakthroughChance, breakthroughFloorReq, attemptBreakthrough, isInjured } from '../src/systems/cultivation.js';
+import { effectiveStats, breakthroughCost, breakthroughChance, breakthroughFloorReq, attemptBreakthrough, isInjured, respecAttributes, respecCost, RESPEC_COST_PER_POINT } from '../src/systems/cultivation.js';
 import { addComprehension, injuryMult, resonanceMult } from '../src/systems/dao.js';
 import { prestige, buyBoon, reincarnate, canReincarnate, soulsAward, prestigeCombatMult } from '../src/systems/prestige.js';
 import { rollFloorRewards, teamFortune, teamLuck, dropBonus, dropChance, farmEssenceEV } from '../src/systems/economy.js';
@@ -17,7 +17,7 @@ import { pathFloorReq, pathList, isPathLocked } from '../src/data/daoPaths.js';
 import { NAMED_HEROES, nameForRarity } from '../src/data/npcs.js';
 import { makeCharacter } from '../src/state.js';
 import { RARITY_ORDER } from '../src/data/rarities.js';
-import { apertureCapacity, apertureGrade, apertureRegenFactor, aptThreshold, aptitudeStepBonus, aptitudePointBonus, playerPool, effAttr, effAptitude, imprintAttrMult } from '../src/data/attributes.js';
+import { apertureCapacity, apertureGrade, apertureRegenFactor, aptThreshold, aptitudeStepBonus, aptitudePointBonus, playerPool, effAttr, effAptitude, imprintAttrMult, spentPoints, unspentPoints } from '../src/data/attributes.js';
 import { essenceQuality } from '../src/data/realms.js';
 import { affinityName, affinityCompMult, affinityEffectMult, affinityTrait, AFFINITY, AFFINITY_TRAITS, AFFINITY_COMP_MULT,
   LINES, LINE_ASSIGN, LINE_ORDER, lineEffects, lineGuAmp, lineAura, lineName, lineEffectList, lineTierEffects, lineCjk, lineBlurb } from '../src/data/traits.js';
@@ -722,4 +722,32 @@ section('features: daily quests (essence rewards + reset)');
   Q.daily.date = '2000-01-01';
   ensureDaily();
   ok(!questComplete('wins') && !questClaimed('wins') && !Q.daily.bonusClaimed, 'a date rollover resets progress, claims and the bonus');
+}
+
+section('features: attribute respec');
+{
+  state.current = newGame('respec'); const SR = state.current;
+  const rc = SR.roster[0];
+  rc.attrs = { str: 30, agi: 10, con: 8, int: 2, luck: 0 };   // 50 points invested
+  const invested = spentPoints(rc);
+  ok(invested === 50, 'spentPoints sums the allocated attributes');
+  ok(respecCost(rc) === RESPEC_COST_PER_POINT * invested, 'respec cost = 1,000 石 per invested point');
+
+  // too poor → refusal, no mutation
+  SR.stones = respecCost(rc) - 1;
+  const poolBefore = playerPool(rc);
+  const r0 = respecAttributes(rc.id);
+  ok(!r0.ok && spentPoints(rc) === invested && SR.stones === respecCost(rc) - 1, 'a respec you cannot afford fails and changes nothing');
+
+  // affordable → all points refunded into the unspent pool, stones charged
+  SR.stones = respecCost(rc) + 500;
+  const cost = respecCost(rc);
+  const r1 = respecAttributes(rc.id);
+  ok(r1.ok && r1.refunded === invested && r1.cost === cost, 'respec succeeds, reporting the refund and cost');
+  ok(spentPoints(rc) === 0 && unspentPoints(rc) === poolBefore, 'every allocated point becomes unspent again (pool intact)');
+  ok(SR.stones === 500, 'the stone fee is deducted exactly once');
+
+  // nothing left to respec → refusal, free of charge
+  const r2 = respecAttributes(rc.id);
+  ok(!r2.ok && SR.stones === 500, 'respeccing a fresh (unallocated) cultivator fails without charging');
 }

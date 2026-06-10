@@ -1,7 +1,7 @@
 // UI layer. Renders tabs from state and provides the battle feed, arena, toasts and modal.
 // Event handlers are invoked via the global `G` object defined in main.js (onclick="G.foo()").
 import { S, activeTeam, rowOf, laneOf, frontTeam, backTeam, LANES, tileOccupant, save } from './state.js';
-import { effectiveStats, guOf, breakthroughCost, breakthroughChance, breakthroughFloorReq } from './systems/cultivation.js';
+import { effectiveStats, guOf, breakthroughCost, breakthroughChance, breakthroughFloorReq, respecCost } from './systems/cultivation.js';
 import { GU_LIB, guList, effectText, isUnique, guEssenceCost, guEssenceCostFor, guUsingResource, guTags, tagLabel, nextTierOf, starterGusForPath, signatureImmortalGu, signatureGusForPath, pathStatuses } from './data/gu.js';
 import { RESOURCES, resourceList, resourceName, rankRarity } from './data/resources.js';
 const RANKS = [1, 2, 3, 4, 5, 6, 7, 8, 9];
@@ -20,7 +20,7 @@ import { apertureCap, apertureUsed, apertureFree, attainmentIn, marksIn, attainm
 import { affinityPaths, affinityName, AFFINITY_EFFECT_MULT, AFFINITY_COMP_MULT, lineOf, LINES, lineName, lineRole, lineCjk, lineBlurb, LINE_ORDER, lineTierEffects, lineEffects, lineGuAmp, lineEffectList, auraEffectList, allyAuraSummary, enemyWaveAura } from './data/traits.js';
 import { TRIBS_NEEDED, TRIB_THRESHOLD, ASCEND_COST, pending, canAscend, canBecomeVenerable, tierForRank } from './systems/tribulation.js';
 import { isImmortalRealm, MORTAL_PEAK, rankOf, guSlotsOf } from './data/realms.js';
-import { ATTR_KEYS, effAttr, unspentPoints, playerPool, apertureCapacity, apertureGrade, effAptitude, imprintAttrMult } from './data/attributes.js';
+import { ATTR_KEYS, effAttr, unspentPoints, playerPool, spentPoints, apertureCapacity, apertureGrade, effAptitude, imprintAttrMult } from './data/attributes.js';
 import { imprintCandidates, IMPRINT_CAP, duplicateGroups, imprintableDuplicateCount } from './systems/gacha.js';
 import { STATUS } from './data/status.js';
 import { validateKiller, assemble, nearestCore, describeOps, synergyLabel, guInDomain, archetypeDomain, archetypeBlurb, DOMAIN_INFO, ARCHETYPES, ARCHETYPE_ORDER, archetypeRole, KILLER_COST_MULT, KILLER_UNLOCK_FLOOR, KILLER_MIN_RANK, KILLER_ARCH_COST } from './data/combos.js';
@@ -1055,13 +1055,17 @@ function csAttrBoard(c) {
       </div>
     </div>`;
   }).join('');
+  const invested = spentPoints(c);
+  const rCost = respecCost(c);
+  const canAfford = S().stones >= rCost;
   return `<div class="cs-alloc">
       <span class="pill${unspent > 0 ? ' glow' : ''}">${compact(unspent)} unspent points</span>
       <span class="muted small">Per click</span><div class="viewtoggle">${allocStepBtns()}</div>
       ${totalStaged > 0 ? `<span class="pill staged-pill">${compact(totalStaged)} staged · ${compact(remaining)} left</span>` : ''}
       <button class="mini primary" ${totalStaged <= 0 ? 'disabled' : ''} onclick="G.allocCommit('${c.id}')">✓ Confirm distribution</button>
       <button class="mini" ${totalStaged <= 0 ? 'disabled' : ''} onclick="G.allocClear('${c.id}')">Reset</button>
-      <span class="muted small">Attributes are permanent; every realm grants more points. There is no respec.</span>
+      <button class="mini danger"${invested <= 0 ? ' disabled' : ''}${canAfford || invested <= 0 ? '' : ' style="opacity:.65"'} title="${invested <= 0 ? 'No allocated attributes to respec' : `Release all ${compact(invested)} allocated points for ${rCost.toLocaleString()} 石 (1,000 石 each)${canAfford ? '' : ' — not enough 石'}`}" onclick="G.respecPrompt('${c.id}')">↺ Respec${invested > 0 ? ` · ${compact(rCost)}石` : ''}</button>
+      <span class="muted small">Allocation is permanent unless you Respec (1,000 石 per invested point); every realm grants more points.</span>
     </div>
     <div class="cs-attrs">${cells}</div>`;
 }
@@ -2089,7 +2093,8 @@ export function viewCodex() {
     <li><b>INT</b> · Intelligence <span class="muted">— Potency (status power), essence pool &amp; regen</span></li>
     <li><b>LCK</b> · Luck <span class="muted">— Crit chance, Lucky hits, drop rate</span></li>
   </ul>
-  There is <b>no realm multiplier</b> — all your power lives in these points, so a higher realm matters because it grants <b>more</b> of them. Raw stats (HP, ATK) grow steadily; percentage stats (crit, evasion) have diminishing returns and scale relative to your realm.</div></div></details>
+  There is <b>no realm multiplier</b> — all your power lives in these points, so a higher realm matters because it grants <b>more</b> of them. Raw stats (HP, ATK) grow steadily; percentage stats (crit, evasion) have diminishing returns and scale relative to your realm.
+  <br><br>Regret a build? <b>Respec</b> on the Character sheet refunds every allocated point back into the unspent pool for <b>1,000 石 per invested point</b>, so you can redistribute freely.</div></div></details>
 
   <details class="cdx-sec" id="cdx-2"><summary>${secHead(2, 'Realms — Big &amp; Small', 'the cultivation ladder')}</summary>
   <div class="card"><div class="body">Cultivation climbs <b>Ranks 1–9</b> — these are the <b>big realms</b>. Each mortal rank (1–5) is split into four <b>small realms</b>: <b>Initial → Middle → Upper → Peak</b>. So the whole mortal ladder runs Rank 1 Initial … Rank 5 Peak (a "Gu Master").
