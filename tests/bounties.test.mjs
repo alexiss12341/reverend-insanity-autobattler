@@ -77,6 +77,12 @@ for (let d = 1; d <= 90; d++) {
 }
 ok(r1common, 'R1 slot only ever rolls a common-path target');
 ok(r5deep, 'R5 slot can roll a deep (esoteric) path');
+// Reaver is locked out of the bounty mode (too strong on a lone sustain boss) — never assigned.
+let noReaver = true;
+for (let d = 1; d <= 28; d++) for (let i = 0; i < 5; i++) {
+  if (buildBounty(i, `2026-08-${String(d).padStart(2, '0')}`).line === 'reaver') noReaver = false;
+}
+ok(noReaver, 'Reaver archetype is never assigned to a bounty boss (locked out)');
 
 // ---- the BUILD is good -----------------------------------------------------------------------------
 section('bounties: lone target is a well-formed raid boss');
@@ -92,8 +98,9 @@ for (let i = 0; i < 5; i++) {
     .some((g) => (g.effects || []).some((e) => (e.kind === 'lifesteal' || e.kind === 'regen') && e.value > 0));
   const fxSustain = (u.effects.lifesteal || 0) > 0 || (u.effects.regen || 0) > 0;
   ok(loadoutSustain || fxSustain, `slot ${i}: has self-sustain (lifesteal/regen Gu or baked effect)`);
-  if (slotRank(i) >= 3) ok(u.killer && u.killer.ops && u.comboCost > 0, `slot ${i}: rank ${slotRank(i)} has a killer move`);
-  else ok(!u.killer, `slot ${i}: rank ${slotRank(i)} has no killer (below KILLER_MIN_RANK)`);
+  // archetype: every boss wears a combat LINE (its stat bonuses) AND arms a line-coherent killer move
+  ok(u.line && b.line === u.line, `slot ${i}: has an archetype line (${u.line})`);
+  ok(u.killer && u.killer.ops && u.comboCost > 0, `slot ${i}: arms a killer move (${u.killer && u.killer.name})`);
   ok(u.maxHp > 0, `slot ${i}: positive HP (${u.maxHp})`);
   ok(b.rewards.stones > 0 && b.rewards.essence === bountyEssence(i) && Object.keys(b.rewards.drops).length >= 1,
     `slot ${i}: rewards = stones + ${bountyEssence(i)}✦ + path resources`);

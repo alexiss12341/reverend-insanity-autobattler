@@ -15,6 +15,8 @@
 // passes the day key, so this stays headless-testable and free of the systems layer.
 import { enemyUnit } from './floors.js';
 import { pathList, commOf, pathName, isPathLocked, pathAffinity } from './daoPaths.js';
+import { domainOfKind } from './combos.js';
+import { lineName } from './traits.js';
 import { resourcesForPath } from './resources.js';
 import { RARITY_ORDER } from './rarities.js';
 
@@ -42,8 +44,8 @@ export const slotUnlockFloor = (i) => (i <= 0 ? 1 : i * 50 + 1);
 const envNum = (k, d) => { try { const v = typeof process !== 'undefined' && process.env && process.env[k]; return v ? Number(v) : d; } catch { return d; } };
 const HP_SCALE = envNum('BOUNTY_HP_SCALE', 1), POOL_SCALE = envNum('BOUNTY_POOL_SCALE', 1);
 //                       R1     R2     R3     R4     R5
-const BOUNTY_HP_MULT   = [11,    9,     11,    11,    10];
-const BOUNTY_POOL_MULT = [0.52,  0.45,  0.42,  0.43,  0.53];
+const BOUNTY_HP_MULT   = [9,     8,     8,     10,    11];
+const BOUNTY_POOL_MULT = [0.44,  0.40,  0.45,  0.45,  0.50];
 const slotHpMult   = (i) => (BOUNTY_HP_MULT[i]   != null ? BOUNTY_HP_MULT[i]   : 7)    * HP_SCALE;
 const slotPoolMult = (i) => (BOUNTY_POOL_MULT[i] != null ? BOUNTY_POOL_MULT[i] : 0.5)  * POOL_SCALE;
 // Stones scale on the same curve as floor rewards, with a bounty premium (limited attempts = better pay).
@@ -86,18 +88,30 @@ export function bountyPath(i, dayKey) {
 const MENACE = { Common: 'Rogue', Uncommon: 'Outlaw', Rare: 'Demon', Epic: 'Devil', Legendary: 'Calamity' };
 const GIVEN = ['Sha Tu', 'Du Yan', 'Hun Sha', 'Huan Jing', 'Wu Hen', 'Mo Gui', 'Xie Feng', 'Gui Mu',
   'Yan Luo', 'Ku Rong', 'Sang Yu', 'Bai Gu', 'Xue Ming', 'Du Gu', 'Han Shuang', 'Qian Shou'];
-export function bountyName(i, path, dayKey) {
+// "<given> the <Path> <Archetype-epithet>", e.g. "Mo Gui the Blade Worldcleaver" — the title carries
+// BOTH the path theme and the rarity-tiered archetype epithet (traits.js lineName).
+export function bountyName(i, path, line, dayKey) {
   const theme = pathName(path).replace(/ Path$/, '');
   const given = GIVEN[hash32(`${dayKey}|bname|${i}|${path}`) % GIVEN.length];
-  return `${theme} ${MENACE[slotRarity(i)] || 'Rogue'} ${given}`;
+  const title = lineName(line, slotRarity(i)) || MENACE[slotRarity(i)] || 'Rogue';
+  return `${given} the ${theme} ${title}`;
 }
 
-// The killer archetype a lone boss arms (rank 3+ only): a status/affliction-leaning path gets a mystic
-// single-target hex; everyone else gets a SELF-HEALING nuke (Bloodrush) — ideal for a solo target that
-// has to both threaten and outlast a team. coreDomain is pinned to the archetype's domain in enemyUnit,
-// so the loadout always fields a valid core.
-function bountyKillerArch(path) {
-  return pathAffinity(path).includes('potency') ? 'soulrend' : 'bloodrush';
+// The combat ARCHETYPE LINE a bounty boss wears, derived from the rolled path's affinity so the archetype
+// MATCHES the path's strengths: the line's dominant effect-domain → a fitting line. That line both grants
+// tiered stat bonuses (data/traits.js LINES) AND drives a matching killer (floors.js LINE_KILLER), so an
+// offense path becomes a Slayer with an offense nuke, a status path an Afflictor with a hex, etc.
+// REAVER is deliberately EXCLUDED here: on a lone raid boss its stacked lifesteal (on top of the baked
+// boss lifesteal + the guaranteed sustain Gu) out-sustains a team's DPS and becomes near-unkillable. So a
+// vigor-leaning path maps to the WALL (bulk/endurance) instead — never a vampire.
+const DOMAIN_LINE = { offense: 'slayer', mystic: 'afflictor', motion: 'tempest', guard: 'wall', vigor: 'wall' };
+const BOUNTY_LINE_BLOCKLIST = new Set(['reaver']); // archetypes too strong for the lone-boss mode
+function bountyLine(path) {
+  const counts = {};
+  for (const k of pathAffinity(path)) { const d = domainOfKind(k); if (d) counts[d] = (counts[d] || 0) + 1; }
+  const domain = Object.keys(counts).sort((a, b) => counts[b] - counts[a])[0] || 'offense';
+  const line = DOMAIN_LINE[domain] || 'slayer';
+  return BOUNTY_LINE_BLOCKLIST.has(line) ? 'wall' : line; // safety net — never field a blocked archetype
 }
 
 // ---- rewards (spec only; granting lives in systems/bounties.js) ----------------------------------
@@ -121,18 +135,19 @@ export function buildBounty(i, dayKey, tune = {}) {
   const rarity = slotRarity(i);
   const path = bountyPath(i, dayKey);
   const floor = slotAnchorFloor(i);
-  const name = bountyName(i, path, dayKey);
-  const killerArch = rank >= 3 ? bountyKillerArch(path) : null;
+  const line = bountyLine(path);              // archetype line (drives the boss's stat bonuses + killer)
+  const name = bountyName(i, path, line, dayKey);
   const rng = mulberry32(hash32(`${dayKey}|bunit|${i}|${path}`));
   const unit = enemyUnit(floor, name, {
     boss: true, fullGu: true, rng,            // boss → rarity = band cap (= slotRarity) + baked sustain effects + full kit
+    squad: { lines: { boss: line }, aura: null }, // wear the derived archetype line (its tiered bonuses + killer pool)
+    forceKiller: true,                        // even the R1/R2 elite targets arm their line's signature move
     forcePath: path, sustain: true,           // one-path resonant kit + a guaranteed self-heal Gu
     poolMult: tune.poolMult != null ? tune.poolMult : slotPoolMult(i),
     hpMult: tune.hpMult != null ? tune.hpMult : slotHpMult(i),
-    killerArch,
   });
   unit.row = 'front'; unit.lane = 2;          // a lone boss stands front-and-centre
-  return { slot: i, rank, rarity, path, floor, name, killerArch, unit, rewards: bountyRewards(i, path) };
+  return { slot: i, rank, rarity, path, line, floor, name, unit, rewards: bountyRewards(i, path) };
 }
 
 // A full single-wave encounter for slot `i` on `dayKey`, shaped exactly like generateEncounter's output

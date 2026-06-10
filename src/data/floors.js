@@ -327,7 +327,7 @@ function lineKillerConfig(lineId, items, name, floor) {
   return { core: core.uid, coreGu: core.gu, support: support.map((it) => it.uid), supportGu: support.map((it) => it.gu), archetype };
 }
 export function enemyUnit(floor, name, { boss = false, difficulty = 0, kind = 'beast', rng = Math.random, squad = SQUADS.rabble, fullGu = false,
-  forcePath = null, poolMult = 1, hpMult = 1, killerArch = null, sustain = false } = {}) {
+  forcePath = null, poolMult = 1, hpMult = 1, killerArch = null, sustain = false, forceKiller = false } = {}) {
   const rank = floorRealm(floor);
   const role = boss ? 'boss' : roleOf(name);
   const lineId = squad.lines[role] || null;       // the squad's trait LINE for this role (drives the killer archetype)
@@ -353,9 +353,11 @@ export function enemyUnit(floor, name, { boss = false, difficulty = 0, kind = 'b
   const guCount = fullGu ? guSlots(rankPeakRealm(rank))
     : cultivator ? Math.min(4, 2 + Math.floor(rank / 3)) : Math.min(2, 1 + Math.floor(rank / 4));
   // a killer-capable line steers the loadout to field a core of its favored domain (so its move fits its
-  // role). A forced bounty killer pins the core domain to that archetype's domain instead.
+  // role). A forced bounty killer pins the core domain to that archetype's domain instead. forceKiller
+  // (bounties) lifts the rank gate so even a rank-1/2 elite target arms its line's signature move.
+  const killerOK = rank >= KILLER_MIN_RANK || forceKiller;
   const coreDomain = (killerArch ? archetypeDomain(killerArch) : null)
-    || ((rank >= KILLER_MIN_RANK && lineId && LINE_KILLER[lineId]) ? LINE_KILLER[lineId].domain : null);
+    || ((killerOK && lineId && LINE_KILLER[lineId]) ? LINE_KILLER[lineId].domain : null);
   const loadout = wantGu ? enemyGuLoadout(floor, rank, rng, guCount, coreDomain, forcePath, sustain) : [];
   const affPath = (loadout[0] && loadout[0].daoPath) || themePath(name); // DAO PATH AFFINITY trait (its theme path)
   const RATE_MAP = { crit: 'crit', critDmg: 'critDamage', critRes: 'critResist', statusRes: 'statusResist',
@@ -464,7 +466,7 @@ export function enemyUnit(floor, name, { boss = false, difficulty = 0, kind = 'b
   // PROGRESSION GATE: only rank 3+ foes get a killer move (combos.js KILLER_MIN_RANK), mirroring the player
   // gate. Rank-3+ enemies appear only on Floor 101+ (where the player has cleared Floor 100), so it's symmetric.
   let killer = null, comboCost = 0;
-  if (rank >= KILLER_MIN_RANK) {
+  if (killerOK) {
     const items = loadout.map((g, i) => ({ uid: 'e' + i, gu: g }));
     let autoK = null;
     if (killerArch) {                               // bounty: force a specific killer archetype off the loadout
