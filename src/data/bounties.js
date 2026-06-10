@@ -111,10 +111,10 @@ function bountyLinePool(path) {
   for (const k of aff) { const d = domainOfKind(k); if (d) counts[d] = (counts[d] || 0) + 1; }
   const domain = Object.keys(counts).sort((a, b) => counts[b] - counts[a])[0] || 'offense';
   let pool;
-  if (domain === 'offense') { pool = ['slayer', 'vanguard']; if (aff.includes('crit') || aff.includes('critDmg')) pool.push('assassin'); }
+  if (domain === 'offense') pool = ['slayer', 'vanguard', 'assassin']; // 3 options → all-offense days still spread
   else if (domain === 'motion') pool = ['tempest', 'assassin'];
-  else if (domain === 'mystic') pool = ['afflictor'];
-  else pool = ['wall', 'vanguard'];                 // guard + vigor → bulk/bruiser (never Reaver)
+  else if (domain === 'mystic') pool = ['afflictor', 'tempest'];
+  else pool = ['wall', 'vanguard', 'slayer'];       // guard + vigor → bulk/bruiser/aggressive (never Reaver)
   return pool.filter((l) => !BOUNTY_LINE_BLOCKLIST.has(l));
 }
 // Assign all five slots' lines TOGETHER so a day's archetypes spread out instead of clustering (when
