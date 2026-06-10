@@ -238,15 +238,18 @@ export function migrateSave(o) {
       o.prestige.boons[key] = 5;
     }
   }
-  // Cap the bonus Gu slots a prior reincarnation already granted (bonusSlots — whose ONLY source is the
-  // Insight boon, +1/level) at the same 5, then UNEQUIP any Gu left sitting in the now-removed slots.
+  // Bonus Gu slots (bonusSlots — whose ONLY source is the Sovereign Insight boon, +1/level). Insight's
+  // Gu slot is now LIVE on the CURRENT life, so the PLAYER's bonusSlots is synced to the live boon level
+  // every load (so a level bought in a past session is reflected now). Other characters never gain it;
+  // their (legacy) bonusSlots is just capped at 5. Then UNEQUIP any Gu left in now-removed slots —
   // effectiveStats/battle apply EVERY equipped Gu regardless of the slot cap, so without this trim the
   // over-cap Gu would keep buffing combat while vanishing from the loadout UI (orphaned). Dropped Gu are
-  // not destroyed — they stay in guInv and return to the pickable pool. Kept SEPARATE from the refund
-  // block so saves already migrated once (boon clamped, but loadout stale) still get corrected on load.
+  // not destroyed — they stay in guInv and return to the pickable pool.
+  const insightLvl = (o.prestige && o.prestige.boons && o.prestige.boons.insight) || 0;
   for (const c of (o.roster || [])) {
     if (!c) continue;
-    if ((c.bonusSlots || 0) > 5) c.bonusSlots = 5;
+    if (c.isPlayer) c.bonusSlots = insightLvl;           // live: track the current Insight boon level
+    else if ((c.bonusSlots || 0) > 5) c.bonusSlots = 5;
     if (Array.isArray(c.gu) && c.gu.length > guSlotsOf(c)) c.gu = c.gu.slice(0, guSlotsOf(c));
   }
   // Daily Quests board — backfill on pre-quest saves (starts fresh on next access via ensureDaily).
