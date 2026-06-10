@@ -1987,6 +1987,12 @@ export function viewFloors() {
 // Player-facing patch notes. Add the newest release to the TOP of this list; each entry is
 // { date, title, items: [[heading, html], …] }. HTML is allowed in the item bodies.
 const WHATS_NEW = [
+  { date: 'Jun 10, 2026', title: 'Bounties', items: [
+    ['Bounty board', 'A new <b>賞 Bounties</b> page: a <b>daily-rotating</b> roster of <b>lone raid-boss</b> targets, one per rank band (<b>Common → Legendary</b>). Each wanted-poster card shows the boss’s name, rank, rarity, archetype, Dao path and <b>combat stats</b> (HP · ATK · DEF · SPD).'],
+    ['5 attempts, +1/hour', 'You hold <b>5 attempts</b> that recharge <b>+1 per hour</b> (offline too). Every challenge plays out <b>in the arena</b> like a real assault — no auto-resolve — and spends one attempt win or lose.'],
+    ['Raid-boss targets', 'Each bounty is a tough <b>solo boss</b> — full Gu loadout, a killer move and a fitting <b>archetype line</b> — tuned so a rank/rarity-matched team wins <b>at most ~60%</b> of the time. Higher-rank bounties unlock as you climb the tower (F51 / 101 / 151 / 201).'],
+    ['Rewards', 'A hefty <b style="color:var(--stone)">石 Primeval Stone</b> lump (<b>25×</b> the realm-gate boss clear), <b style="color:var(--jade)">10–50 ✦ Immortal Essence</b>, plus a chance at a random <b>Gu of the boss’s Dao path</b> — 30% at the bounty’s own rank, the remaining 70% sliding down to lower ranks.'],
+  ] },
   { date: 'Jun 10, 2026', title: 'Market', items: [
     ['Bulk buy buttons', 'The <b>Market</b> now has <b>×1 / ×10 / ×100 / ×1000</b> buy-amount buttons — stock up on crafting resources in one click. Each <b>Buy</b> button shows the scaled total cost and greys out when you can’t afford that many.'],
   ] },
@@ -2125,6 +2131,12 @@ export function viewBounties() {
           <div class="bc-arch"><b>${lineName(b.line, b.rarity)}</b> <span class="muted">· ${lineRole(b.line)}</span></div>
           <div class="bc-path">${pathCjk(b.path)} ${pathName(b.path)}</div>
         </div>
+      </div>
+      <div class="bc-stats">
+        <div><span class="sk">HP</span><span class="sv">${fmt(b.unit.maxHp)}</span></div>
+        <div><span class="sk">ATK</span><span class="sv">${fmt(b.unit.atk)}</span></div>
+        <div><span class="sk">DEF</span><span class="sv">${fmt(b.unit.def)}</span></div>
+        <div><span class="sk">SPD</span><span class="sv">${b.unit.spd}</span></div>
       </div>
       <div class="bc-rewards">
         <div class="bc-rtile"><span class="sk">Primeval Stones</span><span class="sv stone">+${fmt(b.rewards.stones)} 石</span></div>
