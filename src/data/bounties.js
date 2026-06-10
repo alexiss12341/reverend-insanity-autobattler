@@ -33,12 +33,19 @@ export const slotUnlockFloor = (i) => (i <= 0 ? 1 : i * 50 + 1);
 // hpMult = extra bulk over a normal gate boss (so a SOLO target survives a full team's focus fire);
 // poolMult = overall invested-pool scale (drives ATK/DEF threat). Kept separate so we fatten the health
 // bar without inflating ATK into one-shots. These are THE balance levers for the whole bounty ladder.
-// (Env overrides exist only for headless balance sweeps — never set in the browser, so defaults ship.)
+// PER SLOT: a lone target is a 6-vs-1, where the boss either out-bursts the team or gets DPS-raced — a
+// knife-edge that differs sharply by rank (the R1 boss has no killer + only 3 Gu, so it needs FAR more
+// bulk to threaten a 6-team than the fully-kitted R5 boss). Tuned (tests/bounties.test.mjs) so a rank-
+// and rarity-MATCHED 6-team wins AT MOST ~60% (target ~45–55%): a genuine raid at every tier.
+// (Env scalars + the buildBounty override exist only for headless balance sweeps — never set in the
+// browser, so the per-slot defaults ship.)
 const envNum = (k, d) => { try { const v = typeof process !== 'undefined' && process.env && process.env[k]; return v ? Number(v) : d; } catch { return d; } };
-// Tuned against an on-level mirror 6-team (tests/bounties.test.mjs): every slot is a winnable raid that
-// costs 2–4 casualties (R1 Common the gentle intro), fights run ~30–65 actions, none stalemate.
-const BOUNTY_HP_MULT = envNum('BOUNTY_HP_MULT', 7);
-const BOUNTY_POOL_MULT = envNum('BOUNTY_POOL_MULT', 0.45);
+const HP_SCALE = envNum('BOUNTY_HP_SCALE', 1), POOL_SCALE = envNum('BOUNTY_POOL_SCALE', 1);
+//                       R1     R2     R3     R4     R5
+const BOUNTY_HP_MULT   = [11,    9,     11,    11,    10];
+const BOUNTY_POOL_MULT = [0.52,  0.45,  0.42,  0.43,  0.53];
+const slotHpMult   = (i) => (BOUNTY_HP_MULT[i]   != null ? BOUNTY_HP_MULT[i]   : 7)    * HP_SCALE;
+const slotPoolMult = (i) => (BOUNTY_POOL_MULT[i] != null ? BOUNTY_POOL_MULT[i] : 0.5)  * POOL_SCALE;
 // Stones scale on the same curve as floor rewards, with a bounty premium (limited attempts = better pay).
 const BOUNTY_STONE_MULT = 6;
 // Immortal Essence (✦) reward: 10·rank → 10 / 20 / 30 / 40 / 50, exactly the design's 10–50 ladder.
@@ -108,7 +115,8 @@ export function bountyRewards(i, path) {
 
 // ---- the build -----------------------------------------------------------------------------------
 // Compose slot `i`'s lone target for calendar day `dayKey`. Deterministic: same day → same target.
-export function buildBounty(i, dayKey) {
+// `tune` (poolMult/hpMult) is an optional override for headless balance sweeps; production passes none.
+export function buildBounty(i, dayKey, tune = {}) {
   const rank = slotRank(i);
   const rarity = slotRarity(i);
   const path = bountyPath(i, dayKey);
@@ -119,7 +127,8 @@ export function buildBounty(i, dayKey) {
   const unit = enemyUnit(floor, name, {
     boss: true, fullGu: true, rng,            // boss → rarity = band cap (= slotRarity) + baked sustain effects + full kit
     forcePath: path, sustain: true,           // one-path resonant kit + a guaranteed self-heal Gu
-    poolMult: BOUNTY_POOL_MULT, hpMult: BOUNTY_HP_MULT,
+    poolMult: tune.poolMult != null ? tune.poolMult : slotPoolMult(i),
+    hpMult: tune.hpMult != null ? tune.hpMult : slotHpMult(i),
     killerArch,
   });
   unit.row = 'front'; unit.lane = 2;          // a lone boss stands front-and-centre
@@ -128,8 +137,8 @@ export function buildBounty(i, dayKey) {
 
 // A full single-wave encounter for slot `i` on `dayKey`, shaped exactly like generateEncounter's output
 // so systems/battle.js resolveEncounter can fight it unchanged.
-export function buildBountyEncounter(i, dayKey) {
-  const b = buildBounty(i, dayKey);
+export function buildBountyEncounter(i, dayKey, tune = {}) {
+  const b = buildBounty(i, dayKey, tune);
   return { floor: b.floor, isBoss: true, isWaveEncounter: false, isBounty: true,
     squad: 'Bounty', bounty: b, waves: [[b.unit]] };
 }

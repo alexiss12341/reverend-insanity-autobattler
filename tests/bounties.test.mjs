@@ -102,7 +102,7 @@ for (let i = 0; i < 5; i++) {
 // ---- the FIGHT is a real, winnable raid ------------------------------------------------------------
 section('bounties: balanced vs an on-level mirror team (winnable, not a stalemate)');
 state.current = newGame('tbounty');
-const TRIALS = 30;
+const TRIALS = 100;   // enough samples that the ≤60% cap check isn't flaky on RNG variance
 for (let i = 0; i < 5; i++) {
   const rank = slotRank(i), rarity = slotRarity(i);
   buildTeam(rank, rarity);
@@ -119,5 +119,6 @@ for (let i = 0; i < 5; i++) {
   if (REPORT) console.log(`  R${rank} ${rarity}: winrate ${(wr * 100).toFixed(0)}% · avg ${avgAct} actions · avg allies lost ${avgLost.toFixed(1)} · capped ${capped}/${TRIALS}`);
   ok(capped === 0, `slot ${i}: fights resolve (no 3000-action stalemate)`);
   ok(wr >= 0.2, `slot ${i}: the raid is winnable by an on-level team (winrate ${(wr * 100).toFixed(0)}%)`);
+  ok(wr <= 0.60, `slot ${i}: AT MOST 60% team win on a rank/rarity-matched team (winrate ${(wr * 100).toFixed(0)}%)`);
   ok(avgLost > 0.5, `slot ${i}: the boss is a real threat (costs casualties — avg ${avgLost.toFixed(1)} lost)`);
 }
