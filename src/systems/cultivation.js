@@ -190,11 +190,13 @@ export function attemptBreakthrough(charId) {
     msg: `${ch.name}'s breakthrough fails — the primeval stones are spent, but the cultivator is unharmed.` };
 }
 
-// Respec: release every allocated attribute point back into the unspent pool for a stone fee.
-// Each point currently invested costs RESPEC_COST_PER_POINT 石 to unbind (so a heavily-built
-// cultivator pays more to reshape). After paying, all five attributes drop to zero and the points
-// become re-distributable. Pure refund — no realm/aptitude change, no risk.
+// Respec: release every allocated attribute point back into the unspent pool for a stone fee plus a
+// flat Immortal Essence toll. Each point currently invested costs RESPEC_COST_PER_POINT 石 to unbind
+// (so a heavily-built cultivator pays more to reshape) AND a flat RESPEC_ESSENCE_COST ✦ regardless of
+// build size. After paying, all five attributes drop to zero and the points become re-distributable.
+// Pure refund — no realm/aptitude change, no risk.
 export const RESPEC_COST_PER_POINT = 1000;
+export const RESPEC_ESSENCE_COST = 100;
 export const respecCost = (ch) => RESPEC_COST_PER_POINT * (ch ? spentPoints(ch) : 0);
 
 export function respecAttributes(charId) {
@@ -203,9 +205,12 @@ export function respecAttributes(charId) {
   const invested = spentPoints(ch);
   if (invested <= 0) return { ok: false, msg: `${ch.name} has no allocated attributes to respec.` };
   const cost = respecCost(ch);
+  const ess = RESPEC_ESSENCE_COST;
   if (S().stones < cost) return { ok: false, msg: `Need ${cost.toLocaleString()} 石 to respec ${ch.name}'s attributes.` };
+  if (S().essence < ess) return { ok: false, msg: `Need ${ess.toLocaleString()} ✦ Immortal Essence to respec ${ch.name}'s attributes.` };
   S().stones -= cost;
+  S().essence -= ess;
   ch.attrs = { str: 0, agi: 0, con: 0, int: 0, luck: 0 };
-  return { ok: true, cost, refunded: invested,
-    msg: `${ch.name}'s attributes reset — ${invested.toLocaleString()} point${invested === 1 ? '' : 's'} unallocated for ${cost.toLocaleString()} 石.` };
+  return { ok: true, cost, ess, refunded: invested,
+    msg: `${ch.name}'s attributes reset — ${invested.toLocaleString()} point${invested === 1 ? '' : 's'} unallocated for ${cost.toLocaleString()} 石 + ${ess.toLocaleString()} ✦.` };
 }
