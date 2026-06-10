@@ -1,13 +1,13 @@
 // Newer features: enemy effects, gacha pity/dismiss, prestige, statuses, path-bound recipes.
 import { ok, section } from './assert.mjs';
-import { state, newGame } from '../src/state.js';
+import { state, newGame, immortalUnlocked } from '../src/state.js';
 import { generateEncounter } from '../src/data/floors.js';
 import { resolveEncounter, applyTeamAuras, teamHeal, cleanseTeam } from '../src/systems/battle.js';
 import { pull, dismiss, pityCount, PITY_CAP, imprint, imprintCandidates, IMPRINT_CAP } from '../src/systems/gacha.js';
 import { effectiveStats, breakthroughCost, breakthroughChance, breakthroughFloorReq, attemptBreakthrough, isInjured, respecAttributes, respecCost, RESPEC_COST_PER_POINT } from '../src/systems/cultivation.js';
 import { addComprehension, injuryMult, resonanceMult } from '../src/systems/dao.js';
 import { prestige, buyBoon, reincarnate, canReincarnate, soulsAward, prestigeCombatMult } from '../src/systems/prestige.js';
-import { rollFloorRewards, teamFortune, teamLuck, dropBonus, dropChance, farmEssenceEV } from '../src/systems/economy.js';
+import { rollFloorRewards, teamFortune, teamLuck, dropBonus, dropChance, farmEssenceEV, rollImmortalStones, immortalGuCount, immortalGuUpkeep, IMM_STONE_UPKEEP_PER_GU } from '../src/systems/economy.js';
 import { statusForPath, STATUS } from '../src/data/status.js';
 import { guList, guEssenceCost, guEssenceCostFor, recipeFor, GU_LIB, guUsingResource, resolveOwned, nextTierOf, signatureGusForPath, pathStatuses, signatureImmortalGu, effectText } from '../src/data/gu.js';
 import { craft, canUpgrade, upgrade } from '../src/systems/crafting.js';
@@ -18,7 +18,7 @@ import { NAMED_HEROES, nameForRarity } from '../src/data/npcs.js';
 import { makeCharacter } from '../src/state.js';
 import { RARITY_ORDER } from '../src/data/rarities.js';
 import { apertureCapacity, apertureGrade, apertureRegenFactor, aptThreshold, aptitudeStepBonus, aptitudePointBonus, playerPool, effAttr, effAptitude, imprintAttrMult, spentPoints, unspentPoints } from '../src/data/attributes.js';
-import { essenceQuality } from '../src/data/realms.js';
+import { essenceQuality, IMMORTAL_START } from '../src/data/realms.js';
 import { affinityName, affinityCompMult, affinityEffectMult, affinityTrait, AFFINITY, AFFINITY_TRAITS, AFFINITY_COMP_MULT,
   LINES, LINE_ASSIGN, LINE_ORDER, lineEffects, lineGuAmp, lineAura, lineName, lineEffectList, lineTierEffects, lineCjk, lineBlurb } from '../src/data/traits.js';
 
@@ -750,4 +750,40 @@ section('features: attribute respec');
   // nothing left to respec → refusal, free of charge
   const r2 = respecAttributes(rc.id);
   ok(!r2.ok && SR.stones === 500, 'respeccing a fresh (unallocated) cultivator fails without charging');
+}
+
+section('features: immortal essence stones — currency + immortal-Gu fuel gate');
+{
+  state.current = newGame('immstone'); const SI = state.current;
+  const me = SI.roster[0]; me.active = true;
+  ok(SI.immortalStones === 0, 'a new game starts with no Immortal Essence Stones');
+
+  // (1) UNLOCK GATE — the currency is inaccessible until a cultivator reaches immortal Rank 6.
+  ok(!immortalUnlocked(), 'a mortal roster has NOT unlocked Immortal Essence Stones');
+  ok(rollImmortalStones(300, false) === 0, 'no 仙石 faucet flows while locked');
+  me.realm = IMMORTAL_START; // Rank 6 Initial — first immortal rank
+  ok(immortalUnlocked(), 'reaching immortal Rank 6 unlocks the currency');
+  ok(rollImmortalStones(300, false) > 0, 'an immortal roster draws 仙石 from floor clears');
+  ok(rollImmortalStones(300, true) > rollImmortalStones(300, false), 'bosses yield more 仙石');
+
+  // (2) FUEL GATE — an immortal Gu (tier 6+) is inert without 仙石, and powers up with it.
+  SI.guInv = [{ uid: 'imm1', guId: 'gu_fire_atk_imm' }]; me.gu = ['imm1'];
+  SI.immortalStones = 0;
+  const inert = effectiveStats(me);
+  ok(inert.atk === inert.atkBase, 'an immortal ATK Gu adds NOTHING while the 仙石 pool is empty');
+  SI.immortalStones = 50;
+  const fueled = effectiveStats(me);
+  ok(fueled.atk > inert.atk && fueled.atk > fueled.atkBase, 'with 仙石 in the pool the immortal Gu powers up ATK');
+
+  // a MORTAL Gu (tier 1-5) is unaffected by the currency
+  SI.guInv.push({ uid: 'mort', guId: 'gu_fire_atk_t3' });
+  me.gu = ['mort']; SI.immortalStones = 0;
+  const m = effectiveStats(me);
+  ok(m.atk > m.atkBase, 'a tier-3 (mortal) Gu still works with an empty 仙石 pool');
+
+  // (3) UPKEEP — each immortal Gu the active team channels costs IMM_STONE_UPKEEP_PER_GU per clear.
+  me.gu = ['imm1'];
+  ok(immortalGuCount() === 1 && immortalGuUpkeep() === IMM_STONE_UPKEEP_PER_GU, 'one immortal Gu → one unit of upkeep');
+  me.gu = ['imm1', 'mort'];
+  ok(immortalGuCount() === 1, 'mortal Gu are not counted toward immortal upkeep');
 }

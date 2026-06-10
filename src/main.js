@@ -4,7 +4,7 @@ import { state, S, newGame, load, save, deleteSave, listSaves, SLOT_KEYS, active
 import { effectiveStats } from './systems/cultivation.js';
 import { resolveEncounter, fightWallMs } from './systems/battle.js';
 import { attemptBreakthrough, respecAttributes, respecCost } from './systems/cultivation.js';
-import { rollFloorRewards, firstClearEssence, rollFarmEssence, applyDrops, buyResource } from './systems/economy.js';
+import { rollFloorRewards, firstClearEssence, rollFarmEssence, applyDrops, buyResource, rollImmortalStones, immortalGuUpkeep, addImmortalStones } from './systems/economy.js';
 import { pull, dismiss, dismissMany, dismissRefund, imprint, imprintCandidates, IMPRINT_CAP, autoImprintAll, duplicateSpares } from './systems/gacha.js';
 import { buyBoon, reincarnate, soulsAward } from './systems/prestige.js';
 import { bumpQuest, claimQuest, claimBonus, DAILY_QUESTS } from './systems/quests.js';
@@ -48,11 +48,17 @@ function distributeRewards(floor, isBoss, fromLog) {
   applyDrops(drops);
   const essence = firstClearEssence(floor, isBoss) + rollFarmEssence(floor, isBoss);
   if (essence) S().essence += essence;
+  // Immortal Essence Stones (仙石): renewable faucet (only flows once the roster is immortal) minus this
+  // clear's immortal-Gu upkeep. `immStones` (gross granted) drives the feed line; the pool floors at 0.
+  const immStones = rollImmortalStones(floor, isBoss);
+  if (immStones) addImmortalStones(immStones);
+  const immUpkeep = immortalGuUpkeep();
+  if (immUpkeep) addImmortalStones(-immUpkeep);
   // Combat no longer grants cultivation XP — mortals advance by spending 石 (see G.attemptBreakthrough).
   // advance frontier if we just cleared the frontier floor
   let advanced = false;
   if (floor === S().frontier && S().frontier < MAX_FLOORS) { S().frontier += 1; advanced = true; }
-  return { stones, drops, essence, advanced };
+  return { stones, drops, essence, immStones, advanced };
 }
 
 function dropSummary(drops) {
@@ -172,8 +178,8 @@ async function runBattle() {
     processImmortals(true);
     if (activeTab === 'battle') {
       UI.logLine(challenging
-        ? `★ FLOOR ${floor} CLEARED! +${r.stones}石${r.essence ? `, +${r.essence}✦ Immortal Essence` : ''}${dropSummary(r.drops)}`
-        : `Cleared F${floor} (+${r.stones}石${r.essence ? `, +${r.essence}✦` : ''})${dropSummary(r.drops)}`, challenging ? 'win' : 'loot');
+        ? `★ FLOOR ${floor} CLEARED! +${r.stones}石${r.essence ? `, +${r.essence}✦ Immortal Essence` : ''}${r.immStones ? `, +${r.immStones} 仙石` : ''}${dropSummary(r.drops)}`
+        : `Cleared F${floor} (+${r.stones}石${r.essence ? `, +${r.essence}✦` : ''}${r.immStones ? `, +${r.immStones} 仙石` : ''})${dropSummary(r.drops)}`, challenging ? 'win' : 'loot');
       if (r.advanced) UI.logLine(`Floor ${S().frontier} is now open.`, 'win');
     }
     if (auto) {                                                  // THIS run was an auto-challenge rung
@@ -272,8 +278,13 @@ function applyOffline(elapsedMs) {
   S().stones += stones;
   S().essence += ess;
   applyDrops(drops);
+  // Immortal Essence Stones (仙石): faucet minus immortal-Gu upkeep, both per win (deterministic, so we
+  // apply them as a lump over the estimated clears). The pool floors at 0; `imm` is the net delta shown.
+  const immBefore = S().immortalStones || 0;
+  S().immortalStones = Math.max(0, immBefore + wins * rollImmortalStones(floor, enc.isBoss) - wins * immortalGuUpkeep());
+  const imm = S().immortalStones - immBefore;
   // (no cultivation XP — breakthroughs are now stone purchases made manually, not auto-leveled)
-  return { eff: wins, stones, ess, drops, hours: (elapsed / 3600000).toFixed(1) };
+  return { eff: wins, stones, ess, imm, drops, hours: (elapsed / 3600000).toFixed(1) };
 }
 
 // ---------- lifecycle ----------
@@ -306,7 +317,7 @@ function onVisibilityChange() {
       const away = secs < 60 ? `${Math.round(secs)}s` : secs < 3600 ? `${Math.round(secs / 60)}m` : `${off.hours}h`;
       const dropN = Object.values(off.drops).reduce((a, n) => a + n, 0);
       UI.refreshTop();
-      UI.toast(`Idle catch-up over ~${away}: ${off.eff.toLocaleString()} clears · +${off.stones.toLocaleString()}石${off.ess ? `, +${off.ess.toLocaleString()}✦` : ''}${dropN ? `, +${dropN.toLocaleString()} resources` : ''}`, 4500, 'loot');
+      UI.toast(`Idle catch-up over ~${away}: ${off.eff.toLocaleString()} clears · +${off.stones.toLocaleString()}石${off.ess ? `, +${off.ess.toLocaleString()}✦` : ''}${off.imm > 0 ? `, +${off.imm.toLocaleString()} 仙石` : ''}${dropN ? `, +${dropN.toLocaleString()} resources` : ''}`, 4500, 'loot');
       if (activeTab === 'battle') UI.renderBattleControls();
       save();
     }
@@ -350,6 +361,7 @@ function showOffline(off) {
     <div class="body">Over ~<b>${off.hours}h</b> your team auto-farmed Floor ${S().farmFloor}:<br>
     • Cleared it <b style="color:var(--jade)">${off.eff.toLocaleString()}</b> times<br>
     • Gathered <b style="color:var(--stone)">${off.stones.toLocaleString()} primeval stones</b> and <b style="color:var(--jade)">${off.ess.toLocaleString()} ✦</b><br>
+    ${off.imm > 0 ? `• Drew <b style="color:var(--immstone)">${off.imm.toLocaleString()} 仙石</b> Immortal Essence Stones<br>` : ''}
     ${dropsLine}</div>
     <div class="right"><button class="primary" onclick="G.closeModal()">Continue</button></div>`);
   UI.refreshTop();
@@ -361,7 +373,7 @@ function renderTitle() {
     const div = document.createElement('div'); div.className = 'slot';
     if (sv) {
       div.innerHTML = `<div><div class="nm">Save ${i + 1} — Frontier Floor ${sv.frontier}</div>
-        <div class="meta">${sv.roster.length} cultivators · ${Math.floor(sv.stones).toLocaleString()} 石 · ${Math.floor(sv.essence)} ✦ · ${Object.keys(sv.uniqueClaimed || {}).length} unique Gu</div>
+        <div class="meta">${sv.roster.length} cultivators · ${Math.floor(sv.stones).toLocaleString()} 石 · ${Math.floor(sv.essence)} ✦${sv.immortalStones > 0 ? ` · ${Math.floor(sv.immortalStones).toLocaleString()} 仙石` : ''} · ${Object.keys(sv.uniqueClaimed || {}).length} unique Gu</div>
         <div class="meta">last played ${new Date(sv.lastSave).toLocaleString()}</div></div>
         <div class="acts"><button class="primary" onclick="G.continueGame(${i})">Continue</button>
         <button class="danger" onclick="G.deleteSlot(${i})">Delete</button></div>`;
@@ -403,13 +415,17 @@ function guPickerListHtml() {
     || pathName(x.gu.daoPath).toLowerCase().includes(q) || effectText(x.gu).toLowerCase().includes(q));
   if (!total) return '<div class="muted small">No spare Gu. Craft some in the Refinery.</div>';
   if (!avail.length) return '<div class="muted small">No spare Gu match this filter.</div>';
+  const immInertNow = (S().immortalStones || 0) <= 0;
   return avail.sort((a, b) => tierOf(b.g) - tierOf(a.g)).map(({ g, gu }) => {
     const t = gu.tier;
+    // Immortal Gu (tier 6+) are inert without Immortal Essence Stones (仙石) — warn before equipping one.
+    const immNote = t >= 6 && immInertNow
+      ? '<div class="gu-ess" style="color:var(--immstone)">仙石 needs Immortal Essence Stones — inert until you gather some</div>' : '';
     return `<div class="pickrow gu-pick"><div class="gp-info">
         <div class="gp-head"><b style="color:var(--t${t})">T${t}</b> <span class="gp-name">${gu.name}</span>
           ${isUnique(gu) ? '<span class="pill unique">UNIQUE</span>' : ''}<span class="gp-path">${pathName(gu.daoPath)}</span></div>
         <div class="gu-eff">${effectText(gu)}</div>
-        <div class="gu-ess">◇ ${guEssenceCost(gu)} essence / use</div></div>
+        <div class="gu-ess">◇ ${guEssenceCost(gu)} essence / use</div>${immNote}</div>
       <button class="primary" onclick="G.equipGu('${guPick.charId}',${guPick.slotIdx},'${g.uid}')">Equip</button></div>`;
   }).join('');
 }

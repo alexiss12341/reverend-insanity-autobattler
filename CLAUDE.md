@@ -41,11 +41,22 @@ Open the URL, pick a save slot, play. Saves use the browser's `localStorage` (3 
 - **Idle**: the team auto-farms a chosen **cleared** floor; each background run takes as long as the
   team actually needs to clear it (paced by the fight's simulated duration, **not** a fixed tick). If
   stuck on the frontier, farm a lower floor to grind, then return. Offline progress is estimated on load.
-- **Two currencies**:
+- **Three currencies**:
   - **Primeval Essence Stones (石)** — buys crafting resources (the **Market** stocks every floor-droppable resource you've *unlocked*: gated by **cleared floors** — you must have beaten the floor a resource drops from — AND your **roster's highest rank** — a resource's rarity tier must be ≤ that rank, e.g. a rank-3 roster gets no tier-4/Epic resources; price climbs steeply per tier, `economy.js resourceCost/marketUnlocked/shopResources`) and funds Gu crafting. (Equipment/weapons/armor were removed for now.) Internally the state field + recipe cost key are `stones` (renamed from `gold`; `state.js migrateSave` carries old saves over), the loot effect kind is `stone_find`, and the top-bar element id is `t-stones`. The brass accent *colour* used for crit popups, win text and the stones readout is the `--stone` CSS variable (`#c79a45`) + its `.stone` style class — it's a colour, not the currency, but shares the name now.
   - **Immortal Essence (✦)** — funds gacha recruitment and ascension. Earned as a lump on the **first
     clear** of a floor (bosses far more), plus a small renewable **trickle from farming any cleared
     floor** (so recruiting a bigger team isn't gated behind progression). Crafting no longer uses it.
+  - **Immortal Essence Stones (仙石)** — the **fuel that powers IMMORTAL-rank Gu** (tier 6+). State field
+    `immortalStones`; top-bar id `t-imm-stones` (hidden until unlocked); colour `--immstone` (`#a874d8`) +
+    `.immstone`. **LOCKED until immortal Rank 6** — `state.js immortalUnlocked()` (any roster cultivator at
+    realm ≥ `IMMORTAL_START`) gates BOTH the top-bar readout AND the faucet, so floors grant none while the
+    roster is mortal. **Faucet**: a renewable per-clear yield (`economy.js rollImmortalStones`, floor-scaled,
+    ×boss + Fortune/Luck/prestige). **Sink/gate**: an immortal Gu is **inert** whenever the pool is empty —
+    `cultivation.js effectiveStats` skips any equipped tier-6+ Gu (no effects, essence, or resonance) when
+    `S().immortalStones ≤ 0`, so it adds nothing in battle. Each clear also burns
+    `economy.js immortalGuUpkeep()` (`IMM_STONE_UPKEEP_PER_GU` × the active team's immortal-Gu count) — netted
+    in `main.js distributeRewards` (live) + `applyOffline` (offline). Mortal Gu (tier 1-5) are unaffected;
+    enemy immortal Gu are built in `floors.js` (not via `effectiveStats`) so they never read this pool.
 - **Gu**: each does exactly ONE thing; only its magnitude scales with tier (1–10). Stat-Gu (atk/def/hp)
   grant a **% of the wielder's attribute base** (so they stay relevant at depth); spd-Gu stay flat.
   Tiers 1–5 common; **tiers 6–10 are unique** (one copy per world, ever).

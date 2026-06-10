@@ -1,7 +1,7 @@
 // Economy: floor rewards (primeval stones + resource drops), first-clear / boss Immortal Essence,
 // and the stone-funded shop (lower-tier resources). Equipment was removed for now.
-import { S, activeTeam } from '../state.js';
-import { teamStoneFind, effectiveStats } from './cultivation.js';
+import { S, activeTeam, immortalUnlocked } from '../state.js';
+import { teamStoneFind, effectiveStats, guOf } from './cultivation.js';
 import { resourcesForFloor, RESOURCES, resourceList, universalRankWeights, BINDER_FAMILIES, binderId } from '../data/resources.js';
 import { rankOf } from '../data/realms.js';
 import { rarityTier } from '../data/rarities.js';
@@ -130,8 +130,34 @@ export const farmEssenceEV = (floor, isBoss) => {
   return Math.min(0.95, farmEssenceChance(floor, isBoss) * (1 + b)) * 1.7 * (1 + b);
 };
 
+// ---- Immortal Essence Stones (仙石) — the fuel for immortal-rank Gu ----
+// A renewable faucet from clearing floors, GATED to immortal cultivation: nothing flows until the
+// roster reaches Rank 6 (immortalUnlocked). Yield is floor-scaled (the immortal band starts at Floor
+// 251) and rides the same boss / Fortune+Luck / prestige multipliers as the stone reward. Tuning knob.
+const IMM_STONE_BASE = 30;     // flat per-clear floor once unlocked
+const IMM_STONE_PER_FLOOR = 0.6; // additional 仙石 per floor of depth
+export function rollImmortalStones(floor, isBoss) {
+  if (!immortalUnlocked()) return 0;
+  const base = (IMM_STONE_BASE + IMM_STONE_PER_FLOOR * floor) * (isBoss ? 3 : 1);
+  return Math.max(1, Math.round(base * (1 + dropBonus()) * prestigeGainMult()));
+}
+
+// Per-clear UPKEEP: every immortal Gu (tier 6+) the ACTIVE team channels burns this much 仙石 each clear,
+// so a heavy immortal loadout is a real drain (run out → those Gu go inert, see cultivation.effectiveStats).
+// The faucet above comfortably covers a normal loadout at appropriate depth; grinding a far-too-low floor
+// with many immortal Gu can run the pool dry. Tuning knob.
+export const IMM_STONE_UPKEEP_PER_GU = 5;
+// How many immortal Gu (tier 6+) the active team has equipped — the upkeep multiplier.
+export function immortalGuCount() {
+  let n = 0;
+  for (const c of activeTeam()) for (const uid of (c.gu || [])) { const g = guOf(uid); if (g && g.tier >= 6) n++; }
+  return n;
+}
+export const immortalGuUpkeep = () => immortalGuCount() * IMM_STONE_UPKEEP_PER_GU;
+
 export function addStones(n) { S().stones += n; }
 export function addEssence(n) { S().essence += n; }
+export function addImmortalStones(n) { S().immortalStones = Math.max(0, (S().immortalStones || 0) + n); }
 export function addResource(id, n) { S().resources[id] = (S().resources[id] || 0) + n; }
 export function applyDrops(drops) { for (const id in drops) addResource(id, drops[id]); }
 

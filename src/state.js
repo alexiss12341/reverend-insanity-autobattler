@@ -3,7 +3,7 @@
 import { NPC_TEMPLATES } from './data/rarities.js';
 import { affinityFor, lineFor } from './data/traits.js';
 import { RESOURCES } from './data/resources.js';
-import { guSlotsOf } from './data/realms.js';
+import { guSlotsOf, IMMORTAL_START } from './data/realms.js';
 
 export const SLOT_KEYS = ['xianxia_save_1', 'xianxia_save_2', 'xianxia_save_3'];
 
@@ -63,6 +63,11 @@ export function newGame(slotKey, playerName = 'Fang Yuan', starter = null) {
     lastSave: Date.now(),
     stones: 15000,
     essence: 50,
+    // Immortal Essence Stones (仙石): the fuel that powers IMMORTAL-rank Gu (tier 6+). They are LOCKED
+    // until the roster includes a Gu Immortal (rank 6+, see immortalUnlocked) — only then do floor clears
+    // grant any — and an immortal Gu goes INERT whenever this pool is empty (systems/cultivation.js
+    // effectiveStats). Each clear also burns a little to keep the team's immortal Gu channelling.
+    immortalStones: 0,
     frontier: 1,             // highest reachable floor (boss of frontier not yet cleared)
     farmFloor: 1,            // floor the idle loop grinds
     clearedFloors: {},       // floor -> true (drives first-clear essence)
@@ -100,6 +105,9 @@ export function save() {
 function migrateSave(o) {
   if (!o) return o;
   if (o.gold != null && o.stones == null) { o.stones = o.gold; delete o.gold; }
+  // Immortal Essence Stones (仙石) — a new currency. Pre-existing saves start with none; they unlock
+  // organically once the save's roster reaches a Gu Immortal (immortalUnlocked).
+  if (o.immortalStones == null) o.immortalStones = 0;
   // Yin-Yang → Qi: rename any held path-resources (resources/Gu/floors now derive from the Qi path).
   if (o.resources) for (const id of Object.keys(o.resources)) {
     if (id.startsWith('res_yinyang_')) {
@@ -226,6 +234,10 @@ export function listSaves() {
 }
 
 export const activeTeam = () => S().roster.filter((c) => c.active);
+// Immortal Essence Stones (仙石) are GATED to immortal cultivation: the currency only becomes
+// accessible — the top-bar readout appears, floor clears start granting it, and immortal Gu can draw on
+// it — once ANY roster cultivator has reached immortal Rank 6 (realm ≥ IMMORTAL_START).
+export const immortalUnlocked = () => !!S() && S().roster.some((c) => c.realm >= IMMORTAL_START);
 // Formation row/lane, tolerant of legacy saves without the fields.
 export const rowOf = (ch) => (ch && ch.row === 'back' ? 'back' : 'front');
 export const laneOf = (ch) => Math.max(0, Math.min(LANES - 1, (ch && ch.lane | 0) || 0));

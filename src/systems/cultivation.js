@@ -49,15 +49,21 @@ export function effectiveStats(ch, activeSet) {
   const inflicts = [];
   const immortal = isImmortalRealm(ch.realm);
   const cultRank = rankOf(ch.realm) + 1; // wielder rank 1-9 → discounts low Gu, surcharges high Gu
+  // IMMORTAL GU FUEL: an immortal-rank Gu (tier 6+) is UNUSABLE without Immortal Essence Stones (仙石) —
+  // when the pool is empty it contributes nothing (no effects, no essence cost, no resonance), exactly
+  // like an un-channelled Gu. The 仙石 faucet only flows once the roster is immortal (state.immortalUnlocked).
+  const immFuel = (S().immortalStones || 0) > 0;
+  const guInert = (gu) => gu.tier >= 6 && !immFuel; // skip immortal Gu while out of 仙石
 
   const pathCount = {};
-  for (const uid of ch.gu) { if (!guOn(uid)) continue; const gu = guOf(uid); if (gu) pathCount[gu.daoPath] = (pathCount[gu.daoPath] || 0) + 1; }
+  for (const uid of ch.gu) { if (!guOn(uid)) continue; const gu = guOf(uid); if (gu && !guInert(gu)) pathCount[gu.daoPath] = (pathCount[gu.daoPath] || 0) + 1; }
   let essCost = 0;
   const guAmp = 1 + lineGuAmp(ch); // Adept line: amplifies EVERY Gu's effect (path-agnostic)
 
   for (const uid of ch.gu) {
     if (!guOn(uid)) continue;
     const gu = guOf(uid); if (!gu) continue;
+    if (guInert(gu)) continue; // immortal Gu with no 仙石 to power it → contributes nothing
     const path = gu.daoPath;
     essCost += guEssenceCostFor(gu, cultRank);
     const marks = marksIn(ch, path);

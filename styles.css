@@ -7,6 +7,7 @@
   --bone:#e9e1d4; --bone-dim:#c4b8a6; --muted:#9c8f7b; --ink:#e9e1d4;
   --blood:#9e1b27; --blood-bright:#c8313c; --blood-deep:#52101a;
   --jade:#3f9e74; --jade-dim:#2c6f52; --stone:#c79a45; --brass:#b08b3e; --essence:#46b3cf;
+  --immstone:#a874d8; /* Immortal Essence Stones (仙石) — a transcendent violet, distinct from stones/essence */
   /* tier colors (Gu / rarity) — warmed to sit on the bone palette */
   --t1:#9aa39a; --t2:#74c0a0; --t3:#5aa7d8; --t4:#b07ad8; --t5:#d8a64a;
   --t6:#e0673e; --t7:#e0463e; --t8:#e03e8a; --t9:#b03ee0; --t10:#f5e58a;
@@ -87,7 +88,7 @@ button.mini{font-size:10px;padding:3px 8px;min-width:0;letter-spacing:0.1em}
 .stat{display:flex;flex-direction:column;line-height:1.15;gap:2px}
 .stat .lbl{font-size:9.5px;letter-spacing:.22em;color:var(--muted);text-transform:uppercase;font-family:var(--mono)}
 .stat .val{font-size:19px;font-family:var(--mono);color:var(--bone);letter-spacing:.02em}
-.stat .val.stone{color:var(--stone)} .stat .val.jade{color:var(--jade)}
+.stat .val.stone{color:var(--stone)} .stat .val.jade{color:var(--jade)} .stat .val.immstone{color:var(--immstone)}
 #topbar .spacer{flex:1}
 #main{display:grid;grid-template-columns:208px 1fr;min-height:0}
 #nav{border-right:1px solid var(--line);padding:18px 12px;display:flex;flex-direction:column;gap:3px;background:rgba(8,6,5,0.5)}

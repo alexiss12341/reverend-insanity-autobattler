@@ -1,6 +1,6 @@
 // UI layer. Renders tabs from state and provides the battle feed, arena, toasts and modal.
 // Event handlers are invoked via the global `G` object defined in main.js (onclick="G.foo()").
-import { S, activeTeam, rowOf, laneOf, frontTeam, backTeam, LANES, tileOccupant, save } from './state.js';
+import { S, activeTeam, rowOf, laneOf, frontTeam, backTeam, LANES, tileOccupant, save, immortalUnlocked } from './state.js';
 import { effectiveStats, guOf, breakthroughCost, breakthroughChance, breakthroughFloorReq, respecCost } from './systems/cultivation.js';
 import { GU_LIB, guList, effectText, isUnique, guEssenceCost, guEssenceCostFor, guUsingResource, guTags, tagLabel, nextTierOf, starterGusForPath, signatureImmortalGu, signatureGusForPath, pathStatuses } from './data/gu.js';
 import { RESOURCES, resourceList, resourceName, rankRarity } from './data/resources.js';
@@ -60,6 +60,13 @@ function secHead(n, title, meta = '') {
 export function refreshTop() {
   $('t-stones').textContent = fmt(S().stones);
   $('t-essence').textContent = fmt(S().essence);
+  // Immortal Essence Stones (仙石) — hidden until a cultivator reaches immortal Rank 6, then shown live.
+  const immWrap = $('t-imm-stones-wrap');
+  if (immWrap) {
+    const unlocked = immortalUnlocked();
+    immWrap.style.display = unlocked ? '' : 'none';
+    if (unlocked) $('t-imm-stones').textContent = fmt(S().immortalStones || 0);
+  }
   $('t-frontier').textContent = 'Floor ' + S().frontier;
   $('t-roster').textContent = S().roster.length;
   $('t-unique').textContent = Object.keys(S().uniqueClaimed).length;
@@ -1136,13 +1143,19 @@ function csGuLoadout(c) {
     }
     const starvedTag = m.sustained ? ''
       : '<div class="gu-starved" title="Beyond your aperture\'s reach at full essence — raise its priority (▲), drop pricier Gu above it, or grow your aperture (INT / rank / aptitude)">✕ starved · stays dark when essence is tight</div>';
-    return `<div class="gu-card${m.sustained ? '' : ' starved'}" style="cursor:pointer" onclick="G.openGuPicker('${c.id}',${i})">
+    // Immortal Gu (tier 6+) are UNUSABLE without Immortal Essence Stones (仙石) — flag them inert when the pool is empty.
+    const immInert = gu.tier >= 6 && (S().immortalStones || 0) <= 0;
+    const immTag = immInert
+      ? `<div class="gu-starved" title="An immortal Gu draws on Immortal Essence Stones (仙石) — your pool is empty, so it is inert. ${immortalUnlocked() ? 'Clear floors to gather more.' : 'Reach immortal Rank 6 to unlock the currency.'}">仙石 ✕ inert · no Immortal Essence Stones</div>`
+      : '';
+    return `<div class="gu-card${m.sustained ? '' : ' starved'}${immInert ? ' starved' : ''}" style="cursor:pointer" onclick="G.openGuPicker('${c.id}',${i})">
       <div class="gu-top"><span>${prio} <b class="tierbadge" style="color:var(--t${gu.tier});border-color:var(--t${gu.tier})">T${gu.tier}</b>${isUnique(gu) ? ' <span class="pill unique">UNIQUE</span>' : ''}</span>
         <span class="gu-reorder">${upBtn}${dnBtn}</span></div>
       <div class="gu-glyph" style="color:${col}">${pathCjk(gu.daoPath)}</div>
       <div class="gu-name">${gu.name}</div>
       <div class="gu-eff">${effectText(gu)}</div>
       <div class="gu-ess"${essCol ? ` style="color:${essCol}"` : ''} title="base ${baseEss}/use · rank ${rank} wielder vs T${gu.tier} Gu">◇ Essence · ${effEss}/use${essArrow}</div>
+      ${immTag}
       ${starvedTag}
       ${ascBtn}
       <div class="gu-foot" style="color:${col}">${pathCjk(gu.daoPath)} · ${pathName(gu.daoPath)} Path</div>
@@ -2120,7 +2133,8 @@ export function viewCodex() {
 
   <details class="cdx-sec" id="cdx-5"><summary>${secHead(5, 'Gu — One Gu, One Power', 'your equipment')}</summary>
   <div class="card"><div class="body">A Gu is a living treasure that does exactly <b>one</b> thing — only its strength scales with its <b>tier (1–10)</b>. Tiers <b>1–5 are common</b> (you may own many); tiers <b style="color:var(--t6)">6–10 are unique</b> — a single copy exists in the entire world.
-  <br><br>Stat Gu (ATK / DEF / HP) grant a <b>percentage</b> of your attribute base, so they stay relevant at any depth. Equip Gu in the loadout slots on a <b>Character</b> sheet — you open with <b>3 slots at Rank 1</b> and gain one per big realm, up to <b>7 at Rank 5</b>.</div></div></details>
+  <br><br>Stat Gu (ATK / DEF / HP) grant a <b>percentage</b> of your attribute base, so they stay relevant at any depth. Equip Gu in the loadout slots on a <b>Character</b> sheet — you open with <b>3 slots at Rank 1</b> and gain one per big realm, up to <b>7 at Rank 5</b>.
+  <br><br><b style="color:var(--immstone)">仙石 Immortal Gu need Immortal Essence Stones.</b> A <b style="color:var(--t6)">tier 6+</b> (immortal) Gu draws on a special currency — <b style="color:var(--immstone)">Immortal Essence Stones (仙石)</b> — that only unlocks once one of your cultivators reaches <b>immortal Rank 6</b>. From then on, clearing floors gathers 仙石, and each clear spends a little to keep your immortal Gu channelling. <b>While your 仙石 pool is empty, every immortal Gu is inert</b> — it adds nothing in battle until you gather more.</div></div></details>
 
   <details class="cdx-sec" id="cdx-6"><summary>${secHead(6, 'The Refinery — Crafting &amp; Refining', 'making Gu')}</summary>
   <div class="card"><div class="body">Every Gu is built from a recipe in the <b>Gu Refinery</b>: <span style="color:var(--stone)">石 Stones</span> + that path's <b>resources</b> (no essence). Resources <b>drop from tower floors</b> and can also be bought in the <b>Market</b>.
