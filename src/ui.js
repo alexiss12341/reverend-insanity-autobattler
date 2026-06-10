@@ -716,6 +716,12 @@ export async function playTimeline(tl, ctx = {}) {
   // refresh the active-status badge row on a block from a timeline snapshot ([{t,n,b,mag}]) — debuffs + buffs
   const drawStatuses = (side, i, list) => { const e = el(side, i); if (!e) return;
     const host = e.querySelector('.ub-status'); if (host) host.innerHTML = (list || []).map(statusChip).join(''); };
+  // Mender aura feedback: float a green heal number on each restored ally + a "cleansed" tag on each
+  // ally that lost a debuff this action (both ride the act's own impact beat, on the actors' side).
+  const floatSupport = (act) => {
+    (act.heals || []).forEach((h) => { const he = el(h.side, h.i); if (he && h.amt > 0) dmgPopup(he, '+' + compact(h.amt), 'heal'); });
+    (act.cleansed || []).forEach((c) => { const ce = el(c.side, c.i); if (ce) dmgPopup(ce, 'cleansed', 'cleanse', 48); });
+  };
   // mirror just the BUFF chips into the side "Cultivators & Gu" panel row for this unit (tp-{side}-{i})
   const drawTraitBuffs = (side, i, list) => {
     const host = document.getElementById(`tp-${side}-${i}`); if (!host) return;
@@ -758,20 +764,20 @@ export async function playTimeline(tl, ctx = {}) {
       drawChg(act.side, act.i, 0, 90); // spent its gauge — snap the charge bar back down
       if (act.ess != null) drawEss(act.side, act.i, act.ess, 110); // essence dips as the unit channels its Gu
       // self-afflictions on the acting unit: a DoT tick number and/or a skip marker (Stun/Frozen)
-      if (ae && act.dots) { let off = 0; for (const t of ['burn', 'poison', 'bleed']) if (act.dots[t]) { dmgPopup(ae, compact(act.dots[t]), 'dot dot-' + t, off); off += 15; } }
+      if (ae && act.dots) { let off = 0; for (const t of ['burn', 'poison', 'bleed']) if (act.dots[t]) { dmgPopup(ae, compact(act.dots[t]), 'dot dot-' + t, off); off += 44; } }
       else if (ae && act.dot > 0) dmgPopup(ae, compact(act.dot), 'dot');
-      if (ae && act.stun) dmgPopup(ae, act.frozen ? 'FROZEN' : 'STUN', act.frozen ? 'stun frozen' : 'stun', act.dot > 0 ? 18 : 0);
+      if (ae && act.stun) dmgPopup(ae, act.frozen ? 'FROZEN' : 'STUN', act.frozen ? 'stun frozen' : 'stun', act.dot > 0 ? 48 : 0);
       // KILLER MOVE: a combo act has no single lunge target — float a name banner on the actor, flash &
       // float damage/status on EACH hit, apply all HP/shield changes, then skip the single-target sequence.
       if (act.combo) {
-        if (ae) { ae.classList.add('lunging', 'casting'); dmgPopup(ae, act.combo.cjk || '✦', 'combo-cjk', -18); dmgPopup(ae, act.combo.name, 'combo', 0); }
+        if (ae) { ae.classList.add('lunging', 'casting'); dmgPopup(ae, act.combo.cjk || '✦', 'combo-cjk', -54); dmgPopup(ae, act.combo.name, 'combo', 0); }
         Audio.crit();
         await _sleep(ACT_MS);
         for (const h of (act.hits || [])) {
           const he = el(h.tgt.side, h.tgt.i); if (!he) continue;
           if (h.dodged) { dmgPopup(he, 'miss', 'miss'); Audio.miss(); }
           else if (h.dmg > 0) { he.classList.add('hit'); dmgPopup(he, compact(h.dmg) + (h.lucky ? '‼' : h.crit ? '!' : ''), h.lucky ? 'crit lucky' : h.crit ? 'crit' : ''); Audio.hit(); }
-          if (h.applied) { let off = 18; for (const t of h.applied) if (STATUS[t]) { dmgPopup(he, STATUS[t].label, 'status status-' + t, off); off += 15; } }
+          if (h.applied) { let off = 52; for (const t of h.applied) if (STATUS[t]) { dmgPopup(he, STATUS[t].label, 'status status-' + t, off); off += 44; } }
         }
         (act.hp || []).forEach((h) => { const u = unit(h.side, h.i); if (u) { if (u.hp > 0 && h.hp <= 0) Audio.death(); u.hp = h.hp; u.shield = h.shield || 0; drawHp(h.side, h.i); } });
         await _sleep(IMPACT_MS + LUNGE_BACK);
@@ -795,9 +801,10 @@ export async function playTimeline(tl, ctx = {}) {
         if (act.dodged) { dmgPopup(te, 'miss', 'miss'); Audio.miss(); }
         else { te.classList.add('hit'); dmgPopup(te, compact(act.dmg) + (act.lucky ? '‼' : act.crit ? '!' : ''), act.lucky ? 'crit lucky' : act.crit ? 'crit' : ''); (act.lucky || act.crit) ? Audio.crit() : Audio.hit(); }
         // every status that landed on the target this hit floats up as its own coloured label
-        if (act.applied) { let off = 18; for (const t of act.applied) if (STATUS[t]) { dmgPopup(te, STATUS[t].label, 'status status-' + t, off); off += 15; } }
+        if (act.applied) { let off = 52; for (const t of act.applied) if (STATUS[t]) { dmgPopup(te, STATUS[t].label, 'status status-' + t, off); off += 44; } }
       }
       (act.hp || []).forEach((h) => { const u = unit(h.side, h.i); if (u) { if (u.hp > 0 && h.hp <= 0) Audio.death(); u.hp = h.hp; u.shield = h.shield || 0; drawHp(h.side, h.i); } });
+      floatSupport(act); // Mender aura: green heal numbers + "cleansed" tags on affected allies
       if (te) await _sleep(IMPACT_MS);
       // 3) RECOVER — the actor slides home, then the board resumes.
       if (ae && te) { ae.style.transition = `transform ${LUNGE_BACK}ms ease`; ae.style.transform = ''; }

@@ -260,28 +260,31 @@ button.mini{font-size:10px;padding:3px 8px;min-width:0;letter-spacing:0.1em}
 .bside.lunge-active{z-index:6}
 .ublock.hit{animation:ubhit .2s}
 @keyframes ubhit{0%{filter:none}30%{filter:brightness(2.4)}100%{filter:none}}
-.dmgpop{position:absolute;left:50%;top:0;transform:translateX(-50%);font-family:var(--mono);font-weight:700;font-size:13px;color:#ff9d8a;pointer-events:none;text-shadow:0 1px 2px #000;animation:dmgrise .72s ease-out forwards;z-index:3}
-.dmgpop.crit{color:var(--stone);font-size:16px}
-.dmgpop.crit.lucky{color:#b79bff;font-size:18px;text-shadow:0 0 6px rgba(157,123,255,0.67),0 1px 2px #000}
+.dmgpop{position:absolute;left:50%;top:0;transform:translateX(-50%);font-family:var(--mono);font-weight:700;font-size:39px;color:#ff9d8a;pointer-events:none;text-shadow:0 2px 4px #000,0 0 3px #000;animation:dmgrise .82s ease-out forwards;z-index:3;white-space:nowrap}
+.dmgpop.crit{color:var(--stone);font-size:48px}
+.dmgpop.crit.lucky{color:#b79bff;font-size:54px;text-shadow:0 0 10px rgba(157,123,255,0.67),0 1px 2px #000}
 .dmgpop.miss{color:var(--muted);font-weight:400}
-.dmgpop.dot{color:#c97bff;font-size:12px}
+.dmgpop.dot{color:#c97bff;font-size:36px}
 /* distinct DoT tick numbers — Burn / Poison / Bleed */
 .dmgpop.dot-burn{color:#ff7a3c} .dmgpop.dot-poison{color:#7bdc5a} .dmgpop.dot-bleed{color:#ff5a6a}
-.dmgpop.stun{color:var(--stone);font-size:11px;letter-spacing:.08em}
+.dmgpop.stun{color:var(--stone);font-size:33px;letter-spacing:.08em}
 .dmgpop.stun.frozen{color:#8fd9ff;text-shadow:0 0 6px rgba(143,217,255,0.53),0 1px 2px #000}
-.dmgpop.status{color:#7fe0ff;font-size:11px;font-weight:400;letter-spacing:.04em}
+.dmgpop.status{color:#7fe0ff;font-size:33px;font-weight:600;letter-spacing:.04em}
 /* inflicted-status labels, coloured per status (match the on-block badges) */
 .dmgpop.status-burn{color:#ff7a3c} .dmgpop.status-poison{color:#7bdc5a} .dmgpop.status-bleed{color:#ff5a6a}
 .dmgpop.status-slow{color:#5aa9e6} .dmgpop.status-weaken{color:#b79bff} .dmgpop.status-sunder{color:#e0a23c}
 .dmgpop.status-frail{color:#ef82c6} .dmgpop.status-stun{color:#e8c777} .dmgpop.status-frozen{color:#8fd9ff}
-@keyframes dmgrise{0%{opacity:0;transform:translate(-50%,6px)}20%{opacity:1}100%{opacity:0;transform:translate(-50%,-24px)}}
+/* Mender aura feedback: green heal numbers + a softer "cleansed" tag */
+.dmgpop.heal{color:#7be0a0;text-shadow:0 0 6px rgba(123,224,160,.45),0 1px 2px #000}
+.dmgpop.cleanse{color:#9fe8d0;font-size:30px;font-weight:600;letter-spacing:.05em}
+@keyframes dmgrise{0%{opacity:0;transform:translate(-50%,6px)}18%{opacity:1}100%{opacity:0;transform:translate(-50%,-64px)}}
 /* KILLER MOVE: shield (temp HP) overlay on the HP bar — translucent cyan hatch, width = shield/maxHP */
 .ub-bar.hp .ub-shield{position:absolute;left:0;top:0;height:100%;z-index:1;pointer-events:none;transition:width .18s ease;
   background:repeating-linear-gradient(135deg,rgba(143,217,255,.55) 0 4px,rgba(143,217,255,.22) 4px 8px);
   box-shadow:inset 0 0 0 1px rgba(143,217,255,.5)}
 /* KILLER MOVE: name banner + path glyph float, and the casting actor's glow */
-.dmgpop.combo{color:var(--stone);font-size:14px;font-weight:700;letter-spacing:.06em;text-shadow:0 0 8px rgba(199,154,69,.6),0 1px 2px #000}
-.dmgpop.combo-cjk{color:#fff0bd;font-size:22px;text-shadow:0 0 10px rgba(199,154,69,.7),0 1px 2px #000}
+.dmgpop.combo{color:var(--stone);font-size:42px;font-weight:700;letter-spacing:.06em;text-shadow:0 0 8px rgba(199,154,69,.6),0 1px 2px #000}
+.dmgpop.combo-cjk{color:#fff0bd;font-size:66px;text-shadow:0 0 10px rgba(199,154,69,.7),0 1px 2px #000}
 .ublock.casting{filter:brightness(1.35) drop-shadow(0 0 8px rgba(199,154,69,.7))}
 /* Team-tab inline killer-move editor (on roster cards) — an open card spans the full grid row for room */
 .card.member.km-open{grid-column:1 / -1}

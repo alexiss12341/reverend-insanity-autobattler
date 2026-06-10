@@ -212,14 +212,15 @@ export function applyTeamAuras(allies) {
 }
 
 // Mender TEAM HEAL: on the actor's OWN action, restore each living ally by % of their own max HP.
-// Mutates ally.hp and records changed units in `touched` (so the timeline floats the heal). No-op for
+// Mutates ally.hp and records changed units in `touched` (so the timeline updates the HP bar); pushes
+// each {unit,amt} restored into `heals` (so the timeline can float a green heal number). No-op for
 // non-Menders. Exported for tests.
-export function teamHeal(actor, allies, touched) {
+export function teamHeal(actor, allies, touched, heals) {
   if (!actor.teamHealPct) return;
   for (const a of allies) {
     if (a.hp <= 0) continue;
     const h = Math.min(a.max, a.hp + Math.round((a.max || 0) * actor.teamHealPct));
-    if (h !== a.hp) { a.hp = h; if (touched) touched.add(a); }
+    if (h !== a.hp) { if (heals) heals.push({ unit: a, amt: h - a.hp }); a.hp = h; if (touched) touched.add(a); }
   }
 }
 
@@ -230,18 +231,21 @@ export const cleanseChanceFor = (rarity) => CLEANSE_CHANCE[rarityTier(rarity) - 
 export const cleanseMaxFor = (rarity) => 1 + Math.max(0, rarityTier(rarity) - 3);
 
 // Mender CLEANSE: on the Mender's action, roll its chance to strip up to `cleanseMax` debuffs from living
-// allies (every battle status here is a debuff). One roll; removes whole status types in order. Exported.
-export function cleanseTeam(actor, allies) {
+// allies (every battle status here is a debuff). One roll; removes whole status types in order. Each ally
+// that loses ≥1 debuff is pushed into `cleansed` (so the timeline can float a "cleansed" tag). Exported.
+export function cleanseTeam(actor, allies, cleansed) {
   if (!actor.cleanseChance || Math.random() >= actor.cleanseChance) return 0;
   let removed = 0;
   for (const a of allies) {
     if (removed >= actor.cleanseMax) break;
     if (a.hp <= 0 || !a.statuses) continue;
+    let any = false;
     for (const k of Object.keys(a.statuses)) {
       if (removed >= actor.cleanseMax) break;
       if (!STATUS[k]) continue; // skip buff_*/taunt_t — cleanse only strips real debuffs
-      delete a.statuses[k]; removed++;
+      delete a.statuses[k]; removed++; any = true;
     }
+    if (any && cleansed) cleansed.push(a);
   }
   return removed;
 }
@@ -571,6 +575,9 @@ function serializeAct(actor, ev) {
     a.hits = (ev.hits || []).map((h) => ({ tgt: h.tgt, dmg: h.dmg, crit: h.crit, lucky: h.lucky, dodged: h.dodged,
       applied: h.applied && h.applied.length ? h.applied.slice() : null }));
   }
+  // Mender aura: per-ally heal numbers + cleansed tags (side/index-addressed) for the arena to float
+  if (ev.heals && ev.heals.length) a.heals = ev.heals.map((h) => ({ side: h.unit.side, i: h.unit.idx, amt: h.amt }));
+  if (ev.cleansed && ev.cleansed.length) a.cleansed = ev.cleansed.map((u) => ({ side: u.side, i: u.idx }));
   return a;
 }
 
@@ -658,7 +665,8 @@ export function resolveEncounter(encounter, onLog, opts = {}) {
           ev = executeKillerMove(u, enemySide, allySide, u.killer, log, pre); ev.dot = dot; ev.dots = dots;
         }
         else { applyChannel(u); ev = takeAction(u, enemySide, log, pre); ev.dot = dot; ev.dots = dots; // gate Gu by essence → this action's active prefix
-          if (u.teamHealPct) { const healed = new Set(ev.touched); teamHeal(u, allies, healed); ev.touched = [...healed]; cleanseTeam(u, allies); } } // Mender: heal + cleanse on its action
+          if (u.teamHealPct) { const healed = new Set(ev.touched); ev.heals = []; ev.cleansed = []; // Mender: heal + cleanse on its action
+            teamHeal(u, allies, healed, ev.heals); cleanseTeam(u, allies, ev.cleansed); ev.touched = [...healed]; } }
         actions++;
         if (rec) step.acts.push(serializeAct(u, ev));
         if (!stunned && u.hp > 0 && Math.random() < (u.fx.extra_turn || 0) && sideAlive(enemySide)) {
