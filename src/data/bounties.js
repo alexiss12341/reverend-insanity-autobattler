@@ -97,22 +97,47 @@ export function bountyName(i, path, line, dayKey) {
   return `${given} the ${theme} ${title}`;
 }
 
-// The combat ARCHETYPE LINE a bounty boss wears, derived from the rolled path's affinity so the archetype
-// MATCHES the path's strengths: the line's dominant effect-domain → a fitting line. That line both grants
-// tiered stat bonuses (data/traits.js LINES) AND drives a matching killer (floors.js LINE_KILLER), so an
-// offense path becomes a Slayer with an offense nuke, a status path an Afflictor with a hex, etc.
-// REAVER is deliberately EXCLUDED here: on a lone raid boss its stacked lifesteal (on top of the baked
-// boss lifesteal + the guaranteed sustain Gu) out-sustains a team's DPS and becomes near-unkillable. So a
-// vigor-leaning path maps to the WALL (bulk/endurance) instead — never a vampire.
-const DOMAIN_LINE = { offense: 'slayer', mystic: 'afflictor', motion: 'tempest', guard: 'wall', vigor: 'wall' };
+// The combat ARCHETYPE LINE a bounty boss wears. The rolled path's dominant effect-domain selects a POOL
+// of fitting lines, and a deterministic day+slot+path pick chooses one — so same-domain bosses still
+// DIVERSIFY (offense isn't always a Slayer) while staying coherent with the path. The line both grants
+// tiered stat bonuses (data/traits.js LINES) AND drives a matching killer (floors.js LINE_KILLER): an
+// offense path → Slayer/Vanguard/Assassin nuke, a status path → an Afflictor hex, a defensive path → a
+// Wall's shield/taunt, etc. REAVER is deliberately EXCLUDED: on a lone raid boss its stacked lifesteal
+// (on top of the baked boss lifesteal + the guaranteed sustain Gu) out-sustains a team's DPS and becomes
+// near-unkillable. A blocklist guarantees it's never fielded.
 const BOUNTY_LINE_BLOCKLIST = new Set(['reaver']); // archetypes too strong for the lone-boss mode
-function bountyLine(path) {
-  const counts = {};
-  for (const k of pathAffinity(path)) { const d = domainOfKind(k); if (d) counts[d] = (counts[d] || 0) + 1; }
+function bountyLinePool(path) {
+  const aff = pathAffinity(path), counts = {};
+  for (const k of aff) { const d = domainOfKind(k); if (d) counts[d] = (counts[d] || 0) + 1; }
   const domain = Object.keys(counts).sort((a, b) => counts[b] - counts[a])[0] || 'offense';
-  const line = DOMAIN_LINE[domain] || 'slayer';
-  return BOUNTY_LINE_BLOCKLIST.has(line) ? 'wall' : line; // safety net — never field a blocked archetype
+  let pool;
+  if (domain === 'offense') { pool = ['slayer', 'vanguard']; if (aff.includes('crit') || aff.includes('critDmg')) pool.push('assassin'); }
+  else if (domain === 'motion') pool = ['tempest', 'assassin'];
+  else if (domain === 'mystic') pool = ['afflictor'];
+  else pool = ['wall', 'vanguard'];                 // guard + vigor → bulk/bruiser (never Reaver)
+  return pool.filter((l) => !BOUNTY_LINE_BLOCKLIST.has(l));
 }
+// Assign all five slots' lines TOGETHER so a day's archetypes spread out instead of clustering (when
+// several rolled paths share a domain). Deterministic greedy: walk the slots in order and pick, from each
+// slot's fitting pool, the line used LEAST across the day so far (hash tiebreak) — every pick still comes
+// from that slot's own path-pool, so it stays coherent. Stable per day (bountyPath is deterministic).
+function assignDayLines(dayKey) {
+  const used = {}, out = {};
+  for (let s = 0; s < BOUNTY_SLOTS; s++) {
+    const path = bountyPath(s, dayKey);
+    const pool = bountyLinePool(path);
+    if (!pool.length) { out[s] = 'slayer'; continue; }
+    let best = pool[0], bestCount = Infinity, bestH = -1;
+    for (const l of pool) {
+      const c = used[l] || 0, h = hash32(`${dayKey}|bline|${s}|${path}|${l}`);
+      if (c < bestCount || (c === bestCount && h > bestH)) { best = l; bestCount = c; bestH = h; }
+    }
+    used[best] = (used[best] || 0) + 1;
+    out[s] = best;
+  }
+  return out;
+}
+const bountyLine = (i, dayKey) => assignDayLines(dayKey)[i] || 'slayer';
 
 // ---- rewards (spec only; granting lives in systems/bounties.js) ----------------------------------
 // Guaranteed (attempts are the limiter): a stone lump + the rolled path's resources at the bounty's rank
@@ -135,7 +160,7 @@ export function buildBounty(i, dayKey, tune = {}) {
   const rarity = slotRarity(i);
   const path = bountyPath(i, dayKey);
   const floor = slotAnchorFloor(i);
-  const line = bountyLine(path);              // archetype line (drives the boss's stat bonuses + killer)
+  const line = bountyLine(i, dayKey);         // archetype line (day-spread; drives stat bonuses + killer)
   const name = bountyName(i, path, line, dayKey);
   const rng = mulberry32(hash32(`${dayKey}|bunit|${i}|${path}`));
   const unit = enemyUnit(floor, name, {
