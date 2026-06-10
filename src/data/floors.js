@@ -21,7 +21,7 @@ import { statusForPath, STATUS, statusDuration } from './status.js';
 import { essenceQualityByRank, guSlots } from './realms.js';
 import { NPC_TEMPLATES, RARITY_ORDER } from './rarities.js';
 import { LINES, AFFINITY_EFFECT_MULT } from './traits.js';
-import { autoConfigure, assemble, guInDomain, KILLER_COST_MULT, KILLER_COOLDOWN, KILLER_MIN_RANK } from './combos.js';
+import { autoConfigure, assemble, guInDomain, archetypeDomain, KILLER_COST_MULT, KILLER_COOLDOWN, KILLER_MIN_RANK } from './combos.js';
 
 const MOBS = ['Bog Toad', 'Stone Lizard', 'Vicious Wolf Gu', 'Bone Sparrow', 'Venom Centipede',
   'Moonbug Swarm', 'Iron Skin Boar', 'Specter Moth', 'Blood Bat', 'Clay Sentinel'];
@@ -78,12 +78,13 @@ const DOMAIN_CORE_KIND = { offense: 'atk', guard: 'def', motion: 'spd', vigor: '
 // loadout repeats the path's Gu to fill every slot so the resonance bonus is real. When `coreDomain` is
 // given (a killer-capable line wants its move to match its role), the loadout is guaranteed to field one
 // Gu of that domain — always possible since every path stocks a Gu for every universal kind.
-function enemyGuLoadout(floor, rank, rng, count, coreDomain) {
+function enemyGuLoadout(floor, rank, rng, count, coreDomain, forcePath, sustain) {
   const allowedPath = (p) => commOf(p).floorReq <= floor;       // only paths this floor has unlocked
   const cap = Math.max(1, Math.min(5, rank + 1));
   const lo = Math.max(1, cap - 2);
   const guOfPath = (p) => guList().filter((g) => g.daoPath === p && g.tier <= cap && g.tier >= lo);
   let candidates = floorThemePaths(floor).filter(allowedPath);
+  if (forcePath && allowedPath(forcePath)) candidates = [forcePath]; // bounty: theme the WHOLE kit to one path
   if (!candidates.length) candidates = THEME_PATHS.filter(allowedPath);
   let pool = [];
   for (let t = 0; t < Math.max(1, candidates.length); t++) {    // pick ONE path that has tier-fit Gu
@@ -103,6 +104,16 @@ function enemyGuLoadout(floor, rank, rng, count, coreDomain) {
     const want = DOMAIN_CORE_KIND[coreDomain];
     const core = pool.find((g) => (g.effects || []).some((e) => e.kind === want)) || pool.find((g) => guInDomain(g, coreDomain));
     if (core) out[0] = core; // replace one slot — stays same-path (drawn from the same pool)
+  }
+  // LONE-BOSS SUSTAIN: a solo raid target must outlast a full team's focus fire — guarantee a self-heal
+  // Gu (lifesteal preferred, else regen) of the SAME path (resonance intact), replacing a non-core slot.
+  if (sustain && out.length) {
+    const has = out.some((g) => (g.effects || []).some((e) => (e.kind === 'lifesteal' || e.kind === 'regen') && (e.value || 0) > 0));
+    if (!has) {
+      const s = pool.find((g) => (g.effects || []).some((e) => e.kind === 'lifesteal' && (e.value || 0) > 0))
+        || pool.find((g) => (g.effects || []).some((e) => e.kind === 'regen' && (e.value || 0) > 0));
+      if (s) out[out.length - 1] = s; // last slot — slot 0 is reserved for the domain core
+    }
   }
   return out;
 }
@@ -315,7 +326,8 @@ function lineKillerConfig(lineId, items, name, floor) {
   const archetype = lk.archs[hash32(name + floor + lineId) % lk.archs.length];
   return { core: core.uid, coreGu: core.gu, support: support.map((it) => it.uid), supportGu: support.map((it) => it.gu), archetype };
 }
-function enemyUnit(floor, name, { boss = false, difficulty = 0, kind = 'beast', rng = Math.random, squad = SQUADS.rabble, fullGu = false } = {}) {
+export function enemyUnit(floor, name, { boss = false, difficulty = 0, kind = 'beast', rng = Math.random, squad = SQUADS.rabble, fullGu = false,
+  forcePath = null, poolMult = 1, hpMult = 1, killerArch = null, sustain = false } = {}) {
   const rank = floorRealm(floor);
   const role = boss ? 'boss' : roleOf(name);
   const lineId = squad.lines[role] || null;       // the squad's trait LINE for this role (drives the killer archetype)
@@ -324,7 +336,9 @@ function enemyUnit(floor, name, { boss = false, difficulty = 0, kind = 'beast', 
   // parity baseline (rank-1→realm pool for this rarity) × difficulty multiplier (within-band sawtooth),
   // ×boss bump — the multiplier scales the INVESTED pool; the rarity floor below stays player-equal.
   const realmIdx = floorRealmIndex(floor);          // discrete sub-stage (Initial→Peak across the band)
-  const pool = enemyPool(realmIdx, rarity, apt) * difficultyMult(floor) * (boss ? BOSS_POOL_MULT : 1);
+  // poolMult is the BOUNTY raid-boss knob: an extra multiplier on the invested pool on top of the
+  // within-band sawtooth + boss bump (1 = no change, so ordinary floor enemies are unaffected).
+  const pool = enemyPool(realmIdx, rarity, apt) * difficultyMult(floor) * (boss ? BOSS_POOL_MULT : 1) * (poolMult || 1);
   const attrs = roleAttrs(role, pool);            // invested points, distributed across the five attributes by role
   const floorA = baseAttr(rarity);                // …plus the SAME per-attribute rarity floor a player gets
   for (const k in attrs) attrs[k] += floorA;
@@ -338,9 +352,11 @@ function enemyUnit(floor, name, { boss = false, difficulty = 0, kind = 'beast', 
   // ordinary foes carry fewer (cultivators a kit, beasts a couple of wild Gu).
   const guCount = fullGu ? guSlots(rankPeakRealm(rank))
     : cultivator ? Math.min(4, 2 + Math.floor(rank / 3)) : Math.min(2, 1 + Math.floor(rank / 4));
-  // a killer-capable line steers the loadout to field a core of its favored domain (so its move fits its role)
-  const coreDomain = (rank >= KILLER_MIN_RANK && lineId && LINE_KILLER[lineId]) ? LINE_KILLER[lineId].domain : null;
-  const loadout = wantGu ? enemyGuLoadout(floor, rank, rng, guCount, coreDomain) : [];
+  // a killer-capable line steers the loadout to field a core of its favored domain (so its move fits its
+  // role). A forced bounty killer pins the core domain to that archetype's domain instead.
+  const coreDomain = (killerArch ? archetypeDomain(killerArch) : null)
+    || ((rank >= KILLER_MIN_RANK && lineId && LINE_KILLER[lineId]) ? LINE_KILLER[lineId].domain : null);
+  const loadout = wantGu ? enemyGuLoadout(floor, rank, rng, guCount, coreDomain, forcePath, sustain) : [];
   const affPath = (loadout[0] && loadout[0].daoPath) || themePath(name); // DAO PATH AFFINITY trait (its theme path)
   const RATE_MAP = { crit: 'crit', critDmg: 'critDamage', critRes: 'critResist', statusRes: 'statusResist',
     evasion: 'dodge', hit: 'hitChance', armorPen: 'armorPen', lifesteal: 'lifesteal', thorns: 'thorns',
@@ -396,7 +412,7 @@ function enemyUnit(floor, name, { boss = false, difficulty = 0, kind = 'beast', 
     // association the old single-pass build used, so the full-loadout tier is byte-identical to before.
     let aM = g.aM * cAtk, dM = g.dM * cDef, hM = g.hM * cHp, sM = g.sM;
     if (lb) { aM *= 1 + (lb.atkPct || 0); dM *= 1 + (lb.defPct || 0); hM *= 1 + (lb.hpPct || 0); sM *= 1 + (lb.spdPct || 0); }
-    const maxHp = Math.round(base.maxHp * hM);
+    const maxHp = Math.round(base.maxHp * hM * (hpMult || 1));   // hpMult = the BOUNTY bulk knob (1 elsewhere)
     const atk = Math.round(base.atk * aM);
     const def = Math.round(base.def * dM);
     const spd = Math.max(1, Math.round(base.spd * sM));
@@ -450,7 +466,14 @@ function enemyUnit(floor, name, { boss = false, difficulty = 0, kind = 'beast', 
   let killer = null, comboCost = 0;
   if (rank >= KILLER_MIN_RANK) {
     const items = loadout.map((g, i) => ({ uid: 'e' + i, gu: g }));
-    const autoK = lineKillerConfig(lineId, items, name, floor) || autoConfigure(items); // line-coherent first, generic fallback
+    let autoK = null;
+    if (killerArch) {                               // bounty: force a specific killer archetype off the loadout
+      const dom = archetypeDomain(killerArch);
+      const core = items.find((it) => guInDomain(it.gu, dom));
+      const support = core ? items.filter((it) => it !== core && it.gu.daoPath === core.gu.daoPath) : [];
+      if (core && support.length >= 2) autoK = { archetype: killerArch, coreGu: core.gu, supportGu: support.map((it) => it.gu) };
+    }
+    autoK = autoK || lineKillerConfig(lineId, items, name, floor) || autoConfigure(items); // line-coherent, then generic
     if (autoK) {
       const spec = assemble(autoK.archetype, autoK.coreGu, autoK.supportGu);
       if (spec) { killer = spec; comboCost = Math.round(KILLER_COST_MULT * [autoK.coreGu, ...autoK.supportGu].reduce((s, g) => s + guEssenceCostFor(g, rank), 0)); }

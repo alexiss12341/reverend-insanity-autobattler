@@ -7,6 +7,7 @@ await import('./formation.test.mjs');
 await import('./immortal.test.mjs');
 await import('./features.test.mjs');
 await import('./killer.test.mjs');
+await import('./bounties.test.mjs');
 
 console.log(`\n${'='.repeat(40)}\n${T.pass} passed, ${T.fail} failed\n`);
 process.exit(T.fail ? 1 : 0);
