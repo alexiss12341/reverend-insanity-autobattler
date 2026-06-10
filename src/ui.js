@@ -1958,8 +1958,12 @@ export function viewFloors() {
 // Player-facing patch notes. Add the newest release to the TOP of this list; each entry is
 // { date, title, items: [[heading, html], …] }. HTML is allowed in the item bodies.
 const WHATS_NEW = [
+  { date: 'Jun 10, 2026', title: 'Cultivation', items: [
+    ['Attribute Respec', 'Regret a build? A new <b>Respec</b> button on each cultivator’s <b>Character</b> sheet releases <b>all</b> of their allocated attribute points back into the unspent pool — ready to redistribute freely — for <b style="color:var(--stone)">1,000 石</b> per invested point.'],
+  ] },
   { date: 'Jun 10, 2026', title: 'Balance', items: [
     ['Sovereign Insight nerf', 'The <b>Sovereign Insight</b> prestige boon has been reined in: it is now <b>capped at 5 levels</b> (previously uncapped), and its purchase <b>cost has been increased to 4×</b>. <b>Sovereign Might</b> and <b>Sovereign Fortune</b> are unchanged.'],
+    ['Dismiss refund nerf', 'The <b style="color:var(--jade)">✦ Immortal Essence</b> refunded for <b>dismissing</b> a recruit has been cut to <b>a quarter</b> of its former value, across every rarity.'],
   ] },
   { date: 'Jun 9, 2026', title: 'Daily Quests', items: [
     ['Daily Quests', 'A new <b>日 Quests</b> page in the sidebar with five daily goals — win battles, refine Gu, recruit, breakthrough and shop the Market. Each pays <b style="color:var(--jade)">✦ Immortal Essence</b> on <b>claim</b>, and the board <b>resets every day at midnight</b>.'],
