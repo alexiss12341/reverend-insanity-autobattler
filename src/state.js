@@ -4,6 +4,7 @@ import { NPC_TEMPLATES } from './data/rarities.js';
 import { affinityFor, lineFor } from './data/traits.js';
 import { RESOURCES } from './data/resources.js';
 import { guSlotsOf, IMMORTAL_START } from './data/realms.js';
+import { GU_LIB } from './data/gu.js';
 
 export const SLOT_KEYS = ['xianxia_save_1', 'xianxia_save_2', 'xianxia_save_3'];
 
@@ -68,6 +69,9 @@ export function newGame(slotKey, playerName = 'Fang Yuan', starter = null) {
     // grant any — and an immortal Gu goes INERT whenever this pool is empty (systems/cultivation.js
     // effectiveStats). Each clear also burns a little to keep the team's immortal Gu channelling.
     immortalStones: 0,
+    // Born-true so a fresh game is never swept by migrateSave's one-time legacy immortal-Gu purge (a new
+    // cultivator opens with only a rank-1 starter Gu — nothing immortal to wipe). See migrateSave.
+    immGuPurged: true,
     frontier: 1,             // highest reachable floor (boss of frontier not yet cleared)
     farmFloor: 1,            // floor the idle loop grinds
     clearedFloors: {},       // floor -> true (drives first-clear essence)
@@ -102,7 +106,7 @@ export function save() {
 
 // Migrate older saves to the current schema. Currently: the `gold` currency was renamed to `stones`
 // (Primeval Essence Stones) — carry the old balance over so existing saves keep their wealth.
-function migrateSave(o) {
+export function migrateSave(o) {
   if (!o) return o;
   if (o.gold != null && o.stones == null) { o.stones = o.gold; delete o.gold; }
   // Immortal Essence Stones (仙石) — a new currency. Pre-existing saves start with none; they unlock
@@ -144,6 +148,31 @@ function migrateSave(o) {
     // the character's free first pick).
     if (c.killerArchUnlocked == null || typeof c.killerArchUnlocked !== 'object') c.killerArchUnlocked = {};
     if (c.killer && c.killer.archetype) c.killerArchUnlocked[c.killer.archetype] = true;
+  }
+  // ONE-TIME legacy purge: immortal Gu (tier 6+) are now gated by the Immortal Essence Stones currency.
+  // Wipe EVERY immortal Gu a pre-currency save holds — equipped on a character OR sitting in inventory —
+  // release their world-unique claims, scrub any killer-move references, and compensate the player a flat
+  // 2250 ✦ Immortal Essence. Guarded by `immGuPurged` so it runs exactly ONCE per save and never touches
+  // immortal Gu obtained afterward (newGame is born-purged). The compensation pays only when something was
+  // actually wiped, so a save that never held an immortal Gu gets nothing but the flag.
+  if (!o.immGuPurged) {
+    const isImm = (it) => it && GU_LIB[it.guId] && GU_LIB[it.guId].tier >= 6; // immortal = tier 6+
+    const removed = new Set(), removedGuIds = new Set();
+    for (const it of (o.guInv || [])) if (isImm(it)) { removed.add(it.uid); removedGuIds.add(it.guId); }
+    if (removed.size) {
+      o.guInv = (o.guInv || []).filter((it) => !removed.has(it.uid));
+      for (const c of (o.roster || [])) {
+        if (!c) continue;
+        if (Array.isArray(c.gu)) c.gu = c.gu.filter((u) => !removed.has(u)); // unequip wiped Gu
+        if (c.killer) {                                                      // scrub killer-move references
+          if (c.killer.core && removed.has(c.killer.core)) { c.killer.core = null; c.killer.support = []; }
+          if (Array.isArray(c.killer.support)) c.killer.support = c.killer.support.filter((u) => !removed.has(u));
+        }
+      }
+      if (o.uniqueClaimed) for (const id of removedGuIds) delete o.uniqueClaimed[id]; // release the unique claims
+      o.essence = (o.essence || 0) + 2250;                                  // compensation
+    }
+    o.immGuPurged = true;
   }
   // Onboarding (First-Steps widget + tab tips) is for genuinely new players only. Any save that predates
   // it already belongs to someone who knows the game — mark it onboarded so nothing pops up for veterans.

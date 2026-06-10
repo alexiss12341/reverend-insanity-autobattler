@@ -56,7 +56,10 @@ Open the URL, pick a save slot, play. Saves use the browser's `localStorage` (3 
     `S().immortalStones ≤ 0`, so it adds nothing in battle. Each clear also burns
     `economy.js immortalGuUpkeep()` (`IMM_STONE_UPKEEP_PER_GU` × the active team's immortal-Gu count) — netted
     in `main.js distributeRewards` (live) + `applyOffline` (offline). Mortal Gu (tier 1-5) are unaffected;
-    enemy immortal Gu are built in `floors.js` (not via `effectiveStats`) so they never read this pool.
+    enemy immortal Gu are built in `floors.js` (not via `effectiveStats`) so they never read this pool. A
+    **one-time `state.js migrateSave` purge** (guarded by `immGuPurged`, born-true in `newGame`) wipes every
+    immortal Gu a pre-currency save held — equipped or in inventory — releasing their unique claims and
+    scrubbing killer-move references, and pays a flat **2250 ✦ Immortal Essence** in compensation.
 - **Gu**: each does exactly ONE thing; only its magnitude scales with tier (1–10). Stat-Gu (atk/def/hp)
   grant a **% of the wielder's attribute base** (so they stay relevant at depth); spd-Gu stay flat.
   Tiers 1–5 common; **tiers 6–10 are unique** (one copy per world, ever).

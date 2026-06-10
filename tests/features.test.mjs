@@ -1,6 +1,6 @@
 // Newer features: enemy effects, gacha pity/dismiss, prestige, statuses, path-bound recipes.
 import { ok, section } from './assert.mjs';
-import { state, newGame, immortalUnlocked } from '../src/state.js';
+import { state, newGame, immortalUnlocked, migrateSave } from '../src/state.js';
 import { generateEncounter } from '../src/data/floors.js';
 import { resolveEncounter, applyTeamAuras, teamHeal, cleanseTeam } from '../src/systems/battle.js';
 import { pull, dismiss, pityCount, PITY_CAP, imprint, imprintCandidates, IMPRINT_CAP } from '../src/systems/gacha.js';
@@ -795,4 +795,39 @@ section('features: immortal essence stones — currency + immortal-Gu fuel gate'
   ok(immortalGuCount() === 1 && immortalGuUpkeep() === IMM_STONE_UPKEEP_PER_GU, 'one immortal Gu → one unit of upkeep');
   me.gu = ['imm1', 'mort'];
   ok(immortalGuCount() === 1, 'mortal Gu are not counted toward immortal upkeep');
+}
+
+section('features: legacy immortal-Gu purge migration (one-time)');
+{
+  // simulate a PRE-currency save: clear the born-true flag, then stock immortal + mortal Gu
+  const sv = newGame('purge'); delete sv.immGuPurged;
+  const me = sv.roster[0];
+  sv.guInv = [
+    { uid: 'i1', guId: 'gu_fire_atk_imm' },   // immortal — equipped + killer core
+    { uid: 'm1', guId: 'gu_fire_atk_t3' },     // mortal — must survive
+    { uid: 'i2', guId: 'gu_metal_atk_imm' },   // immortal — inventory + killer support
+  ];
+  me.gu = ['i1', 'm1'];
+  me.killer = { core: 'i1', support: ['i2', 'm1'], archetype: 'slayer' };
+  sv.uniqueClaimed = { gu_fire_atk_imm: true, gu_metal_atk_imm: true };
+  const essBefore = sv.essence;
+
+  const out = migrateSave(sv);
+  ok(out.guInv.length === 1 && out.guInv[0].guId === 'gu_fire_atk_t3', 'only the mortal Gu remains in inventory');
+  ok(!me.gu.includes('i1') && me.gu.includes('m1'), 'the equipped immortal Gu is unequipped, the mortal one kept');
+  ok(me.killer.core === null && me.killer.support.length === 0, 'killer move cleared when its core was a wiped immortal Gu');
+  ok(!out.uniqueClaimed.gu_fire_atk_imm && !out.uniqueClaimed.gu_metal_atk_imm, 'the wiped immortal Gu release their unique claims');
+  ok(out.essence === essBefore + 2250, 'compensated a flat 2250 ✦ Immortal Essence');
+  ok(out.immGuPurged === true, 'the purge marks itself done');
+
+  // idempotent — a second load wipes nothing and pays nothing more
+  const essAfter = out.essence;
+  migrateSave(out);
+  ok(out.essence === essAfter, 'the purge is one-time (no repeat compensation)');
+
+  // a save that never held an immortal Gu is flagged but NOT compensated
+  const clean = newGame('purge2'); delete clean.immGuPurged;
+  const e0 = clean.essence;
+  migrateSave(clean);
+  ok(clean.immGuPurged === true && clean.essence === e0, 'a save with no immortal Gu is flagged but not paid');
 }
