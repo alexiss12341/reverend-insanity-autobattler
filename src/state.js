@@ -73,7 +73,9 @@ export function newGame(slotKey, playerName = 'Fang Yuan', starter = null) {
     equipment: [],           // owned equipment items [{ uid, name, rarity, slot, stats }]
     stats: { battles: 0, wins: 0, pulls: 0, crafts: 0, floorsCleared: 0 },
     gachaPity: 0,            // pulls since last Epic+ (gacha pity)
-    prestige: { souls: 0, reincarnations: 0, boons: { might: 0, fortune: 0, insight: 0 } },
+    // mfRebalanced: born-true so a new game's Might/Fortune (bought at the current 5×-higher price) is
+    // never re-priced by migrateSave's one-shot legacy recalibration. See migrateSave.
+    prestige: { souls: 0, reincarnations: 0, boons: { might: 0, fortune: 0, insight: 0 }, mfRebalanced: true },
     // First-run onboarding: the floating First-Steps widget + first-visit tab tips. New games start active;
     // existing saves are marked already-onboarded in migrateSave so veterans never see either.
     // `rewarded` is the persistent one-time guard for the tutorial-completion essence bonus.
@@ -155,6 +157,24 @@ function migrateSave(o) {
     for (let k = 6; k <= o.prestige.boons.insight; k++) refund += 5 * k;
     o.prestige.souls = (o.prestige.souls || 0) + refund;
     o.prestige.boons.insight = 5;
+  }
+  // Sovereign Might & Fortune now cost 5× more per level (base 3 → 15). For a legacy save, recompute the
+  // souls it actually spent at the OLD price (Σ level k = 3·k), re-derive the highest level those souls
+  // buy at the NEW price (Σ level k = 15·k), and refund the leftover. NOT idempotent (it assumes old-
+  // price levels), so it's gated by a one-shot flag — set here after running, and born-true in newGame so
+  // games created at the new price are never re-priced.
+  if (o.prestige && o.prestige.boons && !o.prestige.mfRebalanced) {
+    const OLD_BASE = 3, NEW_BASE = 15;
+    const cumNew = (n) => NEW_BASE * n * (n + 1) / 2; // Σ new cost of levels 1..n
+    for (const key of ['might', 'fortune']) {
+      const lvl = o.prestige.boons[key] || 0;
+      if (lvl <= 0) continue;
+      const spent = OLD_BASE * lvl * (lvl + 1) / 2;     // souls actually paid at the old price
+      let n = 0; while (cumNew(n + 1) <= spent) n++;     // highest level affordable at the new price
+      o.prestige.boons[key] = n;
+      o.prestige.souls = (o.prestige.souls || 0) + (spent - cumNew(n));
+    }
+    o.prestige.mfRebalanced = true;
   }
   // Cap the bonus Gu slots a prior reincarnation already granted (bonusSlots — whose ONLY source is the
   // Insight boon, +1/level) at the same 5, then UNEQUIP any Gu left sitting in the now-removed slots.

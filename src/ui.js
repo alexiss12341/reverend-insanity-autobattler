@@ -1959,7 +1959,8 @@ export function viewFloors() {
 // { date, title, items: [[heading, html], …] }. HTML is allowed in the item bodies.
 const WHATS_NEW = [
   { date: 'Jun 10, 2026', title: 'Balance', items: [
-    ['Sovereign Insight nerf', 'The <b>Sovereign Insight</b> prestige boon has been reined in: it is now <b>capped at 5 levels</b> (previously uncapped), and its purchase <b>cost has been increased to 4×</b>. <b>Sovereign Might</b> and <b>Sovereign Fortune</b> are unchanged.'],
+    ['Sovereign Insight nerf', 'The <b>Sovereign Insight</b> prestige boon has been reined in: it is now <b>capped at 5 levels</b> (previously uncapped), and its purchase <b>cost has been increased to 4×</b>.'],
+    ['Sovereign Might &amp; Fortune nerf', '<b>Sovereign Might</b> and <b>Sovereign Fortune</b> now cost <b>5× more per level</b>. Existing prestige levels have been <b>recalibrated</b> to what your already-spent souls buy at the new price, and any <b>leftover souls are refunded</b> — so nothing is lost, your boons just sit at a level matching the new cost.'],
   ] },
   { date: 'Jun 9, 2026', title: 'Daily Quests', items: [
     ['Daily Quests', 'A new <b>日 Quests</b> page in the sidebar with five daily goals — win battles, refine Gu, recruit, breakthrough and shop the Market. Each pays <b style="color:var(--jade)">✦ Immortal Essence</b> on <b>claim</b>, and the board <b>resets every day at midnight</b>.'],
