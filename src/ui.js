@@ -349,15 +349,15 @@ export function reincarnateArchetypePicker() {
 }
 
 // ===== ONE-TIME RE-PICK: an existing player who never chose a Dao affinity/archetype picks both =====
-// Reuses the starter pickers, UNRESTRICTED (every non-locked path; all archetypes). Stamps the CURRENT
-// player (no new game), gated to fire once via state.affinityChosen (main.js repickStart/repickArchetype).
+// Reuses the starter pickers with the SAME path set the new-game picker offers (common paths, floorReq
+// <= 50) and all archetypes. Stamps the CURRENT player (no new game), gated to fire once via
+// state.affinityChosen (main.js repickStart/repickArchetype).
 export function repickAffinityPicker() {
-  const paths = pathList().filter((p) => !isPathLocked(p.id)); // every playable path — no floor/comp gate
+  // Omit `paths` so it inherits the new-game starter set (pathList, non-locked, floorReq <= 50).
   return starterPathPicker({
-    paths,
     onPick: 'G.repickAffinity',
     title: 'Choose your Dao Affinity',
-    intro: `Your cultivator never set a <b>Dao Affinity</b>. Choose one now — <b>any path</b>, no restrictions. Affinity grants <b>+${Math.round((AFFINITY_EFFECT_MULT - 1) * 100)}% effect</b> and <b>+${Math.round((AFFINITY_COMP_MULT - 1) * 100)}% comprehension</b> for that path's Gu. This is a one-time choice.`,
+    intro: `Your cultivator never set a <b>Dao Affinity</b>. Choose one of the foundational paths now. Affinity grants <b>+${Math.round((AFFINITY_EFFECT_MULT - 1) * 100)}% effect</b> and <b>+${Math.round((AFFINITY_COMP_MULT - 1) * 100)}% comprehension</b> for that path's Gu. This is a one-time choice.`,
     footer: '<div class="right"><span class="muted small">Pick a path to continue →</span></div>',
   });
 }
@@ -2037,7 +2037,7 @@ export function viewFloors() {
 // { date, title, items: [[heading, html], …] }. HTML is allowed in the item bodies.
 const WHATS_NEW = [
   { date: 'Jun 11, 2026', title: 'Set your Dao Affinity', items: [
-    ['One-time affinity & archetype pick', 'Older cultivators who never chose a <b>Dao Affinity</b> or <b>archetype</b> (their traits were canon defaults) are now asked to pick both <b>once</b> on load — <b>any path, any archetype, no restrictions</b>. The choice is stamped onto your existing character; nothing else about your save changes.'],
+    ['One-time affinity & archetype pick', 'Older cultivators who never chose a <b>Dao Affinity</b> or <b>archetype</b> (their traits were canon defaults) are now asked to pick both <b>once</b> on load — from the <b>same foundational Dao paths and archetypes a new game offers</b>. The choice is stamped onto your existing character; nothing else about your save changes.'],
   ] },
   { date: 'Jun 11, 2026', title: 'Reincarnation', items: [
     ['Re-choose your path on rebirth', 'Reincarnating now lets you <b>re-found your cultivator</b>: enter a <b>new name</b>, pick a <b>new archetype</b>, and choose a <b>new Dao Affinity</b> for the life to come.'],
