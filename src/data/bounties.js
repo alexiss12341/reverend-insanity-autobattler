@@ -48,8 +48,10 @@ const BOUNTY_HP_MULT   = [10,    8,     8,     10,    11];
 const BOUNTY_POOL_MULT = [0.45,  0.40,  0.45,  0.45,  0.50];
 const slotHpMult   = (i) => (BOUNTY_HP_MULT[i]   != null ? BOUNTY_HP_MULT[i]   : 7)    * HP_SCALE;
 const slotPoolMult = (i) => (BOUNTY_POOL_MULT[i] != null ? BOUNTY_POOL_MULT[i] : 0.5)  * POOL_SCALE;
-// Stones scale on the same curve as floor rewards, with a bounty premium (limited attempts = better pay).
-const BOUNTY_STONE_MULT = 6;
+// Stones = a big premium on the rank's REALM-GATE boss clear (limited attempts → premium pay). The
+// gate-boss base mirrors economy.js rollFloorRewards: (10 + gateFloor×4) × 4 (the ×4 boss factor).
+const BOUNTY_STONE_GATE_MULT = 25;
+const realmGateBossStone = (floor) => (10 + floor * 4) * 4;  // base stones a boss clear of that gate floor pays
 // Immortal Essence (✦) reward: 10·rank → 10 / 20 / 30 / 40 / 50, exactly the design's 10–50 ladder.
 export const bountyEssence = (i) => 10 * slotRank(i);
 
@@ -143,8 +145,8 @@ const bountyLine = (i, dayKey) => assignDayLines(dayKey)[i] || 'slayer';
 // (a reliable source of that path's crafting mats) + 10·rank ✦ Immortal Essence.
 export function bountyRewards(i, path) {
   const rank = slotRank(i);
-  const floor = slotAnchorFloor(i);
-  const stones = Math.round((10 + floor * 4) * BOUNTY_STONE_MULT);
+  const floor = slotAnchorFloor(i);             // = the rank's realm-gate floor
+  const stones = realmGateBossStone(floor) * BOUNTY_STONE_GATE_MULT;  // 25× the gate boss's stone yield
   const drops = {};
   const qty = 2 + rank;                                   // 3..7 of each granted type
   for (const r of resourcesForPath(path).filter((r) => r.rank === rank).slice(0, 2)) drops[r.id] = qty;
