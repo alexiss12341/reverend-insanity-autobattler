@@ -12,7 +12,7 @@ import { attemptsLeft, spendAttempt, slotUnlocked, bountyEncounter, grantBountyR
 import { craft, upgrade } from './systems/crafting.js';
 import { generateEncounter, isBossFloor, MAX_FLOORS } from './data/floors.js';
 import { guOf } from './systems/cultivation.js';
-import { GU_LIB, effectText, guEssenceCost, isUnique } from './data/gu.js';
+import { GU_LIB, effectText, guEssenceCost, isUnique, starterGusForPath } from './data/gu.js';
 import { pathName } from './data/daoPaths.js';
 import { autoConfigure, guInDomain, archetypeDomain, ARCHETYPES, KILLER_ARCH_COST } from './data/combos.js';
 import { resourceName, RESOURCES } from './data/resources.js';
@@ -866,9 +866,25 @@ const G = {
     pendingReincarnate.name = name || 'Fang Yuan';
     UI.showModal(UI.reincarnatePathPicker(), 'wide');
   },
-  reincarnatePath(pid) { if (pendingReincarnate) { pendingReincarnate.path = pid; UI.showModal(UI.reincarnateArchetypePicker(), 'wide'); } },
+  // Step 3: chosen affinity → a rank-1 Gu of that NEW path (skip straight to archetype if the path has
+  // no curated starter Gu, e.g. a deep esoteric path, so the chain can never dead-end).
+  reincarnatePath(pid) {
+    if (!pendingReincarnate) return;
+    pendingReincarnate.path = pid; delete pendingReincarnate.guId;
+    if (starterGusForPath(pid).length) UI.showModal(UI.reincarnateGuPicker(pid), 'wide');
+    else UI.showModal(UI.reincarnateArchetypePicker(), 'wide');
+  },
   reincarnatePathBack() { if (pendingReincarnate) UI.showModal(UI.reincarnatePathPicker(), 'wide'); },
-  // Step 3: chosen archetype LINE finalizes the rebirth (new name + affinity + archetype line).
+  // Step 4: chosen starter Gu → archetype picker.
+  reincarnateGu(guId) { if (pendingReincarnate) { pendingReincarnate.guId = guId; UI.showModal(UI.reincarnateArchetypePicker(), 'wide'); } },
+  // Archetype "Back": to the Gu picker if the chosen path has starter Gu, else straight to the path picker.
+  reincarnateArchetypeBack() {
+    if (!pendingReincarnate) return;
+    const pid = pendingReincarnate.path;
+    if (pid && starterGusForPath(pid).length) UI.showModal(UI.reincarnateGuPicker(pid), 'wide');
+    else UI.showModal(UI.reincarnatePathPicker(), 'wide');
+  },
+  // Step 5: chosen archetype LINE finalizes the rebirth (new name + affinity + starter Gu + archetype line).
   reincarnateArchetype(lineId) {
     if (!pendingReincarnate) return;
     const choice = { ...pendingReincarnate, line: lineId };

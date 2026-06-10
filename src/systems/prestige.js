@@ -69,8 +69,9 @@ export function reincarnationPathChoices() {
   return [...prev, ...extra];
 }
 
-// `choice` (from the reincarnation pickers, main.js) = { name, path, line }: re-name the cultivator,
-// stamp a new Dao affinity + archetype line onto the reborn player. No starter Gu is granted on rebirth.
+// `choice` (from the reincarnation pickers, main.js) = { name, path, guId, line }: re-name the cultivator,
+// stamp a new Dao affinity + archetype line onto the reborn player, and grant the chosen rank-1 Gu of the
+// new path (unequipped, like a new game). guId may be absent if the path had no curated starter Gu.
 export function reincarnate(choice = null) {
   if (!canReincarnate()) return { ok: false, msg: 'Reach Floor 20 or forge a Venerable before reincarnating.' };
   const award = soulsAward();
@@ -81,7 +82,9 @@ export function reincarnate(choice = null) {
   const slot = S().slot;
   const player0 = S().roster.find((c) => c.isPlayer) || S().roster[0];
   const playerName = (choice && choice.name) || (player0 && player0.name); // chosen (or carried) name
-  const starter = choice && (choice.path || choice.line) ? { path: choice.path, line: choice.line } : null;
+  const starter = choice && (choice.path || choice.line)
+    ? { path: choice.path, guId: choice.guId, line: choice.line }
+    : null;
   const fresh = newGame(slot, playerName || 'Fang Yuan', starter);
   fresh.prestige = p;
   // Sovereign Insight: head start for the new life.

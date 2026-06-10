@@ -281,18 +281,20 @@ export function starterPathPicker(opts = {}) {
     ${opts.footer || '<div class="right"><button onclick="G.closeModal()">Cancel</button></div>'}`;
 }
 // Step 3: pick a rank-1 Gu of the chosen path (a curated, thematic handful — see gu.starterGusForPath).
-export function starterGuPicker(pathId) {
+// Reused by reincarnation (see reincarnateGuPicker). opts overrides the per-card onclick + intro/footer.
+export function starterGuPicker(pathId, opts = {}) {
+  const onPick = opts.onPick || 'G.starterGu';
   const col = pathColor(pathId);
   const cards = starterGusForPath(pathId).map((g) => `
-    <div class="starter-gu" onclick="G.starterGu('${g.id}')" title="Begin with ${g.name}">
+    <div class="starter-gu" onclick="${onPick}('${g.id}')" title="Begin with ${g.name}">
       <div class="sg-head"><b class="tierbadge" style="color:var(--t1);border-color:var(--t1)">T1</b><b class="sg-name">${g.name}</b></div>
       <div class="gu-eff">${effectText(g)}</div>
       <div class="gu-ess">◇ ${guEssenceCost(g)} essence / use</div>
     </div>`).join('');
   return `<h3>Choose your first Gu — <span class="cjk" style="color:${col}">${pathCjk(pathId)}</span> ${pathName(pathId)}</h3>
-    <div class="body"><div class="muted small">A rank-1 Gu to begin with. You'll equip it from your Character sheet — the First-Steps guide walks you through it. You can craft and refine many more later.</div></div>
+    <div class="body"><div class="muted small">${opts.intro || `A rank-1 Gu to begin with. You'll equip it from your Character sheet — the First-Steps guide walks you through it. You can craft and refine many more later.`}</div></div>
     <div class="starter-grid gu">${cards || '<div class="muted small">No starter Gu for this path.</div>'}</div>
-    <div class="right"><button onclick="G.starterBack()">← Back</button></div>`;
+    ${opts.footer || '<div class="right"><button onclick="G.starterBack()">← Back</button></div>'}`;
 }
 
 // Step 4: pick an ARCHETYPE line — granted to the player at their (Epic) rarity. Each card shows the
@@ -332,7 +334,7 @@ export function starterArchetypePicker(opts = {}) {
     ${opts.footer || '<div class="right"><button onclick="G.starterArchetypeBack()">← Back</button></div>'}`;
 }
 
-// ===== REINCARNATION RE-PICK: new Dao affinity (this life's mastered paths) → new archetype =====
+// ===== REINCARNATION RE-PICK: new Dao affinity → starter Gu → new archetype =====
 // Reuses the starter pickers with reincarnation handlers/copy. The affinity choices come from
 // prestige.reincarnationPathChoices (previous affinity + every path at Comprehension level 5+).
 export function reincarnatePathPicker() {
@@ -341,15 +343,22 @@ export function reincarnatePathPicker() {
     paths,
     onPick: 'G.reincarnatePath',
     title: 'Choose your new Dao Affinity',
-    intro: `Your reborn cultivator's <b>Dao Affinity</b>. The choices are the paths this life <b>mastered</b> — your previous affinity, plus every path you reached <b>Comprehension level 5+</b> in. No starter Gu is granted on rebirth; craft anew toward your chosen path.`,
+    intro: `Your reborn cultivator's <b>Dao Affinity</b>. The choices are the paths this life <b>mastered</b> — your previous affinity, plus every path you reached <b>Comprehension level 5+</b> in. You'll then pick a rank-1 Gu of this path to begin the next life with.`,
     footer: '<div class="right"><button onclick="G.closeModal()">Keep cultivating</button></div>',
+  });
+}
+export function reincarnateGuPicker(pathId) {
+  return starterGuPicker(pathId, {
+    onPick: 'G.reincarnateGu',
+    intro: `A rank-1 Gu of your new path to begin the next life with. Equip it from your Character sheet; craft and refine many more later.`,
+    footer: '<div class="right"><button onclick="G.reincarnatePathBack()">← Back</button></div>',
   });
 }
 export function reincarnateArchetypePicker() {
   return starterArchetypePicker({
     onPick: 'G.reincarnateArchetype',
     intro: `Your reborn combat calling — a permanent trait at <b style="color:${rarityColor(PLAYER_RARITY)}">${PLAYER_RARITY}</b> rarity (the <b>yours</b> row in each card). Pick the role for your new life.`,
-    footer: '<div class="right"><button onclick="G.reincarnatePathBack()">← Back</button></div>',
+    footer: '<div class="right"><button onclick="G.reincarnateArchetypeBack()">← Back</button></div>',
   });
 }
 
@@ -2048,7 +2057,7 @@ const WHATS_NEW = [
     ['One-time affinity & archetype pick', 'Older cultivators who never chose a <b>Dao Affinity</b> or <b>archetype</b> (their traits were canon defaults) are now asked to pick both <b>once</b> on load — from the <b>same foundational Dao paths and archetypes a new game offers</b>. The choice is stamped onto your existing character; nothing else about your save changes.'],
   ] },
   { date: 'Jun 11, 2026', title: 'Reincarnation', items: [
-    ['Re-choose your path on rebirth', 'Reincarnating now lets you <b>re-found your cultivator</b>: enter a <b>new name</b>, pick a <b>new archetype</b>, and choose a <b>new Dao Affinity</b> for the life to come.'],
+    ['Re-choose your path on rebirth', 'Reincarnating now lets you <b>re-found your cultivator</b>: enter a <b>new name</b>, choose a <b>new Dao Affinity</b>, a <b>rank-1 starter Gu</b> of that path, and a <b>new archetype</b> for the life to come.'],
     ['Affinity from a mastered life', 'The affinity choices are the paths <b>this life mastered</b> — your <b>previous affinity</b> (always), plus <b>every Dao path you reached Comprehension level 5+</b> in. Spread your comprehension wide and you reincarnate with more paths to choose from.'],
   ] },
   { date: 'Jun 10, 2026', title: 'Bounties', items: [
