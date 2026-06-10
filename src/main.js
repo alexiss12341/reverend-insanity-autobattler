@@ -8,7 +8,7 @@ import { rollFloorRewards, firstClearEssence, rollFarmEssence, applyDrops, buyRe
 import { pull, dismiss, dismissMany, dismissRefund, imprint, imprintCandidates, IMPRINT_CAP, autoImprintAll, duplicateSpares } from './systems/gacha.js';
 import { buyBoon, reincarnate, soulsAward, canReincarnate } from './systems/prestige.js';
 import { bumpQuest, claimQuest, claimBonus, DAILY_QUESTS } from './systems/quests.js';
-import { attemptsLeft, spendAttempt, slotUnlocked, bountyEncounter, grantBountyRewards } from './systems/bounties.js';
+import { attemptsLeft, spendAttempt, slotUnlocked, bountyEncounter, grantBountyRewards, respawnRemaining, markBountyKilled } from './systems/bounties.js';
 import { craft, upgrade } from './systems/crafting.js';
 import { generateEncounter, isBossFloor, MAX_FLOORS } from './data/floors.js';
 import { guOf } from './systems/cultivation.js';
@@ -185,10 +185,11 @@ async function runBattle() {
     processImmortals(res.win);
     if (res.win) {
       S().stats.wins += 1;
+      markBountyKilled(bountySlot);                               // start the 20-min respawn cooldown for this slot
       const got = grantBountyRewards(bounty.rewards);             // rolls the path-Gu chance + grants stones/essence
       bumpQuest('wins');
       const guMsg = got && got.gu ? `, + ${got.gu.name}` : '';
-      if (activeTab === 'battle') UI.logLine(`★ BOUNTY CLAIMED — ${bounty.name} slain! +${bounty.rewards.stones}石, +${bounty.rewards.essence}✦${guMsg}`, 'win');
+      if (activeTab === 'battle') UI.logLine(`★ BOUNTY CLAIMED — ${bounty.name} slain! +${bounty.rewards.stones}石, +${bounty.rewards.essence}✦${guMsg}  (respawns in 20m)`, 'win');
     } else if (activeTab === 'battle') {
       UI.logLine(`${bounty.name} bested your team. Attempt spent — ${attemptsLeft()} left.`, 'lose');
     }
@@ -720,6 +721,8 @@ const G = {
     if (battleBusy && pendingBounty != null) return;  // a hunt is already queued/running
     if (!activeTeam().length) return UI.toast('Activate at least one fighter first.');
     if (!slotUnlocked(slot)) return UI.toast('That bounty is still locked — climb the tower to unlock it.');
+    const cd = respawnRemaining(slot);
+    if (cd > 0) return UI.toast(`That bounty is respawning — back in ~${Math.ceil(cd / 60000)}m.`);
     if (attemptsLeft() <= 0) return UI.toast('No bounty attempts left — they recharge +1 per hour.');
     if (autoChallenge) endAutoChallenge('stopped');   // a hunt supersedes an auto-climb…
     challengeRequested = false;                        // …and a queued frontier attempt

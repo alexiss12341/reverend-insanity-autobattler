@@ -94,9 +94,9 @@ export function newGame(slotKey, playerName = 'Fang Yuan', starter = null) {
     // makes ensureDaily() initialise it on first access. Resets at local midnight.
     daily: { date: '', progress: {}, claimed: {}, bonusClaimed: false },
     // Bounties — a shared pool of 5 attempts that recharge +1/hour (systems/bounties.js). `lastRefill`
-    // is the stamp the offline-aware refill counts from. The daily bounty ROSTER itself is derived
-    // deterministically from the calendar day (data/bounties.js), so only the attempts need persisting.
-    bounties: { attempts: 5, lastRefill: Date.now() },
+    // is the stamp the offline-aware refill counts from; `respawn` maps slot→{day,until} for the 20-min
+    // post-kill cooldown. The daily ROSTER itself is derived from the calendar day (data/bounties.js).
+    bounties: { attempts: 5, lastRefill: Date.now(), respawn: {} },
     settings: { idle: true, guView: 'grid', invView: 'grid', teamSort: 'power', teamFilter: 'all', teamRarity: 'all', teamPath: 'all', fmSort: 'power', fmRarity: 'all', fmPath: 'all', guTier: 'all', guPath: 'all', guOpen: {}, killerOpen: {}, shopRarity: 'all', shopPath: 'all', shopSearch: '', shopQty: 1, allocStep: 10, audio: { bgm: 7, sfx: 7, bgmMuted: false, sfxMuted: false } },
   };
 }

@@ -10,7 +10,7 @@ import { commOf } from '../src/data/daoPaths.js';
 import { playerPool, roleAttrs, ATTR_KEYS } from '../src/data/attributes.js';
 import { resolveEncounter } from '../src/systems/battle.js';
 import { buildBounty, buildBountyEncounter, slotRank, slotRarity, slotUnlockFloor, bountyPath, bountyEssence, bountyGuChances, rollBountyGu, BOUNTY_SLOTS } from '../src/data/bounties.js';
-import { attemptsLeft, spendAttempt, refillAttempts, msToNextAttempt, slotUnlocked, grantBountyRewards, BOUNTY_MAX_ATTEMPTS, BOUNTY_REFILL_MS } from '../src/systems/bounties.js';
+import { attemptsLeft, spendAttempt, refillAttempts, msToNextAttempt, slotUnlocked, grantBountyRewards, respawnRemaining, markBountyKilled, BOUNTY_MAX_ATTEMPTS, BOUNTY_REFILL_MS, BOUNTY_RESPAWN_MS } from '../src/systems/bounties.js';
 
 const REPORT = process.env.BOUNTY_REPORT === '1';
 const DAY = '2026-06-10';
@@ -176,3 +176,16 @@ ok(Object.keys(bountyGuChances(1)).length === 1 && Math.abs(bountyGuChances(1)[1
 { let hits = 0, clean = true; for (let t = 0; t < 200; t++) { const id = rollBountyGu('fire', 5); if (id) { hits++; const g = GU_LIB[id]; if (g.daoPath !== 'fire' || g.tier < 1 || g.tier > 5 || g.unique) clean = false; } }
   ok(hits === 200 && clean, 'R5 roll always yields a non-unique fire Gu of tier 1-5'); }
 { let miss = 0; for (let t = 0; t < 400; t++) if (rollBountyGu('fire', 1) === null) miss++; ok(miss > 0 && miss < 400, 'R1 roll both hits (~30%) and misses (~70%)'); }
+
+// ---- 20-minute respawn cooldown after a kill -----------------------------------------------------
+section('bounties: 20-minute respawn cooldown (on kill, day-scoped)');
+state.current = newGame('tbounty4');
+ok(BOUNTY_RESPAWN_MS === 20 * 60 * 1000, 'respawn cooldown is 20 minutes');
+ok(respawnRemaining(2) === 0, 'a fresh slot is ready (no cooldown)');
+markBountyKilled(2);
+ok(respawnRemaining(2) > 0 && respawnRemaining(2) <= BOUNTY_RESPAWN_MS, 'killing a bounty starts its respawn cooldown');
+ok(respawnRemaining(0) === 0 && respawnRemaining(1) === 0, 'the cooldown is per-slot (others stay ready)');
+state.current.bounties.respawn[2].until = Date.now() - 1000;      // pretend 20 min elapsed
+ok(respawnRemaining(2) === 0, 'cooldown clears once 20 minutes have passed');
+markBountyKilled(2); state.current.bounties.respawn[2].day = '2000-01-01';
+ok(respawnRemaining(2) === 0, 'a stale-day cooldown is cleared (the daily roster spawns a fresh boss)');

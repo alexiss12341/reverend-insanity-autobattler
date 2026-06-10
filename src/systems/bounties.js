@@ -59,6 +59,25 @@ export function spendAttempt() {
 // R2/R3/R4/R5 at frontier 51/101/151/201).
 export const slotUnlocked = (i) => S().frontier >= slotUnlockFloor(i);
 
+// ---- respawn cooldown ----------------------------------------------------------------------------
+// Killing a bounty boss puts that slot on a 20-minute RESPAWN cooldown before it can be hunted again
+// (a LOSS doesn't — you can immediately re-try). Stored per slot keyed to the calendar day, so the daily
+// roster rotation (a fresh boss) clears any lingering cooldown.
+export const BOUNTY_RESPAWN_MS = 20 * 60 * 1000;
+function respawnStore() {
+  const b = ensureBounties();
+  if (!b.respawn || typeof b.respawn !== 'object') b.respawn = {};
+  return b.respawn;
+}
+// Milliseconds until slot `i`'s boss respawns (0 = ready to hunt).
+export function respawnRemaining(i) {
+  const e = respawnStore()[i];
+  if (!e || e.day !== bountyDayKey() || typeof e.until !== 'number') return 0;
+  return Math.max(0, e.until - Date.now());
+}
+// Mark slot `i`'s boss as freshly killed → starts its respawn cooldown.
+export function markBountyKilled(i) { respawnStore()[i] = { day: bountyDayKey(), until: Date.now() + BOUNTY_RESPAWN_MS }; }
+
 // The day's five bounty definitions (for display) and a battle encounter (for a fight).
 export const dailyBounties = () => Array.from({ length: BOUNTY_SLOTS }, (_, i) => buildBounty(i, bountyDayKey()));
 export const bountyEncounter = (i) => buildBountyEncounter(i, bountyDayKey());

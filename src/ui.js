@@ -11,7 +11,7 @@ import { realmName, realmClass } from './data/realms.js';
 import { PULL_COST, PULL_COST_10, PITY_CAP, pityCount } from './systems/gacha.js';
 import { prestige, BOONS, boonCost, boonLevel, boonAtMax, canReincarnate, soulsAward, reincarnationPathChoices } from './systems/prestige.js';
 import { DAILY_QUESTS, COMPLETE_ALL_BONUS, ensureDaily, questProgress, questGoal, questComplete, questClaimed, questClaimable, allClaimed, bonusClaimable, pendingReward, claimableCount, msToReset } from './systems/quests.js';
-import { dailyBounties, attemptsLeft, msToNextAttempt, slotUnlocked, BOUNTY_MAX_ATTEMPTS } from './systems/bounties.js';
+import { dailyBounties, attemptsLeft, msToNextAttempt, slotUnlocked, respawnRemaining, BOUNTY_MAX_ATTEMPTS } from './systems/bounties.js';
 import { slotUnlockFloor } from './data/bounties.js';
 import { canCraft, refineSpec, canUpgrade } from './systems/crafting.js';
 import { resourceCost, dropEstimate, shopResources, highestRosterRank, marketUnlocked } from './systems/economy.js';
@@ -2020,7 +2020,7 @@ const WHATS_NEW = [
   ] },
   { date: 'Jun 10, 2026', title: 'Bounties', items: [
     ['Bounty board', 'A new <b>賞 Bounties</b> page: a <b>daily-rotating</b> roster of <b>lone raid-boss</b> targets, one per rank band (<b>Common → Legendary</b>). Each wanted-poster card shows the boss’s name, rank, rarity, archetype, Dao path and <b>combat stats</b> (HP · ATK · DEF · SPD).'],
-    ['5 attempts, +1/hour', 'You hold <b>5 attempts</b> that recharge <b>+1 per hour</b> (offline too). Every challenge plays out <b>in the arena</b> like a real assault — no auto-resolve — and spends one attempt win or lose.'],
+    ['5 attempts, +1/hour', 'You hold <b>5 attempts</b> that recharge <b>+1 per hour</b> (offline too). Every challenge plays out <b>in the arena</b> like a real assault — no auto-resolve — and spends one attempt win or lose. Killing a bounty puts it on a <b>20-minute respawn</b> before you can hunt it again.'],
     ['Raid-boss targets', 'Each bounty is a tough <b>solo boss</b> — full Gu loadout, a killer move and a fitting <b>archetype line</b> — tuned so a rank/rarity-matched team wins <b>at most ~60%</b> of the time. Higher-rank bounties unlock as you climb the tower (F51 / 101 / 151 / 201).'],
     ['Rewards', 'A hefty <b style="color:var(--stone)">石 Primeval Stone</b> lump (<b>25×</b> the realm-gate boss clear), <b style="color:var(--jade)">10–50 ✦ Immortal Essence</b>, plus a chance at a random <b>Gu of the boss’s Dao path</b> — 30% at the bounty’s own rank, the remaining 70% sliding down to lower ranks.'],
   ] },
@@ -2152,7 +2152,8 @@ export function viewBounties() {
   const cards = list.map((b) => {
     const open = slotUnlocked(b.slot);
     const col = rarityColor(b.rarity);
-    const can = open && left > 0;
+    const cd = open ? respawnRemaining(b.slot) : 0;   // 20-min post-kill respawn cooldown
+    const can = open && left > 0 && cd === 0;
     return `<div class="bounty-card${open ? '' : ' locked'}" style="--rc:${col}">
       <div class="bc-head">
         <div class="bc-seal cjk">${lineCjk(b.line)}</div>
@@ -2174,9 +2175,11 @@ export function viewBounties() {
         <div class="bc-rtile"><span class="sk">Immortal Essence</span><span class="sv jade">+${b.rewards.essence} ✦</span></div>
         <div class="bc-rtile bc-gu"><span class="sk">${pathName(b.path).replace(/ Path$/, '')} Gu Drop</span><span class="sv-gu">${guRewardDesc(b.rewards.guReward)}</span></div>
       </div>
-      ${open
-        ? `<button class="primary bc-go" ${can ? '' : 'disabled'} onclick="G.attemptBounty(${b.slot})">${left > 0 ? '⚔ Challenge' : 'No attempts left'}</button>`
-        : `<button class="bc-go" disabled>🔒 Reach Floor ${slotUnlockFloor(b.slot)}</button>`}
+      ${!open
+        ? `<button class="bc-go" disabled>🔒 Reach Floor ${slotUnlockFloor(b.slot)}</button>`
+        : cd > 0
+          ? `<button class="bc-go" disabled>⏳ Respawning · ${fmtReset(cd)}</button>`
+          : `<button class="primary bc-go" ${left > 0 ? '' : 'disabled'} onclick="G.attemptBounty(${b.slot})">${left > 0 ? '⚔ Challenge' : 'No attempts left'}</button>`}
     </div>`;
   }).join('');
   return `${pagehead('賞', 'Hunt · 悬赏', 'Bounties',
