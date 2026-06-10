@@ -801,17 +801,24 @@ button.mini{font-size:10px;padding:3px 8px;min-width:0;letter-spacing:0.1em}
   .bounty-grid{grid-template-columns:1fr}
 }
 
-/* ---- Bounties board ---- */
-.bounty-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px}
-.bounty-card{position:relative;border:1px solid var(--line);border-left:3px solid var(--rc,var(--line-strong));
-  background:linear-gradient(170deg,var(--bg2),var(--panel));padding:16px 17px;display:flex;flex-direction:column;gap:7px;transition:.16s}
-.bounty-card:hover{border-color:var(--line-strong)}
-.bounty-card.locked{opacity:.55;filter:saturate(.5)}
-.bounty-card .bc-top{display:flex;align-items:center;gap:10px}
-.bounty-card .bc-seal{font-size:26px;line-height:1;opacity:.9}
-.bounty-card .bc-tier{font-family:var(--mono);font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted)}
-.bounty-card .bc-name{font-family:var(--serif,inherit);font-size:18px;color:var(--bone);line-height:1.2}
-.bounty-card .bc-arch{font-size:13px;color:var(--bone-dim)}
-.bounty-card .bc-path{margin-top:-2px}
-.bounty-card .bc-reward{color:var(--stone);font-family:var(--mono);letter-spacing:.02em;border-top:1px solid var(--line-soft);padding-top:7px;margin-top:1px}
-.bounty-card .bc-go{margin-top:4px}
+/* ---- Bounties board — large "wanted-poster" cards, 2-up on wide screens ---- */
+.bounty-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(440px,1fr));gap:20px}
+.bounty-card{position:relative;border:1px solid var(--line);border-top:3px solid var(--rc,var(--line-strong));
+  background:linear-gradient(165deg,var(--bg2),var(--panel));padding:26px 28px;display:flex;flex-direction:column;gap:20px;min-height:300px;transition:.16s}
+.bounty-card:hover{border-color:var(--line-strong);background:linear-gradient(165deg,var(--bg3),var(--panel))}
+.bounty-card.locked{opacity:.5;filter:saturate(.35)}
+.bounty-card .bc-head{display:flex;align-items:flex-start;gap:20px}
+.bounty-card .bc-seal{flex:0 0 auto;width:76px;height:76px;display:grid;place-items:center;font-size:46px;line-height:1;
+  color:var(--rc);border:1px solid var(--rc);background:rgba(0,0,0,.28);box-shadow:inset 0 0 26px rgba(0,0,0,.45)}
+.bounty-card .bc-id{flex:1;min-width:0}
+.bounty-card .bc-tier{font-family:var(--mono);font-size:11px;letter-spacing:.26em;text-transform:uppercase;color:var(--rc)}
+.bounty-card .bc-name{font-family:var(--serif,inherit);font-size:26px;color:var(--bone);line-height:1.14;margin:6px 0 5px}
+.bounty-card .bc-arch{font-size:15px;color:var(--bone-dim)}
+.bounty-card .bc-path{font-size:13px;color:var(--muted);margin-top:4px;letter-spacing:.02em}
+.bounty-card .bc-rewards{display:grid;grid-template-columns:1fr 1fr;gap:12px;border-top:1px solid var(--line-soft);padding-top:18px;margin-top:auto}
+.bounty-card .bc-rtile{display:flex;flex-direction:column;gap:4px;background:rgba(0,0,0,.18);border:1px solid var(--line-soft);padding:10px 13px}
+.bounty-card .bc-rtile .sk{font-family:var(--mono);font-size:9.5px;letter-spacing:.18em;text-transform:uppercase;color:var(--muted)}
+.bounty-card .bc-rtile .sv{font-family:var(--mono);font-size:17px;font-weight:700}
+.bounty-card .bc-rtile.bc-gu{grid-column:1/-1}
+.bounty-card .bc-rtile .sv-gu{font-family:var(--mono);font-size:13px;color:var(--bone-dim);letter-spacing:.02em}
+.bounty-card .bc-go{padding:13px;font-size:14px;letter-spacing:.12em;text-transform:uppercase}

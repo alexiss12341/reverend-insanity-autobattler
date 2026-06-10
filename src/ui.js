@@ -2117,17 +2117,22 @@ export function viewBounties() {
     const col = rarityColor(b.rarity);
     const can = open && left > 0;
     return `<div class="bounty-card${open ? '' : ' locked'}" style="--rc:${col}">
-      <div class="bc-top">
-        <span class="bc-seal cjk" style="color:${col}">${lineCjk(b.line)}</span>
-        <span class="bc-tier">Rank ${b.rank} · <b style="color:${col}">${b.rarity}</b></span>
+      <div class="bc-head">
+        <div class="bc-seal cjk">${lineCjk(b.line)}</div>
+        <div class="bc-id">
+          <div class="bc-tier">Rank ${b.rank} · ${b.rarity} Bounty</div>
+          <div class="bc-name">${b.name}</div>
+          <div class="bc-arch"><b>${lineName(b.line, b.rarity)}</b> <span class="muted">· ${lineRole(b.line)}</span></div>
+          <div class="bc-path">${pathCjk(b.path)} ${pathName(b.path)}</div>
+        </div>
       </div>
-      <div class="bc-name">${b.name}</div>
-      <div class="bc-arch"><b>${lineName(b.line, b.rarity)}</b> <span class="muted">· ${lineRole(b.line)}</span></div>
-      <div class="bc-path muted small">${pathCjk(b.path)} ${pathName(b.path)}</div>
-      <div class="bc-reward small">+${fmt(b.rewards.stones)} 石 · +${b.rewards.essence} ✦</div>
-      <div class="bc-gu small muted">${pathName(b.path).replace(/ Path$/, '')} Gu — ${guRewardDesc(b.rewards.guReward)}</div>
+      <div class="bc-rewards">
+        <div class="bc-rtile"><span class="sk">Primeval Stones</span><span class="sv stone">+${fmt(b.rewards.stones)} 石</span></div>
+        <div class="bc-rtile"><span class="sk">Immortal Essence</span><span class="sv jade">+${b.rewards.essence} ✦</span></div>
+        <div class="bc-rtile bc-gu"><span class="sk">${pathName(b.path).replace(/ Path$/, '')} Gu Drop</span><span class="sv-gu">${guRewardDesc(b.rewards.guReward)}</span></div>
+      </div>
       ${open
-        ? `<button class="primary bc-go" ${can ? '' : 'disabled'} onclick="G.attemptBounty(${b.slot})">${left > 0 ? 'Challenge' : 'No attempts left'}</button>`
+        ? `<button class="primary bc-go" ${can ? '' : 'disabled'} onclick="G.attemptBounty(${b.slot})">${left > 0 ? '⚔ Challenge' : 'No attempts left'}</button>`
         : `<button class="bc-go" disabled>🔒 Reach Floor ${slotUnlockFloor(b.slot)}</button>`}
     </div>`;
   }).join('');
