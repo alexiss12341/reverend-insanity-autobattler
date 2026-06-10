@@ -173,7 +173,6 @@ function enemyEffects(floor, name, boss, maxHp) {
     fx.lifesteal = Math.min(0.45, 0.12 + rank * 0.02);
     if (rank >= 3) fx.regen = Math.round(maxHp * 0.015);
     if (rank >= 5) fx.thorns = 0.12;
-    if (rank >= 7) fx.extra_turn = 0.15;
     return fx;
   }
   if (floor <= 5) return fx; // the very first floors are plain
