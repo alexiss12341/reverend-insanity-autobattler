@@ -93,7 +93,7 @@ button.mini{font-size:10px;padding:3px 8px;min-width:0;letter-spacing:0.1em}
 #main{display:grid;grid-template-columns:208px 1fr;min-height:0}
 #nav{border-right:1px solid var(--line);padding:18px 12px;display:flex;flex-direction:column;gap:3px;background:rgba(8,6,5,0.5)}
 #nav button{text-align:left;background:transparent;border:1px solid transparent;border-left:2px solid transparent;
-  padding:11px 14px;font-size:11px;letter-spacing:.14em;color:var(--bone-dim);border-radius:0}
+  padding:11px 14px;font-size:13px;font-weight:500;letter-spacing:.12em;color:var(--bone-dim);border-radius:0}
 #nav button{position:relative}
 #nav button:hover{background:rgba(208,186,160,0.04);color:var(--bone)}
 #nav button.active{border-left-color:var(--blood-bright);background:linear-gradient(90deg,rgba(158,27,39,0.12),transparent);color:var(--bone)}
