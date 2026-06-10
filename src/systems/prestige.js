@@ -19,8 +19,8 @@ export const prestigeCombatMult = () => 1 + (prestige().boons.might || 0) * 0.04
 export const prestigeGainMult = () => 1 + (prestige().boons.fortune || 0) * 0.08;
 
 export const BOONS = {
-  might:   { name: 'Sovereign Might',   base: 15, blurb: '+4% ATK & Max HP to all allies (per level).' },
-  fortune: { name: 'Sovereign Fortune', base: 15, blurb: '+8% Primeval Stone & Immortal Essence gains (per level).' },
+  might:   { name: 'Sovereign Might',   base: 15, max: 5, blurb: '+4% ATK & Max HP to all allies (per level, max 5).' },
+  fortune: { name: 'Sovereign Fortune', base: 15, max: 5, blurb: '+8% Primeval Stone & Immortal Essence gains (per level, max 5).' },
   // Insight is the strongest boon (a permanent Gu slot): CAPPED at level 5 and priced at 4× its own
   // original base (5 → 20). migrateSave refunds any legacy save that bought past the cap.
   insight: { name: 'Sovereign Insight', base: 20, max: 5, blurb: 'Begin each new life with +1 player Gu slot and bonus resources (per level, max 5).' },

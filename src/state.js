@@ -158,23 +158,36 @@ function migrateSave(o) {
     o.prestige.souls = (o.prestige.souls || 0) + refund;
     o.prestige.boons.insight = 5;
   }
-  // Sovereign Might & Fortune now cost 5× more per level (base 3 → 15). For a legacy save, recompute the
-  // souls it actually spent at the OLD price (Σ level k = 3·k), re-derive the highest level those souls
-  // buy at the NEW price (Σ level k = 15·k), and refund the leftover. NOT idempotent (it assumes old-
-  // price levels), so it's gated by a one-shot flag — set here after running, and born-true in newGame so
-  // games created at the new price are never re-priced.
+  // Sovereign Might & Fortune now cost 5× more per level (base 3 → 15) AND are capped at 5 levels. For a
+  // legacy save, recompute the souls it actually spent at the OLD price (Σ level k = 3·k), re-derive the
+  // highest level (≤ 5) those souls buy at the NEW price (Σ level k = 15·k), and refund the leftover. NOT
+  // idempotent (it assumes old-price levels), so it's gated by a one-shot flag — set after running, and
+  // born-true in newGame so games created at the new price are never re-priced.
   if (o.prestige && o.prestige.boons && !o.prestige.mfRebalanced) {
-    const OLD_BASE = 3, NEW_BASE = 15;
-    const cumNew = (n) => NEW_BASE * n * (n + 1) / 2; // Σ new cost of levels 1..n
+    const OLD_BASE = 3, NEW_BASE = 15, MF_CAP = 5;
+    const cumNew = (n) => NEW_BASE * n * (n + 1) / 2;            // Σ new cost of levels 1..n
     for (const key of ['might', 'fortune']) {
       const lvl = o.prestige.boons[key] || 0;
       if (lvl <= 0) continue;
-      const spent = OLD_BASE * lvl * (lvl + 1) / 2;     // souls actually paid at the old price
-      let n = 0; while (cumNew(n + 1) <= spent) n++;     // highest level affordable at the new price
+      const spent = OLD_BASE * lvl * (lvl + 1) / 2;             // souls actually paid at the old price
+      let n = 0; while (n < MF_CAP && cumNew(n + 1) <= spent) n++; // highest level ≤ cap affordable now
       o.prestige.boons[key] = n;
       o.prestige.souls = (o.prestige.souls || 0) + (spent - cumNew(n));
     }
     o.prestige.mfRebalanced = true;
+  }
+  // Independent, idempotent guard for the Might/Fortune 5-level cap: a save already recalibrated under the
+  // earlier (capless) 5×-cost release has mfRebalanced set yet may still sit above 5. Clamp it and refund
+  // the over-cap levels at the current price (level k = 15·k). Clamping to 5 makes this a no-op next load.
+  if (o.prestige && o.prestige.boons) {
+    for (const key of ['might', 'fortune']) {
+      const lvl = o.prestige.boons[key] || 0;
+      if (lvl <= 5) continue;
+      let refund = 0;
+      for (let k = 6; k <= lvl; k++) refund += 15 * k;
+      o.prestige.souls = (o.prestige.souls || 0) + refund;
+      o.prestige.boons[key] = 5;
+    }
   }
   // Cap the bonus Gu slots a prior reincarnation already granted (bonusSlots — whose ONLY source is the
   // Insight boon, +1/level) at the same 5, then UNEQUIP any Gu left sitting in the now-removed slots.
