@@ -16,7 +16,7 @@ import { slotUnlockFloor } from './data/bounties.js';
 import { canCraft, refineSpec, canUpgrade } from './systems/crafting.js';
 import { resourceCost, dropEstimate, shopResources, highestRosterRank, marketUnlocked } from './systems/economy.js';
 import { generateEncounter, isBossFloor, encounterSize, floorRealm, FLOORS_PER_REALM } from './data/floors.js';
-import { GAUGE_MAX, PLAYBACK_MS } from './systems/battle.js';
+import { GAUGE_MAX, PLAYBACK_MS, cleanseChanceFor, cleanseMaxFor } from './systems/battle.js';
 import { PATH, pathList, pathName, pathColor, pathCjk, commOf, CATEGORY_LABELS, isPathLocked, pathFloorReq, PATH_AFFINITY } from './data/daoPaths.js';
 import { apertureCap, apertureUsed, apertureFree, attainmentIn, marksIn, attainmentOf, ATTAINMENT, comprehensionLevelIn, comprehensionCap, compPointsIn, markAmp, dominantPath, injuryRemainingMs } from './systems/dao.js';
 import { affinityPaths, affinityName, AFFINITY_EFFECT_MULT, AFFINITY_COMP_MULT, lineOf, LINES, lineName, lineRole, lineCjk, lineBlurb, LINE_ORDER, lineTierEffects, lineEffects, lineGuAmp, lineEffectList, auraEffectList, allyAuraSummary, enemyWaveAura } from './data/traits.js';
@@ -307,6 +307,16 @@ const LINE_ACCENT = {
   reaver: '#b03a45', afflictor: '#74c0a0', foundation: '#c79a45', fortune: '#d8a64a', adept: '#b07ad8',
   warden: '#5a8fb0', commander: '#c2b08a', mender: '#6fb08a',
 };
+// Per-rarity effect strings for an archetype card/table row. lineTierEffects renders each line's stored
+// effect bag; the Mender's CLEANSE is derived at battle time in battle.js (cleanseChanceFor/cleanseMaxFor)
+// and never stored on the line, so append it here — display-only, so the Guide table + starter picker
+// both surface it without duplicating the engine's source of truth.
+function archEffects(id, rarity) {
+  const effs = lineTierEffects(id, rarity).slice();
+  if (id === 'mender') { const mx = cleanseMaxFor(rarity); effs.push(`Cleanse ${Math.round(cleanseChanceFor(rarity) * 100)}% (≤${mx} debuff${mx > 1 ? 's' : ''})`); }
+  return effs;
+}
+
 // Reused by both new-game and reincarnation (see reincarnateArchetypePicker). opts overrides the
 // per-card onclick handler and the title/intro/footer copy.
 export function starterArchetypePicker(opts = {}) {
@@ -314,7 +324,7 @@ export function starterArchetypePicker(opts = {}) {
   const cards = LINE_ORDER.map((id) => {
     const acc = LINE_ACCENT[id] || 'var(--blood)';
     const ladder = RARITY_ORDER.map((r) => {
-      const effs = lineTierEffects(id, r);
+      const effs = archEffects(id, r);
       const you = r === PLAYER_RARITY;
       return `<div class="arch-row${you ? ' you' : ''}">
         <span class="arch-rar" style="color:${rarityColor(r)}">${r}</span>
@@ -2289,7 +2299,7 @@ function codexPathTable() {
 function codexArchetypes() {
   return LINE_ORDER.map((id) => {
     const rows = RARITY_ORDER.map((r) => {
-      const effs = lineTierEffects(id, r);
+      const effs = archEffects(id, r);
       return `<tr>
         <td><b style="color:${rarityColor(r)}">${r}</b></td>
         <td class="cdx-path">${lineName(id, r)}</td>
