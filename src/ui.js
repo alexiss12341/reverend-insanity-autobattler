@@ -11,6 +11,8 @@ import { realmName, realmClass } from './data/realms.js';
 import { PULL_COST, PULL_COST_10, PITY_CAP, pityCount } from './systems/gacha.js';
 import { prestige, BOONS, boonCost, boonLevel, boonAtMax, canReincarnate, soulsAward } from './systems/prestige.js';
 import { DAILY_QUESTS, COMPLETE_ALL_BONUS, ensureDaily, questProgress, questGoal, questComplete, questClaimed, questClaimable, allClaimed, bonusClaimable, pendingReward, claimableCount, msToReset } from './systems/quests.js';
+import { dailyBounties, attemptsLeft, msToNextAttempt, slotUnlocked, BOUNTY_MAX_ATTEMPTS } from './systems/bounties.js';
+import { slotUnlockFloor } from './data/bounties.js';
 import { canCraft, refineSpec, canUpgrade } from './systems/crafting.js';
 import { resourceCost, dropEstimate, shopResources, highestRosterRank, marketUnlocked } from './systems/economy.js';
 import { generateEncounter, isBossFloor, encounterSize, floorRealm, FLOORS_PER_REALM } from './data/floors.js';
@@ -121,7 +123,7 @@ export function render(tab) {
   const views = {
     battle: viewBattle, team: viewTeam, formation: viewFormation, recruit: viewRecruit,
     gu: viewGu, shop: viewShop, inv: viewInventory, floors: viewFloors, codex: viewCodex, dao: viewDao,
-    quests: viewQuests,
+    quests: viewQuests, bounties: viewBounties,
     attainment: viewAttainment, almanac: viewAlmanac, res: () => viewResource(_resId),
     whatsnew: viewWhatsNew,
     char: () => viewCharacter(_charId),
@@ -173,6 +175,7 @@ const TAB_TIPS = {
   formation: 'Drag fighters onto the 2×5 board. A front-row unit shields the back-liner in its own lane until it falls.',
   recruit: 'Spend ✦ Immortal Essence to summon cultivators across six rarities. Pity guarantees a rare pull eventually.',
   quests: 'Daily goals that pay ✦ Immortal Essence. They reset every day at midnight — clear them all for a bonus.',
+  bounties: 'Hunt a rotating roster of lone raid-boss targets. You get 5 attempts that recharge +1 per hour; higher-rank bounties unlock as you climb.',
   gu: 'Craft Gu from primeval stones + that path’s resources. Higher tiers refine from spare same-path Gu one tier lower.',
   dao: 'Comprehension grows by fighting with a path’s Gu; immortals gather Dao Marks from tribulations. Ascend here.',
   attainment: 'Your standing in each Dao path — comprehension levels and the gates they unlock.',
@@ -2090,6 +2093,46 @@ export function viewQuests() {
     ${sweptDone ? '<span class="muted small">All done for today — come back tomorrow for a fresh board.</span>' : ''}
   </div>
   <div class="quest-list">${rows}${bonusRow}</div>`;
+}
+
+// Bounties board: the day's five lone raid-boss targets (one per rank/rarity band). Each card surfaces the
+// requested fields — boss NAME, RANK, ARCHETYPE (its trait line) and RARITY — plus the shared attempts
+// pool. Rewards are shown for context (their tuning is the next pass). The daily roster is deterministic
+// (data/bounties.js); the Challenge button runs a real fight via main.js G.attemptBounty.
+export function viewBounties() {
+  const list = dailyBounties();
+  const left = attemptsLeft();
+  const nextMs = msToNextAttempt();
+  const rewardLine = (r) => {
+    const res = Object.entries(r.drops || {}).map(([id, q]) => `${q}× ${resourceName(id)}`);
+    return [`+${fmt(r.stones)} 石`, `+${r.essence} ✦`].concat(res).join(' · ');
+  };
+  const cards = list.map((b) => {
+    const open = slotUnlocked(b.slot);
+    const col = rarityColor(b.rarity);
+    const can = open && left > 0;
+    return `<div class="bounty-card${open ? '' : ' locked'}" style="--rc:${col}">
+      <div class="bc-top">
+        <span class="bc-seal cjk" style="color:${col}">${lineCjk(b.line)}</span>
+        <span class="bc-tier">Rank ${b.rank} · <b style="color:${col}">${b.rarity}</b></span>
+      </div>
+      <div class="bc-name">${b.name}</div>
+      <div class="bc-arch"><b>${lineName(b.line, b.rarity)}</b> <span class="muted">· ${lineRole(b.line)}</span></div>
+      <div class="bc-path muted small">${pathCjk(b.path)} ${pathName(b.path)}</div>
+      <div class="bc-reward small">${rewardLine(b.rewards)}</div>
+      ${open
+        ? `<button class="primary bc-go" ${can ? '' : 'disabled'} onclick="G.attemptBounty(${b.slot})">${left > 0 ? 'Challenge' : 'No attempts left'}</button>`
+        : `<button class="bc-go" disabled>🔒 Reach Floor ${slotUnlockFloor(b.slot)}</button>`}
+    </div>`;
+  }).join('');
+  return `${pagehead('賞', 'Hunt · 悬赏', 'Bounties',
+    'Hunt a daily roster of <b>lone raid-boss</b> targets. You hold <b>5 attempts</b> that recharge <b>+1 per hour</b> — spent win or lose. Higher-rank bounties unlock as you climb the tower.')}
+  <div class="cs-statgrid" style="grid-template-columns:repeat(3,1fr);margin-bottom:14px">
+    <div class="cs-stat"><span class="sk">Attempts</span><span class="sv stone">${left} / ${BOUNTY_MAX_ATTEMPTS}</span></div>
+    <div class="cs-stat"><span class="sk">Next Attempt</span><span class="sv">${left >= BOUNTY_MAX_ATTEMPTS ? 'Full' : fmtReset(nextMs)}</span></div>
+    <div class="cs-stat"><span class="sk">Roster Resets</span><span class="sv">${fmtReset(msToReset())}</span></div>
+  </div>
+  <div class="bounty-grid">${cards}</div>`;
 }
 
 export function viewWhatsNew() {

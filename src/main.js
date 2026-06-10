@@ -8,6 +8,7 @@ import { rollFloorRewards, firstClearEssence, rollFarmEssence, applyDrops, buyRe
 import { pull, dismiss, dismissMany, dismissRefund, imprint, imprintCandidates, IMPRINT_CAP, autoImprintAll, duplicateSpares } from './systems/gacha.js';
 import { buyBoon, reincarnate, soulsAward } from './systems/prestige.js';
 import { bumpQuest, claimQuest, claimBonus, DAILY_QUESTS } from './systems/quests.js';
+import { attemptsLeft, spendAttempt, slotUnlocked, bountyEncounter, grantBountyRewards } from './systems/bounties.js';
 import { craft, upgrade } from './systems/crafting.js';
 import { generateEncounter, isBossFloor, MAX_FLOORS } from './data/floors.js';
 import { guOf } from './systems/cultivation.js';
@@ -689,6 +690,32 @@ const G = {
   toggleIdle() { if (autoChallenge) return; S().settings.idle = !S().settings.idle; if (S().settings.idle) startIdle(); else stopIdle(); UI.renderBattleControls(); save(); },
   attemptAdvance,
   toggleAutoChallenge,
+  // Challenge a bounty (a lone raid-boss target). Spends one attempt (win or lose), resolves a real fight
+  // with the active team, and on a win grants the bounty's rewards. Resolves instantly (no arena playback
+  // for now) and reports via toast; the daily roster + attempts persist in state.
+  attemptBounty(slot) {
+    if (!activeTeam().length) return UI.toast('Activate at least one fighter first.');
+    if (!slotUnlocked(slot)) return UI.toast('That bounty is still locked — climb the tower to unlock it.');
+    if (attemptsLeft() <= 0) return UI.toast('No bounty attempts left — they recharge +1 per hour.');
+    spendAttempt();
+    const enc = bountyEncounter(slot);
+    const res = resolveEncounter(enc);
+    const b = enc.bounty;
+    S().stats.battles += 1;
+    commitComprehension(res.allies);   // a real fight trains comprehension like any other
+    processImmortals(res.win);
+    if (res.win) {
+      S().stats.wins += 1;
+      grantBountyRewards(b.rewards);
+      bumpQuest('wins');
+      UI.toast(`Bounty claimed — ${b.name} slain! +${b.rewards.stones}石, +${b.rewards.essence}✦${dropSummary(b.rewards.drops)}`, 5000, 'win');
+    } else {
+      UI.toast(`${b.name} bested your team. Attempt spent — ${attemptsLeft()} left.`, 4500, 'lose');
+    }
+    UI.refreshTop();
+    if (activeTab === 'bounties') UI.render('bounties');
+    save();
+  },
   setFarm(f) {
     // only cleared/beaten floors (1 .. frontier-1) are farmable; floor 1 is the bootstrap target
     f = Math.max(1, Math.min(Math.max(1, S().frontier - 1), f));

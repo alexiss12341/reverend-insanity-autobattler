@@ -93,6 +93,10 @@ export function newGame(slotKey, playerName = 'Fang Yuan', starter = null) {
     // questId→count; claimed marks collected quests; bonusClaimed = the all-clear bonus taken. Empty `date`
     // makes ensureDaily() initialise it on first access. Resets at local midnight.
     daily: { date: '', progress: {}, claimed: {}, bonusClaimed: false },
+    // Bounties — a shared pool of 5 attempts that recharge +1/hour (systems/bounties.js). `lastRefill`
+    // is the stamp the offline-aware refill counts from. The daily bounty ROSTER itself is derived
+    // deterministically from the calendar day (data/bounties.js), so only the attempts need persisting.
+    bounties: { attempts: 5, lastRefill: Date.now() },
     settings: { idle: true, guView: 'grid', invView: 'grid', teamSort: 'power', teamFilter: 'all', teamRarity: 'all', teamPath: 'all', fmSort: 'power', fmRarity: 'all', fmPath: 'all', guTier: 'all', guPath: 'all', guOpen: {}, killerOpen: {}, shopRarity: 'all', shopPath: 'all', shopSearch: '', shopQty: 1, allocStep: 10, audio: { bgm: 7, sfx: 7, bgmMuted: false, sfxMuted: false } },
   };
 }
@@ -239,6 +243,8 @@ export function migrateSave(o) {
   }
   // Daily Quests board — backfill on pre-quest saves (starts fresh on next access via ensureDaily).
   if (o.daily == null || typeof o.daily !== 'object') o.daily = { date: '', progress: {}, claimed: {}, bonusClaimed: false };
+  // Bounties attempts pool — backfill on pre-bounty saves (start full).
+  if (o.bounties == null || typeof o.bounties !== 'object') o.bounties = { attempts: 5, lastRefill: Date.now() };
   if (o.onboarding == null) o.onboarding = { active: false, dismissed: true, tipsSeen: {}, rewarded: true };
   // Backfill the tutorial-completion bonus guard on pre-reward saves: veterans (onboarding already
   // inactive) are past the tutorial → mark rewarded so re-arming the guide can't pay out; a genuine

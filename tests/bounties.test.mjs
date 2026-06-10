@@ -10,6 +10,7 @@ import { commOf } from '../src/data/daoPaths.js';
 import { playerPool, roleAttrs, ATTR_KEYS } from '../src/data/attributes.js';
 import { resolveEncounter } from '../src/systems/battle.js';
 import { buildBounty, buildBountyEncounter, slotRank, slotRarity, slotUnlockFloor, bountyPath, bountyEssence, BOUNTY_SLOTS } from '../src/data/bounties.js';
+import { attemptsLeft, spendAttempt, refillAttempts, msToNextAttempt, slotUnlocked, grantBountyRewards, BOUNTY_MAX_ATTEMPTS, BOUNTY_REFILL_MS } from '../src/systems/bounties.js';
 
 const REPORT = process.env.BOUNTY_REPORT === '1';
 const DAY = '2026-06-10';
@@ -133,3 +134,27 @@ for (let i = 0; i < 5; i++) {
   ok(wr <= 0.60, `slot ${i}: AT MOST 60% team win on a rank/rarity-matched team (winrate ${(wr * 100).toFixed(0)}%)`);
   ok(avgLost > 0.5, `slot ${i}: the boss is a real threat (costs casualties — avg ${avgLost.toFixed(1)} lost)`);
 }
+
+// ---- attempts economy + gating + rewards (systems/bounties.js) -------------------------------------
+section('bounties: attempts pool (5 max, +1/hour, offline-aware) + gating + rewards');
+state.current = newGame('tbounty2');
+ok(attemptsLeft() === BOUNTY_MAX_ATTEMPTS, 'a fresh save starts with a full 5 attempts');
+ok(spendAttempt() && attemptsLeft() === 4, 'spending one attempt leaves 4');
+for (let k = 0; k < 4; k++) spendAttempt();
+ok(attemptsLeft() === 0 && spendAttempt() === false, 'attempts deplete to 0; can\'t spend below 0');
+// rewind lastRefill 2.5h → 2 attempts recharge (offline-aware, partial remainder preserved)
+state.current.bounties.lastRefill = Date.now() - Math.round(2.5 * BOUNTY_REFILL_MS);
+ok(attemptsLeft() === 2, 'two attempts recharge after 2.5h away (offline-aware)');
+ok(msToNextAttempt() > 0 && msToNextAttempt() <= BOUNTY_REFILL_MS, 'next-attempt countdown is within one refill period');
+// progression gating mirrors the band starts
+state.current.frontier = 1;
+ok(slotUnlocked(0) && !slotUnlocked(1) && !slotUnlocked(4), 'frontier 1 → only R1 bounty open');
+state.current.frontier = 151;
+ok(slotUnlocked(0) && slotUnlocked(2) && slotUnlocked(3) && !slotUnlocked(4), 'frontier 151 → R1-R4 open, R5 still locked');
+// reward granting adds stones + essence + the path resources
+const before = { st: state.current.stones, es: state.current.essence };
+const rw = buildBounty(2, DAY).rewards;
+grantBountyRewards(rw);
+ok(state.current.stones === before.st + rw.stones, 'granting a bounty adds its primeval stones');
+ok(state.current.essence === before.es + rw.essence, 'granting a bounty adds its Immortal Essence');
+ok(Object.keys(rw.drops).every((id) => (state.current.resources[id] || 0) >= rw.drops[id]), 'granting a bounty adds its path resources');
