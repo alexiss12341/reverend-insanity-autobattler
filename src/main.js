@@ -838,7 +838,9 @@ const G = {
   buyBoon(key) {
     const r = buyBoon(key);
     if (!r.ok) return UI.toast(r.msg);
-    UI.toast(`${key} boon → Lv ${r.level}.`); UI.render('dao');
+    const extra = r.gained ? ` (+1 Gu slot · +${r.gained.stones}石 · +${r.gained.essence}✦ to this life)` : '';
+    UI.toast(`${key} boon → Lv ${r.level}.${extra}`);
+    UI.render('dao'); UI.refreshTop(); // Insight grants stones/essence + a Gu slot to the current life now
   },
   // Reincarnation is a three-step modal chain (confirm + name → new Dao affinity → new archetype),
   // carried by `pendingReincarnate`. The affinity choices are THIS life's mastered paths (previous

@@ -2053,6 +2053,9 @@ export function viewFloors() {
 // Player-facing patch notes. Add the newest release to the TOP of this list; each entry is
 // { date, title, items: [[heading, html], …] }. HTML is allowed in the item bodies.
 const WHATS_NEW = [
+  { date: 'Jun 11, 2026', title: 'Sovereign Insight', items: [
+    ['Affects your current life', '<b>Sovereign Insight</b> now takes effect the moment you buy a level — on your <b>current</b> cultivator, not just the next reincarnation. Each level grants <b>+1 Gu slot</b> and its <b>bonus stones &amp; essence</b> immediately. (The slot still re-applies, and resources still head-start, at each rebirth too.)'],
+  ] },
   { date: 'Jun 11, 2026', title: 'Set your Dao Affinity', items: [
     ['One-time affinity & archetype pick', 'Older cultivators who never chose a <b>Dao Affinity</b> or <b>archetype</b> (their traits were canon defaults) are now asked to pick both <b>once</b> on load — from the <b>same foundational Dao paths and archetypes a new game offers</b>. The choice is stamped onto your existing character; nothing else about your save changes.'],
   ] },

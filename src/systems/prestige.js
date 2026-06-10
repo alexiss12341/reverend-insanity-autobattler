@@ -4,8 +4,8 @@
 // Souls buy permanent BOONS that carry across every future life:
 //   • Might   — +4% ATK & Max HP to all allies per level (combat).
 //   • Fortune — +8% primeval stones & Immortal Essence gains per level (economy).
-//   • Insight — +1 player Gu slot per level, applied LIVE to the current life (kept synced to the boon
-//               level), plus a one-time bonus-stones/essence head-start granted at each reincarnation.
+//   • Insight — +1 player Gu slot AND a stones/essence bonus per level, applied LIVE to the CURRENT life
+//               the moment a level is bought (the slot also re-applies, and resources head-start, at rebirth).
 import { state, S, newGame, save } from '../state.js';
 import { comprehensionLevelIn } from './dao.js';
 
@@ -25,8 +25,12 @@ export const BOONS = {
   fortune: { name: 'Sovereign Fortune', base: 15, max: 5, blurb: '+8% Primeval Stone & Immortal Essence gains (per level, max 5).' },
   // Insight is the strongest boon (a permanent Gu slot): CAPPED at level 5 and priced at 4× its own
   // original base (5 → 20). migrateSave refunds any legacy save that bought past the cap.
-  insight: { name: 'Sovereign Insight', base: 20, max: 5, blurb: '+1 player Gu slot per level — applied immediately to your current life — plus bonus resources at each rebirth (max 5).' },
+  insight: { name: 'Sovereign Insight', base: 20, max: 5, blurb: '+1 player Gu slot and bonus resources per level — applied immediately to your current life (max 5).' },
 };
+// Sovereign Insight's per-level RESOURCE bonus. Granted to the CURRENT life the moment a level is bought
+// (buyBoon), AND as a fresh-life head-start at each reincarnation (× the boon level).
+export const INSIGHT_STONES_PER_LEVEL = 200;
+export const INSIGHT_ESSENCE_PER_LEVEL = 40;
 export const boonLevel = (key) => prestige().boons[key] || 0;
 export const boonMax = (key) => BOONS[key].max ?? Infinity;
 export const boonAtMax = (key) => boonLevel(key) >= boonMax(key);
@@ -34,7 +38,7 @@ export const boonCost = (key) => BOONS[key].base * (boonLevel(key) + 1);
 
 // Sovereign Insight's +1 Gu slot/level applies to the CURRENT life: the player's bonusSlots (whose ONLY
 // source is Insight) is kept synced to the live boon level. Called after a purchase; load-time sync lives
-// in state.js migrateSave. (Insight's resource head-start half is still a one-time grant at reincarnation.)
+// in state.js migrateSave.
 export function syncInsightSlots() {
   const player = S().roster.find((c) => c.isPlayer) || S().roster[0];
   if (player) player.bonusSlots = prestige().boons.insight || 0;
@@ -47,9 +51,17 @@ export function buyBoon(key) {
   const cost = boonCost(key);
   if (p.souls < cost) return { ok: false, msg: `Need ${cost} Sovereign Souls.` };
   p.souls -= cost; p.boons[key] = (p.boons[key] || 0) + 1;
-  if (key === 'insight') syncInsightSlots(); // grant the Gu slot to the current life right away
+  // Sovereign Insight takes effect on the CURRENT life the instant it's bought: +1 Gu slot (synced) AND
+  // this level's resource bonus, granted right now (not held until the next reincarnation).
+  let gained = null;
+  if (key === 'insight') {
+    syncInsightSlots();
+    S().stones = (S().stones || 0) + INSIGHT_STONES_PER_LEVEL;
+    S().essence = (S().essence || 0) + INSIGHT_ESSENCE_PER_LEVEL;
+    gained = { stones: INSIGHT_STONES_PER_LEVEL, essence: INSIGHT_ESSENCE_PER_LEVEL };
+  }
   save();
-  return { ok: true, level: p.boons[key], cost };
+  return { ok: true, level: p.boons[key], cost, gained };
 }
 
 const hasVenerable = () => S().roster.some((c) => c.realm >= 23);
@@ -97,11 +109,11 @@ export function reincarnate(choice = null) {
     : null;
   const fresh = newGame(slot, playerName || 'Fang Yuan', starter);
   fresh.prestige = p;
-  // Sovereign Insight: head start for the new life.
+  // Sovereign Insight: the new life inherits the permanent +1 Gu slot/level and a fresh resource head-start.
   const insight = p.boons.insight || 0;
   if (insight) {
-    fresh.stones += insight * 200;
-    fresh.essence += insight * 40;
+    fresh.stones += insight * INSIGHT_STONES_PER_LEVEL;
+    fresh.essence += insight * INSIGHT_ESSENCE_PER_LEVEL;
     fresh.roster[0].bonusSlots = (fresh.roster[0].bonusSlots || 0) + insight;
   }
   state.current = fresh;
