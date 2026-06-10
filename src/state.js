@@ -155,6 +155,10 @@ function migrateSave(o) {
     o.prestige.souls = (o.prestige.souls || 0) + refund;
     o.prestige.boons.insight = 5;
   }
+  // Cap the bonus Gu slots a prior reincarnation already granted (bonusSlots — whose ONLY source is the
+  // Insight boon, +1/level) at the same 5. Kept SEPARATE from the refund block above so saves that were
+  // already migrated once (boon clamped, but slots left stale) still get their slots corrected on load.
+  for (const c of (o.roster || [])) if (c && (c.bonusSlots || 0) > 5) c.bonusSlots = 5;
   // Daily Quests board — backfill on pre-quest saves (starts fresh on next access via ensureDaily).
   if (o.daily == null || typeof o.daily !== 'object') o.daily = { date: '', progress: {}, claimed: {}, bonusClaimed: false };
   if (o.onboarding == null) o.onboarding = { active: false, dismissed: true, tipsSeen: {}, rewarded: true };
