@@ -32,6 +32,7 @@ let abortBattle = false;       // set when a new attempt/auto-challenge should i
 let challengeRequested = false; // a manual "Attempt Floor" (frontier) is queued for the next run
 let autoChallenge = false;      // auto-challenge mode: keep assaulting the frontier until a defeat
 let autoChallengeHighest = 0;   // best floor cleared during the current auto-challenge run
+let pendingBounty = null;       // a queued bounty-hunt slot — runs as its own animated arena fight (no auto-resolve)
 let pendingNew = null;          // in-progress new game: { slot, name, path, guId } across the name→path→Gu→archetype modals
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -127,50 +128,70 @@ async function runBattle() {
   if (!S() || battleBusy) return;
   const auto = autoChallenge;                                     // this run is a rung of an auto-challenge
   const manual = challengeRequested;                              // a one-shot "Attempt Floor"
-  const challenging = manual || auto;                             // either way → assault the frontier
-  if (!challenging && !S().settings.idle) return;                 // idle off and nothing queued → stop
+  const bountySlot = pendingBounty;                               // a one-shot bounty hunt (slot index, or null)
+  const isBounty = bountySlot != null;
+  const challenging = manual || auto;                             // frontier assault (a bounty is its own mode)
+  if (!isBounty && !challenging && !S().settings.idle) return;    // idle off and nothing queued → stop
   if (!activeTeam().length) {                                     // no fighters
-    challengeRequested = false;
+    challengeRequested = false; pendingBounty = null;
     if (auto) endAutoChallenge('stopped');
     if (S().settings.idle) idleTimer = setTimeout(runBattle, 1000);
     return;
   }
   battleBusy = true;
   challengeRequested = false;
-  const floor = challenging ? S().frontier : S().farmFloor;
-  const enc = generateEncounter(floor);
+  pendingBounty = null;                                           // consume the queued hunt
+  const floor = challenging ? S().frontier : S().farmFloor;       // (unused for a bounty)
+  const enc = isBounty ? bountyEncounter(bountySlot) : generateEncounter(floor);
+  const bounty = isBounty ? enc.bounty : null;
+  const dispFloor = isBounty ? bounty.floor : floor;              // floor label for the arena header / audio
   const animate = activeTab === 'battle';                         // only the visible screen animates
-  if (animate) Audio.scene(challenging, enc.isBoss);             // ramp the music for a frontier/boss assault
-  // record a timeline whenever we animate; collect the verbose per-hit feed only for a SINGLE manual
-  // attempt. Auto-challenge keeps a concise running history (one result line per floor), like idle farming.
-  const verbose = animate && manual && !auto;
+  if (animate) Audio.scene(challenging || isBounty, enc.isBoss); // ramp the music for an assault / hunt
+  // record a timeline whenever we animate; a single manual attempt + every bounty hunt get the verbose feed.
+  const verbose = animate && ((manual && !auto) || isBounty);
   const log = [];
   const res = resolveEncounter(enc, verbose ? (m) => log.push(m) : undefined, animate ? { record: true } : undefined);
 
   if (animate) {
-    if (challenging) {
+    if (isBounty) {
+      if (verbose) UI.clearLog();
+      UI.logLine(`— Hunting ${bounty.name} · ${bounty.rarity} Rank ${bounty.rank} ${bounty.path} —`, 'rare');
+    } else if (challenging) {
       if (verbose) UI.clearLog();                                 // a lone manual attempt starts a fresh feed
       UI.logLine(`— Assaulting Floor ${floor}${enc.isBoss ? ' BOSS' : ''} (${enc.waves.length} wave${enc.waves.length > 1 ? 's' : ''}) —`, auto ? '' : 'rare');
     }
-    await UI.playTimeline(res.timeline, { floor, isBoss: enc.isBoss });    // animated arena: charge bars, clashes, damage popups
-    if (verbose && !abortBattle) log.forEach((m) => UI.logLine(m)); // dump the full feed after a single manual attempt
+    await UI.playTimeline(res.timeline, { floor: dispFloor, isBoss: enc.isBoss });    // animated arena: charge bars, clashes, damage popups
+    if (verbose && !abortBattle) log.forEach((m) => UI.logLine(m)); // dump the full feed after a single manual attempt / hunt
   } else {
     await sleepAbortable(fightWallMs(res.simTime));   // background: pace by the fight's real duration (interruptible)
   }
   if (!S()) { battleBusy = false; return; } // game reset mid-fight
-  // A new "Attempt Floor"/"Auto-Challenge" interrupted this fight: discard its result (no rewards, no
-  // comprehension, no frontier change) and immediately launch the requested challenge instead.
+  // A new attempt/hunt interrupted this fight: discard its result (no rewards, no attempt spent, no
+  // comprehension) and immediately launch the requested challenge instead.
   if (abortBattle) {
     abortBattle = false;
     battleBusy = false;
-    if (!isHidden() && (autoChallenge || challengeRequested || S().settings.idle)) idleTimer = setTimeout(runBattle, 0);
+    if (!isHidden() && (autoChallenge || challengeRequested || pendingBounty != null || S().settings.idle)) idleTimer = setTimeout(runBattle, 0);
     return;
   }
   commitComprehension(res.allies);
 
   S().stats.battles += 1;
-  if (animate && challenging) (res.win ? Audio.victory : Audio.defeat)(); // a manual assault gets a win/loss sting
-  if (res.win) {
+  if (animate && (challenging || isBounty)) (res.win ? Audio.victory : Audio.defeat)(); // a deliberate fight gets a win/loss sting
+
+  if (isBounty) {                                                 // BOUNTY HUNT: spend an attempt, grant bounty rewards (no floor/frontier logic)
+    spendAttempt();                                               // the hunt resolved → consume one attempt (win or lose)
+    processImmortals(res.win);
+    if (res.win) {
+      S().stats.wins += 1;
+      const got = grantBountyRewards(bounty.rewards);             // rolls the path-Gu chance + grants stones/essence
+      bumpQuest('wins');
+      const guMsg = got && got.gu ? `, + ${got.gu.name}` : '';
+      if (activeTab === 'battle') UI.logLine(`★ BOUNTY CLAIMED — ${bounty.name} slain! +${bounty.rewards.stones}石, +${bounty.rewards.essence}✦${guMsg}`, 'win');
+    } else if (activeTab === 'battle') {
+      UI.logLine(`${bounty.name} bested your team. Attempt spent — ${attemptsLeft()} left.`, 'lose');
+    }
+  } else if (res.win) {
     S().stats.wins += 1;
     const firstTime = !S().clearedFloors[floor];
     const r = distributeRewards(floor, enc.isBoss);
@@ -204,7 +225,7 @@ async function runBattle() {
   // Don't reschedule while the browser tab is hidden — its timers are throttled/frozen, so a live loop
   // there just crawls. We pause instead and credit an offline-style estimate when the tab returns (see
   // the visibilitychange handler). The in-flight run that's settling now is the last one until we're back.
-  if (!isHidden() && (autoChallenge || S().settings.idle || challengeRequested)) idleTimer = setTimeout(runBattle, animate ? 350 : 0); // loop
+  if (!isHidden() && (autoChallenge || S().settings.idle || challengeRequested || pendingBounty != null)) idleTimer = setTimeout(runBattle, animate ? 350 : 0); // loop
   else if (activeTab === 'battle') { Audio.scene(false); UI.render('battle'); } // settled on the battle tab: drop the music back to the calm arena mood + refresh
 }
 
@@ -690,32 +711,22 @@ const G = {
   toggleIdle() { if (autoChallenge) return; S().settings.idle = !S().settings.idle; if (S().settings.idle) startIdle(); else stopIdle(); UI.renderBattleControls(); save(); },
   attemptAdvance,
   toggleAutoChallenge,
-  // Challenge a bounty (a lone raid-boss target). Spends one attempt (win or lose), resolves a real fight
-  // with the active team, and on a win grants the bounty's rewards. Resolves instantly (no arena playback
-  // for now) and reports via toast; the daily roster + attempts persist in state.
+  // Challenge a bounty (a lone raid-boss target). The hunt plays out in the ARENA like a frontier assault —
+  // never an auto-resolve: it queues `pendingBounty`, switches to the Battle tab, and runs the animated
+  // fight (interrupting any in-flight fight). The attempt is spent + rewards granted when it resolves
+  // (runBattle's bounty branch), so an interrupted/queued hunt costs nothing.
   attemptBounty(slot) {
+    if (battleBusy && pendingBounty != null) return;  // a hunt is already queued/running
     if (!activeTeam().length) return UI.toast('Activate at least one fighter first.');
     if (!slotUnlocked(slot)) return UI.toast('That bounty is still locked — climb the tower to unlock it.');
     if (attemptsLeft() <= 0) return UI.toast('No bounty attempts left — they recharge +1 per hour.');
-    spendAttempt();
-    const enc = bountyEncounter(slot);
-    const res = resolveEncounter(enc);
-    const b = enc.bounty;
-    S().stats.battles += 1;
-    commitComprehension(res.allies);   // a real fight trains comprehension like any other
-    processImmortals(res.win);
-    if (res.win) {
-      S().stats.wins += 1;
-      const got = grantBountyRewards(b.rewards);   // rolls the path-Gu chance + grants stones/essence
-      bumpQuest('wins');
-      const guMsg = got && got.gu ? `, + ${got.gu.name}` : '';
-      UI.toast(`Bounty claimed — ${b.name} slain! +${b.rewards.stones}石, +${b.rewards.essence}✦${guMsg}`, 5000, 'win');
-    } else {
-      UI.toast(`${b.name} bested your team. Attempt spent — ${attemptsLeft()} left.`, 4500, 'lose');
-    }
-    UI.refreshTop();
-    if (activeTab === 'bounties') UI.render('bounties');
-    save();
+    if (autoChallenge) endAutoChallenge('stopped');   // a hunt supersedes an auto-climb…
+    challengeRequested = false;                        // …and a queued frontier attempt
+    pendingBounty = slot;
+    if (activeTab !== 'battle') G.setTab('battle');    // watch the hunt unfold in the arena
+    if (battleBusy) { abortBattle = true; UI.abortTimeline(); return; } // cut the in-flight fight; the hunt starts next
+    stopIdle();
+    runBattle();
   },
   setFarm(f) {
     // only cleared/beaten floors (1 .. frontier-1) are farmable; floor 1 is the bootstrap target
