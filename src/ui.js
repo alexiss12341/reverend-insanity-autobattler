@@ -9,7 +9,7 @@ const rankColor = (rank) => rarityColor(rankRarity(rank)); // a rank's colour = 
 import { rarityColor, RARITY_ORDER, rarityTier } from './data/rarities.js';
 import { realmName, realmClass } from './data/realms.js';
 import { PULL_COST, PULL_COST_10, PITY_CAP, pityCount } from './systems/gacha.js';
-import { prestige, BOONS, boonCost, boonLevel, boonAtMax, canReincarnate, soulsAward } from './systems/prestige.js';
+import { prestige, BOONS, boonCost, boonLevel, boonAtMax, canReincarnate, soulsAward, reincarnationPathChoices } from './systems/prestige.js';
 import { DAILY_QUESTS, COMPLETE_ALL_BONUS, ensureDaily, questProgress, questGoal, questComplete, questClaimed, questClaimable, allClaimed, bonusClaimable, pendingReward, claimableCount, msToReset } from './systems/quests.js';
 import { dailyBounties, attemptsLeft, msToNextAttempt, slotUnlocked, BOUNTY_MAX_ATTEMPTS } from './systems/bounties.js';
 import { slotUnlockFloor } from './data/bounties.js';
@@ -241,8 +241,11 @@ function statusBlurb(type) {
   if (d.stun) return 'stuns — skips a turn';
   return '';
 }
-export function starterPathPicker() {
-  const paths = pathList().filter((p) => !isPathLocked(p.id) && pathFloorReq(p.id) <= 50);
+// Reused by both new-game and reincarnation (see reincarnatePathPicker). opts overrides the path set,
+// the per-card onclick handler, and the title/intro/footer copy.
+export function starterPathPicker(opts = {}) {
+  const paths = opts.paths || pathList().filter((p) => !isPathLocked(p.id) && pathFloorReq(p.id) <= 50);
+  const onPick = opts.onPick || 'G.starterPath';
   const cards = paths.map((p) => {
     const col = pathColor(p.id);
     const excel = (PATH_AFFINITY[p.id] || []).map((k) => tagLabel(k)).join(' · ');
@@ -257,7 +260,7 @@ export function starterPathPicker() {
           <ul class="sp-gulist">${arsenal.map((g, i) =>
             `<li${i === 0 ? ' class="cap"' : ''}><b style="color:var(--t6)">${g.name}</b><span class="muted tiny">${effectText(g)}</span></li>`).join('')}</ul></div>`
       : '';
-    return `<div class="starter-path" onclick="G.starterPath('${p.id}')" title="Choose ${pathName(p.id)}">
+    return `<div class="starter-path" onclick="${onPick}('${p.id}')" title="Choose ${pathName(p.id)}">
       <div class="sp-head"><span class="cjk sp-seal" style="color:${col}">${pathCjk(p.id)}</span>
         <span class="sp-name">${pathName(p.id)}</span><span class="pill">${commOf(p.id).label}</span></div>
       <div class="sp-blurb">${PATH(p.id).blurb}</div>
@@ -267,10 +270,10 @@ export function starterPathPicker() {
       ${arsenalHtml}
     </div>`;
   }).join('');
-  return `<h3>Choose your Dao Path</h3>
-    <div class="body"><div class="muted small">The foundation of your cultivation. You'll gain this path's <b>Dao Affinity</b> and begin with one of its Gu — and its resources will be the first you can craft with. Each card previews what the path excels at, the statuses its Gu inflict, and the immortal artifacts it leads toward.</div></div>
+  return `<h3>${opts.title || 'Choose your Dao Path'}</h3>
+    <div class="body"><div class="muted small">${opts.intro || `The foundation of your cultivation. You'll gain this path's <b>Dao Affinity</b> and begin with one of its Gu — and its resources will be the first you can craft with. Each card previews what the path excels at, the statuses its Gu inflict, and the immortal artifacts it leads toward.`}</div></div>
     <div class="starter-grid">${cards}</div>
-    <div class="right"><button onclick="G.closeModal()">Cancel</button></div>`;
+    ${opts.footer || '<div class="right"><button onclick="G.closeModal()">Cancel</button></div>'}`;
 }
 // Step 3: pick a rank-1 Gu of the chosen path (a curated, thematic handful — see gu.starterGusForPath).
 export function starterGuPicker(pathId) {
@@ -297,7 +300,10 @@ const LINE_ACCENT = {
   reaver: '#b03a45', afflictor: '#74c0a0', foundation: '#c79a45', fortune: '#d8a64a', adept: '#b07ad8',
   warden: '#5a8fb0', commander: '#c2b08a', mender: '#6fb08a',
 };
-export function starterArchetypePicker() {
+// Reused by both new-game and reincarnation (see reincarnateArchetypePicker). opts overrides the
+// per-card onclick handler and the title/intro/footer copy.
+export function starterArchetypePicker(opts = {}) {
+  const onPick = opts.onPick || 'G.starterArchetype';
   const cards = LINE_ORDER.map((id) => {
     const acc = LINE_ACCENT[id] || 'var(--blood)';
     const ladder = RARITY_ORDER.map((r) => {
@@ -308,17 +314,38 @@ export function starterArchetypePicker() {
         <span class="arch-eff">${effs.length ? effs.join(' · ') : '<span class="muted">—</span>'}</span>
         ${you ? '<span class="arch-you">yours</span>' : ''}</div>`;
     }).join('');
-    return `<div class="starter-arch" style="--acc:${acc}" onclick="G.starterArchetype('${id}')" title="Become ${LINES[id].name}">
+    return `<div class="starter-arch" style="--acc:${acc}" onclick="${onPick}('${id}')" title="Become ${LINES[id].name}">
       <div class="sp-head"><span class="cjk sp-seal" style="color:${acc}">${lineCjk(id)}</span>
         <span class="sp-name">${LINES[id].name}</span><span class="pill">${lineRole(id)}</span></div>
       <div class="sp-blurb">${lineBlurb(id)}</div>
       <div class="arch-ladder">${ladder}</div>
     </div>`;
   }).join('');
-  return `<h3>Choose your Archetype</h3>
-    <div class="body"><div class="muted small">Your combat calling — a permanent trait stamped onto your cultivator. You'll gain it at <b style="color:${rarityColor(PLAYER_RARITY)}">${PLAYER_RARITY}</b> rarity (the <b>yours</b> row in each card); the rest of the ladder shows how the archetype scales with rarity. Pick the role that fits how you mean to fight.</div></div>
+  return `<h3>${opts.title || 'Choose your Archetype'}</h3>
+    <div class="body"><div class="muted small">${opts.intro || `Your combat calling — a permanent trait stamped onto your cultivator. You'll gain it at <b style="color:${rarityColor(PLAYER_RARITY)}">${PLAYER_RARITY}</b> rarity (the <b>yours</b> row in each card); the rest of the ladder shows how the archetype scales with rarity. Pick the role that fits how you mean to fight.`}</div></div>
     <div class="starter-grid arch">${cards}</div>
-    <div class="right"><button onclick="G.starterArchetypeBack()">← Back</button></div>`;
+    ${opts.footer || '<div class="right"><button onclick="G.starterArchetypeBack()">← Back</button></div>'}`;
+}
+
+// ===== REINCARNATION RE-PICK: new Dao affinity (this life's mastered paths) → new archetype =====
+// Reuses the starter pickers with reincarnation handlers/copy. The affinity choices come from
+// prestige.reincarnationPathChoices (previous affinity + every path at Comprehension level 5+).
+export function reincarnatePathPicker() {
+  const paths = reincarnationPathChoices().map((id) => PATH(id)).filter(Boolean);
+  return starterPathPicker({
+    paths,
+    onPick: 'G.reincarnatePath',
+    title: 'Choose your new Dao Affinity',
+    intro: `Your reborn cultivator's <b>Dao Affinity</b>. The choices are the paths this life <b>mastered</b> — your previous affinity, plus every path you reached <b>Comprehension level 5+</b> in. No starter Gu is granted on rebirth; craft anew toward your chosen path.`,
+    footer: '<div class="right"><button onclick="G.closeModal()">Keep cultivating</button></div>',
+  });
+}
+export function reincarnateArchetypePicker() {
+  return starterArchetypePicker({
+    onPick: 'G.reincarnateArchetype',
+    intro: `Your reborn combat calling — a permanent trait at <b style="color:${rarityColor(PLAYER_RARITY)}">${PLAYER_RARITY}</b> rarity (the <b>yours</b> row in each card). Pick the role for your new life.`,
+    footer: '<div class="right"><button onclick="G.reincarnatePathBack()">← Back</button></div>',
+  });
 }
 
 // ---------- battle / farm ----------
@@ -1987,6 +2014,10 @@ export function viewFloors() {
 // Player-facing patch notes. Add the newest release to the TOP of this list; each entry is
 // { date, title, items: [[heading, html], …] }. HTML is allowed in the item bodies.
 const WHATS_NEW = [
+  { date: 'Jun 11, 2026', title: 'Reincarnation', items: [
+    ['Re-choose your path on rebirth', 'Reincarnating now lets you <b>re-found your cultivator</b>: enter a <b>new name</b>, pick a <b>new archetype</b>, and choose a <b>new Dao Affinity</b> for the life to come.'],
+    ['Affinity from a mastered life', 'The affinity choices are the paths <b>this life mastered</b> — your <b>previous affinity</b> (always), plus <b>every Dao path you reached Comprehension level 5+</b> in. Spread your comprehension wide and you reincarnate with more paths to choose from.'],
+  ] },
   { date: 'Jun 10, 2026', title: 'Bounties', items: [
     ['Bounty board', 'A new <b>賞 Bounties</b> page: a <b>daily-rotating</b> roster of <b>lone raid-boss</b> targets, one per rank band (<b>Common → Legendary</b>). Each wanted-poster card shows the boss’s name, rank, rarity, archetype, Dao path and <b>combat stats</b> (HP · ATK · DEF · SPD).'],
     ['5 attempts, +1/hour', 'You hold <b>5 attempts</b> that recharge <b>+1 per hour</b> (offline too). Every challenge plays out <b>in the arena</b> like a real assault — no auto-resolve — and spends one attempt win or lose.'],

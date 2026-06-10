@@ -6,7 +6,7 @@ import { resolveEncounter, fightWallMs } from './systems/battle.js';
 import { attemptBreakthrough, respecAttributes, respecCost, RESPEC_ESSENCE_COST } from './systems/cultivation.js';
 import { rollFloorRewards, firstClearEssence, rollFarmEssence, applyDrops, buyResource, rollImmortalStones, immortalGuUpkeep, addImmortalStones } from './systems/economy.js';
 import { pull, dismiss, dismissMany, dismissRefund, imprint, imprintCandidates, IMPRINT_CAP, autoImprintAll, duplicateSpares } from './systems/gacha.js';
-import { buyBoon, reincarnate, soulsAward } from './systems/prestige.js';
+import { buyBoon, reincarnate, soulsAward, canReincarnate } from './systems/prestige.js';
 import { bumpQuest, claimQuest, claimBonus, DAILY_QUESTS } from './systems/quests.js';
 import { attemptsLeft, spendAttempt, slotUnlocked, bountyEncounter, grantBountyRewards } from './systems/bounties.js';
 import { craft, upgrade } from './systems/crafting.js';
@@ -34,6 +34,7 @@ let autoChallenge = false;      // auto-challenge mode: keep assaulting the fron
 let autoChallengeHighest = 0;   // best floor cleared during the current auto-challenge run
 let pendingBounty = null;       // a queued bounty-hunt slot — runs as its own animated arena fight (no auto-resolve)
 let pendingNew = null;          // in-progress new game: { slot, name, path, guId } across the name→path→Gu→archetype modals
+let pendingReincarnate = null;  // in-progress reincarnation: { name, path, line } across the name→affinity→archetype modals
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // Like sleep, but bails out early (within ~120ms) if abortBattle is raised — so an off-screen, timed
@@ -832,16 +833,40 @@ const G = {
     if (!r.ok) return UI.toast(r.msg);
     UI.toast(`${key} boon → Lv ${r.level}.`); UI.render('dao');
   },
+  // Reincarnation is a three-step modal chain (confirm + name → new Dao affinity → new archetype),
+  // carried by `pendingReincarnate`. The affinity choices are THIS life's mastered paths (previous
+  // affinity + every path at Comprehension level 5+) — read off the current life before it's wiped.
   reincarnatePrompt() {
+    if (!canReincarnate()) return UI.toast('Reach Floor 20 or forge a Venerable before reincarnating.');
+    pendingReincarnate = {};
+    const cur = S().roster.find((c) => c.isPlayer) || S().roster[0];
+    const name = ((cur && cur.name) || 'Fang Yuan').replace(/"/g, '&quot;');
     UI.showModal(`<h3>Reincarnate?</h3>
-      <p class="muted">This severs your current life — floors, roster, Gu, resources and Dao Marks are all reset. In return you claim about <b>${soulsAward()}</b> Sovereign Souls and keep every permanent boon.</p>
-      <div class="row gap" style="margin-top:14px">
-        <button class="primary" onclick="G.reincarnateConfirm()">Sever this life</button>
-        <button onclick="G.closeModal()">Keep cultivating</button>
-      </div>`);
+      <p class="muted">This severs your current life — floors, roster, Gu, resources and Dao Marks are all reset. In return you claim about <b>${soulsAward()}</b> Sovereign Souls and keep every permanent boon. You'll re-choose your name, Dao affinity, and archetype for the new life.</p>
+      <div class="body">Name your reborn cultivator:<br>
+      <input id="reincName" type="text" maxlength="24" value="${name}"
+        style="width:100%;margin-top:10px;padding:8px;font:inherit"
+        onkeydown="if(event.key==='Enter'){event.preventDefault();G.reincarnateName();}"></div>
+      <div class="right"><button onclick="G.closeModal()">Keep cultivating</button>
+      <button class="primary" onclick="G.reincarnateName()">Continue →</button></div>`);
+    setTimeout(() => { const el = document.getElementById('reincName'); if (el) el.select(); }, 0);
   },
-  reincarnateConfirm() {
-    const r = reincarnate();
+  // Step 2: capture + sanitize the new name, then show the Dao-affinity picker (mastered paths only).
+  reincarnateName() {
+    if (!pendingReincarnate) return;
+    const el = document.getElementById('reincName');
+    let name = ((el && el.value) || '').replace(/[<>]/g, '').trim().slice(0, 24);
+    pendingReincarnate.name = name || 'Fang Yuan';
+    UI.showModal(UI.reincarnatePathPicker(), 'wide');
+  },
+  reincarnatePath(pid) { if (pendingReincarnate) { pendingReincarnate.path = pid; UI.showModal(UI.reincarnateArchetypePicker(), 'wide'); } },
+  reincarnatePathBack() { if (pendingReincarnate) UI.showModal(UI.reincarnatePathPicker(), 'wide'); },
+  // Step 3: chosen archetype LINE finalizes the rebirth (new name + affinity + archetype line).
+  reincarnateArchetype(lineId) {
+    if (!pendingReincarnate) return;
+    const choice = { ...pendingReincarnate, line: lineId };
+    pendingReincarnate = null;
+    const r = reincarnate(choice);
     UI.closeModal();
     if (!r.ok) return UI.toast(r.msg);
     UI.toast(`Reincarnated — +${r.award} Sovereign Souls (${r.souls} total).`);
