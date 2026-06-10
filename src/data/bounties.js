@@ -44,8 +44,8 @@ export const slotUnlockFloor = (i) => (i <= 0 ? 1 : i * 50 + 1);
 const envNum = (k, d) => { try { const v = typeof process !== 'undefined' && process.env && process.env[k]; return v ? Number(v) : d; } catch { return d; } };
 const HP_SCALE = envNum('BOUNTY_HP_SCALE', 1), POOL_SCALE = envNum('BOUNTY_POOL_SCALE', 1);
 //                       R1     R2     R3     R4     R5
-const BOUNTY_HP_MULT   = [9,     8,     8,     10,    11];
-const BOUNTY_POOL_MULT = [0.44,  0.40,  0.45,  0.45,  0.50];
+const BOUNTY_HP_MULT   = [10,    8,     8,     10,    11];
+const BOUNTY_POOL_MULT = [0.45,  0.40,  0.45,  0.45,  0.50];
 const slotHpMult   = (i) => (BOUNTY_HP_MULT[i]   != null ? BOUNTY_HP_MULT[i]   : 7)    * HP_SCALE;
 const slotPoolMult = (i) => (BOUNTY_POOL_MULT[i] != null ? BOUNTY_POOL_MULT[i] : 0.5)  * POOL_SCALE;
 // Stones scale on the same curve as floor rewards, with a bounty premium (limited attempts = better pay).
@@ -98,23 +98,22 @@ export function bountyName(i, path, line, dayKey) {
 }
 
 // The combat ARCHETYPE LINE a bounty boss wears. The rolled path's dominant effect-domain selects a POOL
-// of fitting lines, and a deterministic day+slot+path pick chooses one — so same-domain bosses still
-// DIVERSIFY (offense isn't always a Slayer) while staying coherent with the path. The line both grants
-// tiered stat bonuses (data/traits.js LINES) AND drives a matching killer (floors.js LINE_KILLER): an
-// offense path → Slayer/Vanguard/Assassin nuke, a status path → an Afflictor hex, a defensive path → a
-// Wall's shield/taunt, etc. REAVER is deliberately EXCLUDED: on a lone raid boss its stacked lifesteal
-// (on top of the baked boss lifesteal + the guaranteed sustain Gu) out-sustains a team's DPS and becomes
-// near-unkillable. A blocklist guarantees it's never fielded.
-const BOUNTY_LINE_BLOCKLIST = new Set(['reaver']); // archetypes too strong for the lone-boss mode
+// of fitting lines, and the day's slots are assigned together (least-used spread) — so same-domain bosses
+// still DIVERSIFY while staying coherent with the path. The line both grants tiered stat bonuses
+// (data/traits.js LINES) AND drives a matching killer (floors.js LINE_KILLER): an offense path → a
+// Slayer/Vanguard nuke or a Plaguebringer (Afflictor) hex, a defensive path → a Wall's shield/taunt, etc.
+// EXCLUDED archetypes (BOUNTY_LINE_BLOCKLIST): REAVER (stacked lifesteal out-sustains a team's DPS on a
+// lone boss → near-unkillable) and ASSASSIN (replaced by the debuff-focused Afflictor / "Plaguebringer").
+const BOUNTY_LINE_BLOCKLIST = new Set(['reaver', 'assassin']); // archetypes excluded from the lone-boss mode
 function bountyLinePool(path) {
   const aff = pathAffinity(path), counts = {};
   for (const k of aff) { const d = domainOfKind(k); if (d) counts[d] = (counts[d] || 0) + 1; }
   const domain = Object.keys(counts).sort((a, b) => counts[b] - counts[a])[0] || 'offense';
   let pool;
-  if (domain === 'offense') pool = ['slayer', 'vanguard', 'assassin']; // 3 options → all-offense days still spread
-  else if (domain === 'motion') pool = ['tempest', 'assassin'];
-  else if (domain === 'mystic') pool = ['afflictor', 'tempest'];
-  else pool = ['wall', 'vanguard', 'slayer'];       // guard + vigor → bulk/bruiser/aggressive (never Reaver)
+  if (domain === 'offense') pool = ['slayer', 'vanguard', 'afflictor']; // Afflictor (Plaguebringer) replaces Assassin
+  else if (domain === 'motion') pool = ['tempest', 'afflictor'];
+  else if (domain === 'mystic') pool = ['afflictor', 'tempest'];        // status paths → debuff-focused Afflictor
+  else pool = ['wall', 'vanguard', 'slayer'];       // guard + vigor → bulk/bruiser/aggressive
   return pool.filter((l) => !BOUNTY_LINE_BLOCKLIST.has(l));
 }
 // Assign all five slots' lines TOGETHER so a day's archetypes spread out instead of clustering (when

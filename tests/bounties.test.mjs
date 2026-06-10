@@ -77,12 +77,16 @@ for (let d = 1; d <= 90; d++) {
 }
 ok(r1common, 'R1 slot only ever rolls a common-path target');
 ok(r5deep, 'R5 slot can roll a deep (esoteric) path');
-// Reaver is locked out of the bounty mode (too strong on a lone sustain boss) — never assigned.
-let noReaver = true;
+// Reaver (too strong on a lone sustain boss) and Assassin (replaced by the debuff Afflictor) are locked
+// out of the bounty mode — never assigned. Afflictor ("Plaguebringer") IS fielded.
+let noBlocked = true, sawAfflictor = false;
 for (let d = 1; d <= 28; d++) for (let i = 0; i < 5; i++) {
-  if (buildBounty(i, `2026-08-${String(d).padStart(2, '0')}`).line === 'reaver') noReaver = false;
+  const ln = buildBounty(i, `2026-08-${String(d).padStart(2, '0')}`).line;
+  if (ln === 'reaver' || ln === 'assassin') noBlocked = false;
+  if (ln === 'afflictor') sawAfflictor = true;
 }
-ok(noReaver, 'Reaver archetype is never assigned to a bounty boss (locked out)');
+ok(noBlocked, 'Reaver and Assassin are never assigned to a bounty boss (locked out)');
+ok(sawAfflictor, 'Afflictor (Plaguebringer) debuff archetype IS fielded');
 
 // ---- the BUILD is good -----------------------------------------------------------------------------
 section('bounties: lone target is a well-formed raid boss');
