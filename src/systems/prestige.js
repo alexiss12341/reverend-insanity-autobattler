@@ -6,6 +6,7 @@
 //   • Fortune — +8% primeval stones & Immortal Essence gains per level (economy).
 //   • Insight — each level starts the next life with +1 player Gu slot and bonus stones/essence.
 import { state, S, newGame, save } from '../state.js';
+import { comprehensionLevelIn } from './dao.js';
 
 const DEFAULT = { souls: 0, reincarnations: 0, boons: { might: 0, fortune: 0, insight: 0 } };
 export function prestige() {
@@ -52,7 +53,25 @@ export function soulsAward() {
   return Math.max(1, Math.floor(S().frontier / 4) + ven * 15 + Math.floor(floors / 10));
 }
 
-export function reincarnate() {
+// Reincarnation lets the player re-pick their Dao affinity from the paths THIS life mastered: the
+// previous affinity (always available) plus every path the player character reached Comprehension
+// level REINCARNATION_COMP_THRESHOLD+ in. Read off the CURRENT life, so call before reincarnate() wipes it.
+export const REINCARNATION_COMP_THRESHOLD = 3;
+export function reincarnationPathChoices() {
+  const player = S().roster.find((c) => c.isPlayer) || S().roster[0];
+  if (!player) return [];
+  const prev = player.affinity || [];
+  const extra = [];
+  for (const pid in (player.comprehension || {})) {
+    if (prev.includes(pid)) continue; // previous affinity is added below regardless of its comp level
+    if (comprehensionLevelIn(player, pid) >= REINCARNATION_COMP_THRESHOLD) extra.push(pid);
+  }
+  return [...prev, ...extra];
+}
+
+// `choice` (from the reincarnation pickers, main.js) = { name, path, line }: re-name the cultivator,
+// stamp a new Dao affinity + archetype line onto the reborn player. No starter Gu is granted on rebirth.
+export function reincarnate(choice = null) {
   if (!canReincarnate()) return { ok: false, msg: 'Reach Floor 20 or forge a Venerable before reincarnating.' };
   const award = soulsAward();
   const p = { ...prestige() };
@@ -60,9 +79,10 @@ export function reincarnate() {
   p.souls += award; p.reincarnations += 1;
 
   const slot = S().slot;
-  const playerName = S().roster[0] && S().roster[0].name; // carry the chosen name into the new life
-  const fresh = newGame(slot);
-  if (playerName) fresh.roster[0].name = playerName;
+  const player0 = S().roster.find((c) => c.isPlayer) || S().roster[0];
+  const playerName = (choice && choice.name) || (player0 && player0.name); // chosen (or carried) name
+  const starter = choice && (choice.path || choice.line) ? { path: choice.path, line: choice.line } : null;
+  const fresh = newGame(slot, playerName || 'Fang Yuan', starter);
   fresh.prestige = p;
   // Sovereign Insight: head start for the new life.
   const insight = p.boons.insight || 0;
