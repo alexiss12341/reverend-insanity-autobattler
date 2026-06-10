@@ -138,7 +138,7 @@ export function autoImprintAll() {
 
 // Immortal Essence refunded for dismissing a recruit of `rarity` (rarer = bigger refund). Exported so the
 // UI can preview the amount in the dismiss confirmation prompt.
-export const dismissRefund = (rarity) => Math.round(PULL_COST * 0.4 * Math.pow(1.8, rarityTier(rarity) - 1));
+export const dismissRefund = (rarity) => Math.round(PULL_COST * 0.1 * Math.pow(1.8, rarityTier(rarity) - 1));
 
 // Release a benched recruit back into Immortal Essence (rarer = bigger refund).
 export function dismiss(charId) {
