@@ -3,6 +3,7 @@
 import { NPC_TEMPLATES } from './data/rarities.js';
 import { affinityFor, lineFor } from './data/traits.js';
 import { RESOURCES } from './data/resources.js';
+import { guSlotsOf } from './data/realms.js';
 
 export const SLOT_KEYS = ['xianxia_save_1', 'xianxia_save_2', 'xianxia_save_3'];
 
@@ -156,9 +157,16 @@ function migrateSave(o) {
     o.prestige.boons.insight = 5;
   }
   // Cap the bonus Gu slots a prior reincarnation already granted (bonusSlots — whose ONLY source is the
-  // Insight boon, +1/level) at the same 5. Kept SEPARATE from the refund block above so saves that were
-  // already migrated once (boon clamped, but slots left stale) still get their slots corrected on load.
-  for (const c of (o.roster || [])) if (c && (c.bonusSlots || 0) > 5) c.bonusSlots = 5;
+  // Insight boon, +1/level) at the same 5, then UNEQUIP any Gu left sitting in the now-removed slots.
+  // effectiveStats/battle apply EVERY equipped Gu regardless of the slot cap, so without this trim the
+  // over-cap Gu would keep buffing combat while vanishing from the loadout UI (orphaned). Dropped Gu are
+  // not destroyed — they stay in guInv and return to the pickable pool. Kept SEPARATE from the refund
+  // block so saves already migrated once (boon clamped, but loadout stale) still get corrected on load.
+  for (const c of (o.roster || [])) {
+    if (!c) continue;
+    if ((c.bonusSlots || 0) > 5) c.bonusSlots = 5;
+    if (Array.isArray(c.gu) && c.gu.length > guSlotsOf(c)) c.gu = c.gu.slice(0, guSlotsOf(c));
+  }
   // Daily Quests board — backfill on pre-quest saves (starts fresh on next access via ensureDaily).
   if (o.daily == null || typeof o.daily !== 'object') o.daily = { date: '', progress: {}, claimed: {}, bonusClaimed: false };
   if (o.onboarding == null) o.onboarding = { active: false, dismissed: true, tipsSeen: {}, rewarded: true };
