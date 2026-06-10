@@ -705,6 +705,22 @@ button.mini{font-size:10px;padding:3px 8px;min-width:0;letter-spacing:0.1em}
 .cdx-list{list-style:none;margin:11px 0 4px;padding:0;display:flex;flex-direction:column;gap:6px}
 .cdx-list li{font-size:15.5px;line-height:1.4;padding-left:14px;position:relative}
 .cdx-list li::before{content:"·";position:absolute;left:2px;color:var(--blood-bright);font-weight:700}
+/* codex reference tables (Dao-path focus stats, archetype rarity ladders) — no row striping, just rules */
+.cdx-cat{font-family:var(--serif);font-style:italic;color:var(--blood-bright);font-size:14px;letter-spacing:.04em;margin:18px 0 2px}
+.cdx-cat:first-child{margin-top:10px}
+.cdx-table{width:100%;border-collapse:collapse;margin:6px 0 2px}
+.cdx-table th{font-family:var(--serif);font-weight:600;text-align:left;font-size:11px;letter-spacing:.12em;text-transform:uppercase;
+  color:var(--bone);background:rgba(158,27,39,0.16);border-bottom:1px solid var(--line-strong);padding:7px 10px}
+.cdx-table td{padding:6px 10px;border-bottom:1px solid var(--line-soft);color:var(--bone-dim);vertical-align:top;font-size:14.5px}
+.cdx-table tr:last-child td{border-bottom:0}
+.cdx-table .cdx-path{font-family:var(--serif);color:var(--bone);white-space:nowrap}
+.cdx-table .cdx-seal{font-family:var(--cjk);margin-right:8px}
+.cdx-table .cdx-foc{font-family:var(--mono);font-size:12.5px;letter-spacing:.01em}
+.cdx-arch{margin:16px 0 4px}
+.cdx-arch:first-of-type{margin-top:10px}
+.cdx-arch-head{font-family:var(--serif);font-size:17px;color:var(--bone);display:flex;align-items:baseline;gap:6px}
+.cdx-arch-head b{font-weight:600}
+.cdx-arch-blurb{margin:3px 0 0}
 
 /* ---------- what's new (changelog) ---------- */
 .wn-entry{margin-bottom:22px}
