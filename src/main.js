@@ -35,6 +35,7 @@ let autoChallengeHighest = 0;   // best floor cleared during the current auto-ch
 let pendingBounty = null;       // a queued bounty-hunt slot — runs as its own animated arena fight (no auto-resolve)
 let pendingNew = null;          // in-progress new game: { slot, name, path, guId } across the name→path→Gu→archetype modals
 let pendingReincarnate = null;  // in-progress reincarnation: { name, path, line } across the name→affinity→archetype modals
+let pendingRepick = null;       // in-progress one-time affinity/archetype re-pick: { path, offlineSummary }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // Like sleep, but bails out early (within ~120ms) if abortBattle is raised — so an off-screen, timed
@@ -371,7 +372,13 @@ function startGame(obj, isNew) {
   document.getElementById('game').classList.remove('hidden');
   activeTab = 'battle';
   UI.render('battle');
-  if (!isNew) { const off = applyOffline(); if (off) setTimeout(() => showOffline(off), 200); }
+  if (!isNew) {
+    const off = applyOffline();
+    // One-time Dao affinity/archetype re-pick (legacy saves) takes priority over the offline summary,
+    // which is stashed and shown right after the player chooses. See G.repickStart / G.repickArchetype.
+    if (!S().affinityChosen) { pendingRepick = { offlineSummary: off }; setTimeout(() => G.repickStart(), 200); }
+    else if (off) setTimeout(() => showOffline(off), 200);
+  }
   startIdle();
   save();
 }
@@ -871,6 +878,24 @@ const G = {
     if (!r.ok) return UI.toast(r.msg);
     UI.toast(`Reincarnated — +${r.award} Sovereign Souls (${r.souls} total).`);
     G.setTab('battle'); UI.refreshTop(); save();
+  },
+  // ----- One-time Dao affinity + archetype re-pick (legacy saves that never chose; see startGame) -----
+  // Two-step picker (affinity → archetype), UNRESTRICTED. Stamps the CURRENT player (no new game) and
+  // sets affinityChosen so it never fires again; any stashed offline summary is shown afterward.
+  repickStart() { pendingRepick = pendingRepick || {}; UI.showModal(UI.repickAffinityPicker(), 'wide'); },
+  repickAffinity(pid) { pendingRepick = pendingRepick || {}; pendingRepick.path = pid; UI.showModal(UI.repickArchetypePicker(), 'wide'); },
+  repickAffinityBack() { UI.showModal(UI.repickAffinityPicker(), 'wide'); },
+  repickArchetype(lineId) {
+    const path = pendingRepick && pendingRepick.path;
+    const off = pendingRepick && pendingRepick.offlineSummary;
+    pendingRepick = null;
+    const player = S().roster.find((c) => c.isPlayer) || S().roster[0];
+    if (player) { if (path) player.affinity = [path]; player.line = lineId; }
+    S().affinityChosen = true;
+    UI.closeModal();
+    UI.toast('Dao affinity & archetype set.');
+    UI.render(activeTab); UI.refreshTop(); save();
+    if (off) setTimeout(() => showOffline(off), 250); // deferred offline summary, after the choice
   },
   craft(guId) { const r = craft(guId); if (r.ok) { Audio.forge(); bumpQuest('craft'); } UI.toast(r.ok ? `Refined ${r.gu.name}.` : r.msg); UI.render('gu'); save(); },
   // Audio settings (gear FAB, bottom-left): independent BGM + SFX level bars (0–10) + mute overrides.

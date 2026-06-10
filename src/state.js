@@ -72,6 +72,10 @@ export function newGame(slotKey, playerName = 'Fang Yuan', starter = null) {
     // Born-true so a fresh game is never swept by migrateSave's one-time legacy immortal-Gu purge (a new
     // cultivator opens with only a rank-1 starter Gu — nothing immortal to wipe). See migrateSave.
     immGuPurged: true,
+    // The player has set their Dao affinity + archetype (via the new-game starter pickers or reincarnation).
+    // Legacy saves that predate the starter choice are flagged false by migrateSave so they get a one-time
+    // re-pick prompt on load (see main.js repickStart). Born-true so a fresh game never re-prompts.
+    affinityChosen: true,
     frontier: 1,             // highest reachable floor (boss of frontier not yet cleared)
     farmFloor: 1,            // floor the idle loop grinds
     clearedFloors: {},       // floor -> true (drives first-clear essence)
@@ -116,6 +120,10 @@ export function migrateSave(o) {
   // Immortal Essence Stones (仙石) — a new currency. Pre-existing saves start with none; they unlock
   // organically once the save's roster reaches a Gu Immortal (immortalUnlocked).
   if (o.immortalStones == null) o.immortalStones = 0;
+  // One-time Dao affinity + archetype re-pick: saves that predate the starter-choice flow never let the
+  // player choose (their affinity/line are canon defaults backfilled below). Flag them so the game asks
+  // once on load (main.js repickStart). undefined → false (prompt); a chosen game already carries `true`.
+  if (o.affinityChosen === undefined) o.affinityChosen = false;
   // Yin-Yang → Qi: rename any held path-resources (resources/Gu/floors now derive from the Qi path).
   if (o.resources) for (const id of Object.keys(o.resources)) {
     if (id.startsWith('res_yinyang_')) {
