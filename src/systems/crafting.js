@@ -6,7 +6,7 @@
 // REFINE_MIN fodder are spent. E.g. a [ATK, SPD] Gu needs one ATK + one SPD T-1 same-path Gu; a [ATK]
 // Gu needs two ATK-carrying T-1 same-path Gu. Paths whose tier directly below doesn't exist in the
 // library (e.g. Time, Space, Killing) are crafted from materials alone. No recipe costs Immortal Essence.
-// Tiers 6-10 are unique: only one of each may exist in the world, ever.
+// Tiers 6-10 are unique immortal Gu; crafting them is DISABLED for now (canCraft refuses tier 6+).
 // A Gu's Dao Path commonality gates it behind a minimum frontier floor (esoteric = deep only),
 // and Gu on locked (Three Supreme) paths cannot be crafted yet.
 import { S, uid } from '../state.js';
@@ -96,6 +96,9 @@ export function refineSpec(gu) {
 export function canCraft(guId) {
   const gu = GU_LIB[guId];
   if (!gu) return { ok: false, reasons: ['Unknown Gu.'] };
+  // Immortal Gu (tier 6+, the unique artifacts) are not craftable for now — short-circuit so the UI shows
+  // a single clear reason and the "Craftable now" filter excludes them. (Already-owned immortal Gu still ascend.)
+  if (gu.tier >= 6) return { ok: false, reasons: ['Immortal Gu cannot be crafted for now.'] };
   const reasons = [];
   if (isPathLocked(gu.daoPath)) reasons.push(`${pathName(gu.daoPath)} is not yet comprehensible.`);
   const floorReq = pathFloorReq(gu.daoPath);

@@ -24,13 +24,12 @@ ok(!canCraft('gu_killing_crit_t1').ok, 'esoteric Gu gated behind deeper floors a
 S.frontier = 210;   // esoteric paths unlock at floor 201
 ok(canCraft('gu_killing_crit_t1').ok, 'esoteric Gu craftable once the floor gate is met');
 
-section('core: unique enforcement & gacha');
-// gu_time_evasion_imm (T6 Time "Fate", tag [Evasion]) refines from same-path Gu EXACTLY one tier lower
-// whose tags COVER the output's — both fodder must carry Evasion (a Speed Gu no longer qualifies).
+section('core: immortal Gu uncraftable & gacha');
+// Immortal Gu (tier 6+, the unique artifacts) are NOT craftable for now — even with every material,
+// fodder and floor gate satisfied. gu_time_evasion_imm is a T6 Time "Fate" immortal Gu.
 S.guInv.push({ uid: 'tf1', guId: 'gu_time_evasion_t5' }, { uid: 'tf2', guId: 'gu_time_evasion_t5' });
-const c1 = craft('gu_time_evasion_imm');
-ok(c1.ok, 'unique Gu can be crafted once');
-ok(!canCraft('gu_time_evasion_imm').ok, 'a claimed unique Gu cannot be crafted again');
+ok(!canCraft('gu_time_evasion_imm').ok, 'immortal Gu (tier 6+) cannot be crafted for now');
+ok(!craft('gu_time_evasion_imm').ok, 'crafting an immortal Gu is refused');
 S.essence = 9e9;
 const pr = pull(10);
 ok(pr.ok && pr.got.length === 10, '10-pull returns ten recruits');

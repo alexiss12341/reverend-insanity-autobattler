@@ -1959,6 +1959,7 @@ export function viewFloors() {
 // { date, title, items: [[heading, html], …] }. HTML is allowed in the item bodies.
 const WHATS_NEW = [
   { date: 'Jun 10, 2026', title: 'Balance', items: [
+    ['Immortal Gu crafting paused', 'Crafting <b>Immortal Gu</b> (tier 6+, the unique artifacts) is <b>disabled for now</b>. They still appear in the Refinery but can’t be forged; already-owned immortal Gu are unaffected and still <b>ascend</b>.'],
     ['Sovereign Insight nerf', 'The <b>Sovereign Insight</b> prestige boon has been reined in: it is now <b>capped at 5 levels</b> (previously uncapped), and its purchase <b>cost has been increased to 4×</b>.'],
     ['Sovereign Might &amp; Fortune nerf', '<b>Sovereign Might</b> and <b>Sovereign Fortune</b> now cost <b>5× more per level</b> and are <b>capped at 5 levels</b> (matching Sovereign Insight). Existing prestige levels have been <b>recalibrated</b> to what your already-spent souls buy at the new price — and <b>clamped to the cap</b> — with any <b>leftover souls refunded</b>. Nothing is lost; your boons just sit at a level matching the new cost.'],
   ] },
