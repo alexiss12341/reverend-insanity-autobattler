@@ -12,7 +12,7 @@ import { attemptsLeft, spendAttempt, slotUnlocked, bountyEncounter, grantBountyR
 import { craft, upgrade } from './systems/crafting.js';
 import { generateEncounter, isBossFloor, MAX_FLOORS } from './data/floors.js';
 import { guOf } from './systems/cultivation.js';
-import { GU_LIB, effectText, guEssenceCost, isUnique } from './data/gu.js';
+import { GU_LIB, effectText, guEssenceCost, isUnique, starterGusForPath } from './data/gu.js';
 import { pathName } from './data/daoPaths.js';
 import { autoConfigure, guInDomain, archetypeDomain, ARCHETYPES, KILLER_ARCH_COST } from './data/combos.js';
 import { resourceName, RESOURCES } from './data/resources.js';
@@ -35,6 +35,7 @@ let autoChallengeHighest = 0;   // best floor cleared during the current auto-ch
 let pendingBounty = null;       // a queued bounty-hunt slot — runs as its own animated arena fight (no auto-resolve)
 let pendingNew = null;          // in-progress new game: { slot, name, path, guId } across the name→path→Gu→archetype modals
 let pendingReincarnate = null;  // in-progress reincarnation: { name, path, line } across the name→affinity→archetype modals
+let pendingRepick = null;       // in-progress one-time affinity/archetype re-pick: { path, offlineSummary }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // Like sleep, but bails out early (within ~120ms) if abortBattle is raised — so an off-screen, timed
@@ -372,7 +373,13 @@ function startGame(obj, isNew) {
   document.getElementById('game').classList.remove('hidden');
   activeTab = 'battle';
   UI.render('battle');
-  if (!isNew) { const off = applyOffline(); if (off) setTimeout(() => showOffline(off), 200); }
+  if (!isNew) {
+    const off = applyOffline();
+    // One-time Dao affinity/archetype re-pick (legacy saves) takes priority over the offline summary,
+    // which is stashed and shown right after the player chooses. See G.repickStart / G.repickArchetype.
+    if (!S().affinityChosen) { pendingRepick = { offlineSummary: off }; setTimeout(() => G.repickStart(), 200); }
+    else if (off) setTimeout(() => showOffline(off), 200);
+  }
   startIdle();
   save();
 }
@@ -834,7 +841,9 @@ const G = {
   buyBoon(key) {
     const r = buyBoon(key);
     if (!r.ok) return UI.toast(r.msg);
-    UI.toast(`${key} boon → Lv ${r.level}.`); UI.render('dao');
+    const extra = r.gained ? ` (+1 Gu slot · +${r.gained.stones}石 · +${r.gained.essence}✦ to this life)` : '';
+    UI.toast(`${key} boon → Lv ${r.level}.${extra}`);
+    UI.render('dao'); UI.refreshTop(); // Insight grants stones/essence + a Gu slot to the current life now
   },
   // Reincarnation is a three-step modal chain (confirm + name → new Dao affinity → new archetype),
   // carried by `pendingReincarnate`. The affinity choices are THIS life's mastered paths (previous
@@ -862,9 +871,25 @@ const G = {
     pendingReincarnate.name = name || 'Fang Yuan';
     UI.showModal(UI.reincarnatePathPicker(), 'wide');
   },
-  reincarnatePath(pid) { if (pendingReincarnate) { pendingReincarnate.path = pid; UI.showModal(UI.reincarnateArchetypePicker(), 'wide'); } },
+  // Step 3: chosen affinity → a rank-1 Gu of that NEW path (skip straight to archetype if the path has
+  // no curated starter Gu, e.g. a deep esoteric path, so the chain can never dead-end).
+  reincarnatePath(pid) {
+    if (!pendingReincarnate) return;
+    pendingReincarnate.path = pid; delete pendingReincarnate.guId;
+    if (starterGusForPath(pid).length) UI.showModal(UI.reincarnateGuPicker(pid), 'wide');
+    else UI.showModal(UI.reincarnateArchetypePicker(), 'wide');
+  },
   reincarnatePathBack() { if (pendingReincarnate) UI.showModal(UI.reincarnatePathPicker(), 'wide'); },
-  // Step 3: chosen archetype LINE finalizes the rebirth (new name + affinity + archetype line).
+  // Step 4: chosen starter Gu → archetype picker.
+  reincarnateGu(guId) { if (pendingReincarnate) { pendingReincarnate.guId = guId; UI.showModal(UI.reincarnateArchetypePicker(), 'wide'); } },
+  // Archetype "Back": to the Gu picker if the chosen path has starter Gu, else straight to the path picker.
+  reincarnateArchetypeBack() {
+    if (!pendingReincarnate) return;
+    const pid = pendingReincarnate.path;
+    if (pid && starterGusForPath(pid).length) UI.showModal(UI.reincarnateGuPicker(pid), 'wide');
+    else UI.showModal(UI.reincarnatePathPicker(), 'wide');
+  },
+  // Step 5: chosen archetype LINE finalizes the rebirth (new name + affinity + starter Gu + archetype line).
   reincarnateArchetype(lineId) {
     if (!pendingReincarnate) return;
     const choice = { ...pendingReincarnate, line: lineId };
@@ -874,6 +899,24 @@ const G = {
     if (!r.ok) return UI.toast(r.msg);
     UI.toast(`Reincarnated — +${r.award} Sovereign Souls (${r.souls} total).`);
     G.setTab('battle'); UI.refreshTop(); save();
+  },
+  // ----- One-time Dao affinity + archetype re-pick (legacy saves that never chose; see startGame) -----
+  // Two-step picker (affinity → archetype), UNRESTRICTED. Stamps the CURRENT player (no new game) and
+  // sets affinityChosen so it never fires again; any stashed offline summary is shown afterward.
+  repickStart() { pendingRepick = pendingRepick || {}; UI.showModal(UI.repickAffinityPicker(), 'wide'); },
+  repickAffinity(pid) { pendingRepick = pendingRepick || {}; pendingRepick.path = pid; UI.showModal(UI.repickArchetypePicker(), 'wide'); },
+  repickAffinityBack() { UI.showModal(UI.repickAffinityPicker(), 'wide'); },
+  repickArchetype(lineId) {
+    const path = pendingRepick && pendingRepick.path;
+    const off = pendingRepick && pendingRepick.offlineSummary;
+    pendingRepick = null;
+    const player = S().roster.find((c) => c.isPlayer) || S().roster[0];
+    if (player) { if (path) player.affinity = [path]; player.line = lineId; }
+    S().affinityChosen = true;
+    UI.closeModal();
+    UI.toast('Dao affinity & archetype set.');
+    UI.render(activeTab); UI.refreshTop(); save();
+    if (off) setTimeout(() => showOffline(off), 250); // deferred offline summary, after the choice
   },
   craft(guId) { const r = craft(guId); if (r.ok) { Audio.forge(); bumpQuest('craft'); } UI.toast(r.ok ? `Refined ${r.gu.name}.` : r.msg); UI.render('gu'); save(); },
   // Audio settings (gear FAB, bottom-left): independent BGM + SFX level bars (0–10) + mute overrides.

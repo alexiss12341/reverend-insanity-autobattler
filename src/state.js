@@ -72,6 +72,10 @@ export function newGame(slotKey, playerName = 'Fang Yuan', starter = null) {
     // Born-true so a fresh game is never swept by migrateSave's one-time legacy immortal-Gu purge (a new
     // cultivator opens with only a rank-1 starter Gu — nothing immortal to wipe). See migrateSave.
     immGuPurged: true,
+    // The player has set their Dao affinity + archetype (via the new-game starter pickers or reincarnation).
+    // Legacy saves that predate the starter choice are flagged false by migrateSave so they get a one-time
+    // re-pick prompt on load (see main.js repickStart). Born-true so a fresh game never re-prompts.
+    affinityChosen: true,
     frontier: 1,             // highest reachable floor (boss of frontier not yet cleared)
     farmFloor: 1,            // floor the idle loop grinds
     clearedFloors: {},       // floor -> true (drives first-clear essence)
@@ -116,6 +120,10 @@ export function migrateSave(o) {
   // Immortal Essence Stones (仙石) — a new currency. Pre-existing saves start with none; they unlock
   // organically once the save's roster reaches a Gu Immortal (immortalUnlocked).
   if (o.immortalStones == null) o.immortalStones = 0;
+  // One-time Dao affinity + archetype re-pick: saves that predate the starter-choice flow never let the
+  // player choose (their affinity/line are canon defaults backfilled below). Flag them so the game asks
+  // once on load (main.js repickStart). undefined → false (prompt); a chosen game already carries `true`.
+  if (o.affinityChosen === undefined) o.affinityChosen = false;
   // Yin-Yang → Qi: rename any held path-resources (resources/Gu/floors now derive from the Qi path).
   if (o.resources) for (const id of Object.keys(o.resources)) {
     if (id.startsWith('res_yinyang_')) {
@@ -230,15 +238,18 @@ export function migrateSave(o) {
       o.prestige.boons[key] = 5;
     }
   }
-  // Cap the bonus Gu slots a prior reincarnation already granted (bonusSlots — whose ONLY source is the
-  // Insight boon, +1/level) at the same 5, then UNEQUIP any Gu left sitting in the now-removed slots.
+  // Bonus Gu slots (bonusSlots — whose ONLY source is the Sovereign Insight boon, +1/level). Insight's
+  // Gu slot is now LIVE on the CURRENT life, so the PLAYER's bonusSlots is synced to the live boon level
+  // every load (so a level bought in a past session is reflected now). Other characters never gain it;
+  // their (legacy) bonusSlots is just capped at 5. Then UNEQUIP any Gu left in now-removed slots —
   // effectiveStats/battle apply EVERY equipped Gu regardless of the slot cap, so without this trim the
   // over-cap Gu would keep buffing combat while vanishing from the loadout UI (orphaned). Dropped Gu are
-  // not destroyed — they stay in guInv and return to the pickable pool. Kept SEPARATE from the refund
-  // block so saves already migrated once (boon clamped, but loadout stale) still get corrected on load.
+  // not destroyed — they stay in guInv and return to the pickable pool.
+  const insightLvl = (o.prestige && o.prestige.boons && o.prestige.boons.insight) || 0;
   for (const c of (o.roster || [])) {
     if (!c) continue;
-    if ((c.bonusSlots || 0) > 5) c.bonusSlots = 5;
+    if (c.isPlayer) c.bonusSlots = insightLvl;           // live: track the current Insight boon level
+    else if ((c.bonusSlots || 0) > 5) c.bonusSlots = 5;
     if (Array.isArray(c.gu) && c.gu.length > guSlotsOf(c)) c.gu = c.gu.slice(0, guSlotsOf(c));
   }
   // Daily Quests board — backfill on pre-quest saves (starts fresh on next access via ensureDaily).
