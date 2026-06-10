@@ -2058,11 +2058,59 @@ export function viewWhatsNew() {
 }
 
 // ---------- codex ----------
+// Reference table of every Dao Path grouped by category, with its rarity (commonality) and focus stats
+// (PATH_AFFINITY — the effect-kinds the path is built around; a matching Gu line gets the ×1.10 bonus).
+const CODEX_CAT_ORDER = ['five_elements', 'mainstream', 'combat', 'mental', 'utility', 'minor', 'three_supreme'];
+function codexPathTable() {
+  const byCat = {};
+  for (const p of pathList()) (byCat[p.category] = byCat[p.category] || []).push(p);
+  let html = '';
+  for (const cat of CODEX_CAT_ORDER) {
+    const paths = byCat[cat];
+    if (!paths) continue;
+    const rows = paths.map((p) => {
+      const c = commOf(p.id);
+      const foc = PATH_AFFINITY[p.id] || [];
+      const focHtml = foc.length
+        ? foc.map((k) => `<span>${k}</span>`).join(' · ')
+        : '<span class="muted">— locked —</span>';
+      return `<tr>
+        <td class="cdx-path"><span class="cdx-seal" style="color:${pathColor(p.id)}">${p.cjk}</span>${pathName(p.id)}</td>
+        <td><span class="pill" style="color:${c.color};border-color:${c.color}66">${c.label}</span></td>
+        <td class="cdx-foc">${focHtml}</td>
+      </tr>`;
+    }).join('');
+    html += `<div class="cdx-cat">${CATEGORY_LABELS[cat] || cat}</div>
+      <table class="cdx-table"><tr><th>Path</th><th>Rarity</th><th>Focus stats</th></tr>${rows}</table>`;
+  }
+  return html;
+}
+
+// Reference of every archetype LINE — its per-rarity epithet + effect (lineTierEffects abstracts over the
+// self / team-aura / Gu-amp shapes). Mirrors the new-game archetype picker's rarity ladder.
+function codexArchetypes() {
+  return LINE_ORDER.map((id) => {
+    const rows = RARITY_ORDER.map((r) => {
+      const effs = lineTierEffects(id, r);
+      return `<tr>
+        <td><b style="color:${rarityColor(r)}">${r}</b></td>
+        <td class="cdx-path">${lineName(id, r)}</td>
+        <td class="cdx-foc">${effs.length ? effs.join(' · ') : '—'}</td>
+      </tr>`;
+    }).join('');
+    return `<div class="cdx-arch">
+      <div class="cdx-arch-head"><span class="cdx-seal" style="color:var(--stone)">${lineCjk(id)}</span><b>${LINES[id].name}</b><span class="muted small">— ${lineRole(id)}</span></div>
+      <div class="cdx-arch-blurb muted small">${lineBlurb(id)}</div>
+      <table class="cdx-table"><tr><th>Rarity</th><th>Epithet</th><th>Effect at this rarity</th></tr>${rows}</table>
+    </div>`;
+  }).join('');
+}
+
 export function viewCodex() {
   const toc = [
     ['cdx-1', 'Attributes'], ['cdx-2', 'Realms'], ['cdx-3', 'Breakthroughs'], ['cdx-4', 'Aptitude'],
     ['cdx-5', 'Gu'], ['cdx-6', 'Refining'], ['cdx-7', 'Dao Paths'], ['cdx-8', 'Market'], ['cdx-9', 'Combat & Idle'],
-    ['cdx-10', 'Soul Imprint'], ['cdx-11', 'Killer Moves'],
+    ['cdx-10', 'Soul Imprint'], ['cdx-11', 'Killer Moves'], ['cdx-12', 'Path Focus Stats'], ['cdx-13', 'Archetypes'],
   ].map(([id, label]) => `<a class="cdx-tab" href="#${id}" onclick="G.cdxOpen('${id}');return false;">${label}</a>`).join('');
   const o = S().onboarding || {};
   const onbActive = !!(o.active && !o.dismissed);
@@ -2145,6 +2193,14 @@ export function viewCodex() {
   <br><br><b>Synergy.</b> Your support is already one path; the more of it that <b>also matches the favored domain</b> (★), the stronger the move — a fully on-domain support reads <b>High</b> synergy, an all-off-domain one sits at the floor.
   <br><br><b>Power.</b> Single-target moves hit far harder <i>per foe</i> than AoE — AoE trades raw punch for spread. A deeper set (4–5 Gu) and higher-tier Gu both scale it up.
   <br><br><b>Casting.</b> A killer move spends a chunk of <b>essence</b> on top of normal Gu channeling, so it fires only once you've <b>banked enough surplus</b> — a high aperture (INT, aptitude, the right Gu) charges it faster. After firing it has a short <b>3-turn cooldown</b>. Enemies — especially bosses — wield killer moves too, so read their loadouts.</div></div></details>
+
+  <details class="cdx-sec" id="cdx-12"><summary>${secHead(12, 'Dao Paths &amp; Focus Stats', 'every path at a glance')}</summary>
+  <div class="card"><div class="body">Every Gu belongs to a <b>Dao Path</b>, and each path emphasises a few <b>focus stats</b> — the effect-kinds it is built around. Any Gu whose effect matches one of its path's focus stats gets a flat <b>×1.10</b> boost, and these stats define each path's signature Gu. A path's <b>rarity</b> sets how deep the tower must run before its Gu can be crafted (<b>Common</b> Floor 1 · <b>Uncommon</b> 51 · <b>Rare</b> 101 · <b>Esoteric</b> 201); the three <b>Supreme</b> paths are locked.
+  ${codexPathTable()}</div></div></details>
+
+  <details class="cdx-sec" id="cdx-13"><summary>${secHead(13, 'Archetype Lines', 'effects at every rarity')}</summary>
+  <div class="card"><div class="body">Every cultivator carries one <b>archetype line</b> — chosen at the start, or fixed by canon for recruits. Its bonus is <b>tier-scaled to the holder's rarity</b> (a Common holder gets the weak rung, an Immortal the strongest), and the epithet name changes per rarity too. Most lines are <b>per-unit</b> stat bonuses; <b>Warden / Commander / Mender</b> are <b>team auras</b> applied to the whole side; the <b>Adept</b> amplifies every equipped Gu. A leading <b>−</b> (e.g. the Slayer's −8% DEF) is a deliberate flaw.
+  ${codexArchetypes()}</div></div></details>
 
   ${secHead(0, 'Your Records')}
   <div class="cs-statgrid">
