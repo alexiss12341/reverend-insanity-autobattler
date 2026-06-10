@@ -4,12 +4,12 @@
 // is a real, winnable raid against an on-level mirror team (not a pushover, not a stalemate).
 import { ok, section } from './assert.mjs';
 import { state, newGame, makeCharacter, normalizeFormation } from '../src/state.js';
-import { guList } from '../src/data/gu.js';
+import { guList, GU_LIB } from '../src/data/gu.js';
 import { guSlotsOf } from '../src/data/realms.js';
 import { commOf } from '../src/data/daoPaths.js';
 import { playerPool, roleAttrs, ATTR_KEYS } from '../src/data/attributes.js';
 import { resolveEncounter } from '../src/systems/battle.js';
-import { buildBounty, buildBountyEncounter, slotRank, slotRarity, slotUnlockFloor, bountyPath, bountyEssence, BOUNTY_SLOTS } from '../src/data/bounties.js';
+import { buildBounty, buildBountyEncounter, slotRank, slotRarity, slotUnlockFloor, bountyPath, bountyEssence, bountyGuChances, rollBountyGu, BOUNTY_SLOTS } from '../src/data/bounties.js';
 import { attemptsLeft, spendAttempt, refillAttempts, msToNextAttempt, slotUnlocked, grantBountyRewards, BOUNTY_MAX_ATTEMPTS, BOUNTY_REFILL_MS } from '../src/systems/bounties.js';
 
 const REPORT = process.env.BOUNTY_REPORT === '1';
@@ -107,8 +107,10 @@ for (let i = 0; i < 5; i++) {
   ok(u.line && b.line === u.line, `slot ${i}: has an archetype line (${u.line})`);
   ok(u.killer && u.killer.ops && u.comboCost > 0, `slot ${i}: arms a killer move (${u.killer && u.killer.name})`);
   ok(u.maxHp > 0, `slot ${i}: positive HP (${u.maxHp})`);
-  ok(b.rewards.stones > 0 && b.rewards.essence === bountyEssence(i) && Object.keys(b.rewards.drops).length >= 1,
-    `slot ${i}: rewards = stones + ${bountyEssence(i)}✦ + path resources`);
+  ok(b.rewards.stones > 0 && b.rewards.essence === bountyEssence(i)
+    && b.rewards.guReward && b.rewards.guReward.path === b.path
+    && Math.abs((b.rewards.guReward.chances[b.rank] || 0) - 0.30) < 1e-9,
+    `slot ${i}: rewards = stones + ${bountyEssence(i)}✦ + a 30% path-Gu chance`);
 }
 
 // ---- the FIGHT is a real, winnable raid ------------------------------------------------------------
@@ -152,9 +154,20 @@ ok(slotUnlocked(0) && !slotUnlocked(1) && !slotUnlocked(4), 'frontier 1 → only
 state.current.frontier = 151;
 ok(slotUnlocked(0) && slotUnlocked(2) && slotUnlocked(3) && !slotUnlocked(4), 'frontier 151 → R1-R4 open, R5 still locked');
 // reward granting adds stones + essence + the path resources
-const before = { st: state.current.stones, es: state.current.essence };
-const rw = buildBounty(2, DAY).rewards;
-grantBountyRewards(rw);
+const before = { st: state.current.stones, es: state.current.essence, gu: state.current.guInv.length };
+const rw = buildBounty(2, DAY).rewards;                 // slot 2 = rank 3 → the Gu roll always hits (sums to 100%)
+const got = grantBountyRewards(rw);
 ok(state.current.stones === before.st + rw.stones, 'granting a bounty adds its primeval stones');
 ok(state.current.essence === before.es + rw.essence, 'granting a bounty adds its Immortal Essence');
-ok(Object.keys(rw.drops).every((id) => (state.current.resources[id] || 0) >= rw.drops[id]), 'granting a bounty adds its path resources');
+ok(got.gu && state.current.guInv.length === before.gu + 1, 'a rank-3 bounty grants a path Gu into the inventory');
+ok(GU_LIB[state.current.guInv[state.current.guInv.length - 1].guId].daoPath === rw.guReward.path, 'the granted Gu is of the bounty boss\'s Dao path');
+
+// ---- Gu-reward chance ladder + roll --------------------------------------------------------------
+section('bounties: Gu-reward chance ladder (30% own rank, 70% split across lower ranks)');
+ok(Object.keys(bountyGuChances(1)).length === 1 && Math.abs(bountyGuChances(1)[1] - 0.30) < 1e-9, 'R1: 30% rank-1 (70% miss — no lower rank)');
+{ const c = bountyGuChances(2); ok(Math.abs(c[2] - 0.30) < 1e-9 && Math.abs(c[1] - 0.70) < 1e-9, 'R2: 30% R2 · 70% R1'); }
+{ const c = bountyGuChances(3); ok(Math.abs(c[3] - 0.30) < 1e-9 && Math.abs(c[2] - 0.35) < 1e-9 && Math.abs(c[1] - 0.35) < 1e-9, 'R3: 30% R3 · 35% R2 · 35% R1'); }
+{ const c = bountyGuChances(5); const sum = Object.values(c).reduce((a, b) => a + b, 0); ok(Math.abs(c[5] - 0.30) < 1e-9 && Math.abs(c[4] - 0.175) < 1e-9 && Math.abs(sum - 1) < 1e-9, 'R5: 30% R5 + 17.5% each lower (sums to 100%)'); }
+{ let hits = 0, clean = true; for (let t = 0; t < 200; t++) { const id = rollBountyGu('fire', 5); if (id) { hits++; const g = GU_LIB[id]; if (g.daoPath !== 'fire' || g.tier < 1 || g.tier > 5 || g.unique) clean = false; } }
+  ok(hits === 200 && clean, 'R5 roll always yields a non-unique fire Gu of tier 1-5'); }
+{ let miss = 0; for (let t = 0; t < 400; t++) if (rollBountyGu('fire', 1) === null) miss++; ok(miss > 0 && miss < 400, 'R1 roll both hits (~30%) and misses (~70%)'); }

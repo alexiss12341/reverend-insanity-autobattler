@@ -706,9 +706,10 @@ const G = {
     processImmortals(res.win);
     if (res.win) {
       S().stats.wins += 1;
-      grantBountyRewards(b.rewards);
+      const got = grantBountyRewards(b.rewards);   // rolls the path-Gu chance + grants stones/essence
       bumpQuest('wins');
-      UI.toast(`Bounty claimed — ${b.name} slain! +${b.rewards.stones}石, +${b.rewards.essence}✦${dropSummary(b.rewards.drops)}`, 5000, 'win');
+      const guMsg = got && got.gu ? `, + ${got.gu.name}` : '';
+      UI.toast(`Bounty claimed — ${b.name} slain! +${b.rewards.stones}石, +${b.rewards.essence}✦${guMsg}`, 5000, 'win');
     } else {
       UI.toast(`${b.name} bested your team. Attempt spent — ${attemptsLeft()} left.`, 4500, 'lose');
     }

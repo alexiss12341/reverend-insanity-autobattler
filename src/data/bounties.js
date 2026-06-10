@@ -17,7 +17,7 @@ import { enemyUnit } from './floors.js';
 import { pathList, commOf, pathName, isPathLocked, pathAffinity } from './daoPaths.js';
 import { domainOfKind } from './combos.js';
 import { lineName } from './traits.js';
-import { resourcesForPath } from './resources.js';
+import { guList } from './gu.js';
 import { RARITY_ORDER } from './rarities.js';
 
 export const BOUNTY_SLOTS = 5;
@@ -140,17 +140,34 @@ function assignDayLines(dayKey) {
 }
 const bountyLine = (i, dayKey) => assignDayLines(dayKey)[i] || 'slayer';
 
-// ---- rewards (spec only; granting lives in systems/bounties.js) ----------------------------------
-// Guaranteed (attempts are the limiter): a stone lump + the rolled path's resources at the bounty's rank
-// (a reliable source of that path's crafting mats) + 10·rank ✦ Immortal Essence.
+// ---- rewards (spec + roll; granting lives in systems/bounties.js) --------------------------------
+// A guaranteed stone lump + 10·rank ✦, plus a CHANCE at a random Gu of the boss's Dao path. The Gu's
+// RANK is a lottery: 30% at the bounty's OWN rank, the remaining 70% split EVENLY across all LOWER ranks.
+// Rank 1 has no lower rank, so its 70% is a MISS (no Gu). e.g. R3 → 30% R3 · 35% R2 · 35% R1.
+export function bountyGuChances(rank) {
+  const out = { [rank]: 0.30 };
+  const lowers = rank - 1;
+  if (lowers > 0) { const each = 0.70 / lowers; for (let r = 1; r < rank; r++) out[r] = each; }
+  return out; // rank 1 sums to 0.30 → the other 0.70 is an implicit miss
+}
+// The non-unique (mortal, tier 1-5) Gu of a path at a given tier — the pool a bounty Gu reward draws from.
+const guPoolForPathTier = (path, tier) => guList().filter((g) => g.daoPath === path && g.tier === tier && !g.unique);
+// Roll the Gu reward for a `rank` bounty on `path`: pick a rank by the chance ladder, then a random
+// non-unique Gu of the path at that tier. Returns a guId, or null (the rank-1 miss / empty pool).
+export function rollBountyGu(path, rank, rng = Math.random) {
+  const chances = bountyGuChances(rank);
+  let roll = rng(), chosen = null;
+  for (let r = rank; r >= 1; r--) { const p = chances[r] || 0; if (roll < p) { chosen = r; break; } roll -= p; }
+  if (!chosen) return null;
+  const pool = guPoolForPathTier(path, chosen);
+  return pool.length ? pool[Math.floor(rng() * pool.length)].id : null;
+}
 export function bountyRewards(i, path) {
   const rank = slotRank(i);
   const floor = slotAnchorFloor(i);             // = the rank's realm-gate floor
   const stones = realmGateBossStone(floor) * BOUNTY_STONE_GATE_MULT;  // 25× the gate boss's stone yield
-  const drops = {};
-  const qty = 2 + rank;                                   // 3..7 of each granted type
-  for (const r of resourcesForPath(path).filter((r) => r.rank === rank).slice(0, 2)) drops[r.id] = qty;
-  return { stones, essence: bountyEssence(i), drops };
+  // guReward = the chance descriptor (for the UI); the actual Gu is rolled at win time in systems/bounties.js.
+  return { stones, essence: bountyEssence(i), guReward: { path, rank, chances: bountyGuChances(rank) } };
 }
 
 // ---- the build -----------------------------------------------------------------------------------

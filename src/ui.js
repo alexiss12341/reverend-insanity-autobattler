@@ -2103,9 +2103,14 @@ export function viewBounties() {
   const list = dailyBounties();
   const left = attemptsLeft();
   const nextMs = msToNextAttempt();
-  const rewardLine = (r) => {
-    const res = Object.entries(r.drops || {}).map(([id, q]) => `${q}× ${resourceName(id)}`);
-    return [`+${fmt(r.stones)} 石`, `+${r.essence} ✦`].concat(res).join(' · ');
+  // Gu-reward chance ladder, e.g. "30% R3 · 35% R2 · 35% R1", with a genuine "miss %" (only the rank-1
+  // case actually misses). The miss is taken from the EXACT chances, not the rounded display %s.
+  const guRewardDesc = (gr) => {
+    const ranks = Object.keys(gr.chances).map(Number).sort((a, b) => b - a);
+    const parts = ranks.map((r) => `${Math.round(gr.chances[r] * 100)}% R${r}`);
+    const miss = 1 - ranks.reduce((s, r) => s + gr.chances[r], 0);
+    if (miss > 1e-9) parts.push(`${Math.round(miss * 100)}% miss`);
+    return parts.join(' · ');
   };
   const cards = list.map((b) => {
     const open = slotUnlocked(b.slot);
@@ -2119,7 +2124,8 @@ export function viewBounties() {
       <div class="bc-name">${b.name}</div>
       <div class="bc-arch"><b>${lineName(b.line, b.rarity)}</b> <span class="muted">· ${lineRole(b.line)}</span></div>
       <div class="bc-path muted small">${pathCjk(b.path)} ${pathName(b.path)}</div>
-      <div class="bc-reward small">${rewardLine(b.rewards)}</div>
+      <div class="bc-reward small">+${fmt(b.rewards.stones)} 石 · +${b.rewards.essence} ✦</div>
+      <div class="bc-gu small muted">${pathName(b.path).replace(/ Path$/, '')} Gu — ${guRewardDesc(b.rewards.guReward)}</div>
       ${open
         ? `<button class="primary bc-go" ${can ? '' : 'disabled'} onclick="G.attemptBounty(${b.slot})">${left > 0 ? 'Challenge' : 'No attempts left'}</button>`
         : `<button class="bc-go" disabled>🔒 Reach Floor ${slotUnlockFloor(b.slot)}</button>`}

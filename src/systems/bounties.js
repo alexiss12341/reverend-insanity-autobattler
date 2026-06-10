@@ -1,9 +1,10 @@
 // Bounties — the SYSTEMS layer over data/bounties.js: the shared ATTEMPTS pool (5 max, +1/hour, offline-
 // aware), the day's bounty roster, the progression gate, and reward granting. data/bounties.js stays a
 // pure builder (DOM/state-free); this module owns the stateful side via state.current.
-import { S } from '../state.js';
-import { addStones, addEssence, applyDrops } from './economy.js';
-import { buildBounty, buildBountyEncounter, slotUnlockFloor, BOUNTY_SLOTS } from '../data/bounties.js';
+import { S, uid } from '../state.js';
+import { addStones, addEssence } from './economy.js';
+import { buildBounty, buildBountyEncounter, slotUnlockFloor, BOUNTY_SLOTS, rollBountyGu } from '../data/bounties.js';
+import { GU_LIB } from '../data/gu.js';
 
 export const BOUNTY_MAX_ATTEMPTS = 5;
 export const BOUNTY_REFILL_MS = 60 * 60 * 1000; // one attempt recharges per hour
@@ -62,10 +63,17 @@ export const slotUnlocked = (i) => S().frontier >= slotUnlockFloor(i);
 export const dailyBounties = () => Array.from({ length: BOUNTY_SLOTS }, (_, i) => buildBounty(i, bountyDayKey()));
 export const bountyEncounter = (i) => buildBountyEncounter(i, bountyDayKey());
 
-// Grant a bounty's reward spec (primeval stones + Immortal Essence + the target's path resources).
+// Grant a bounty's rewards: the guaranteed primeval stones + Immortal Essence, plus a ROLLED chance at a
+// Gu of the target's Dao path (added to the inventory unequipped). Returns { gu } describing the Gu won
+// (null when the roll misses — the rank-1 70% case) so the caller can report it.
 export function grantBountyRewards(rewards) {
-  if (!rewards) return;
+  if (!rewards) return { gu: null };
   if (rewards.stones) addStones(rewards.stones);
   if (rewards.essence) addEssence(rewards.essence);
-  if (rewards.drops) applyDrops(rewards.drops);
+  let gu = null;
+  if (rewards.guReward) {
+    const guId = rollBountyGu(rewards.guReward.path, rewards.guReward.rank);
+    if (guId && GU_LIB[guId]) { S().guInv.push({ uid: uid('g'), guId }); gu = { guId, name: GU_LIB[guId].name, tier: GU_LIB[guId].tier }; }
+  }
+  return { gu };
 }
