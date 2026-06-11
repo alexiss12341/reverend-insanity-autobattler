@@ -682,10 +682,22 @@ async function _sleepAbort(ms) {
   while (waited < ms && !_timelineAbort) { const chunk = Math.min(100, ms - waited); await _sleep(chunk); waited += chunk; }
 }
 function dmgPopup(host, text, cls, dy, life) {
-  if (!host) return;
+  if (!host) return null;
   const d = document.createElement('div'); d.className = 'dmgpop ' + (cls || ''); d.textContent = text;
   if (dy) d.style.marginTop = dy + 'px';
   host.appendChild(d); setTimeout(() => d.remove(), life || 760);
+  return d;
+}
+// Shift a group of popups horizontally (as one) so they stay within the viewport — used for the wide
+// killer-move banner, which is centred on the actor and would otherwise clip off-screen at arena edges.
+function clampBannerX(els) {
+  els = els.filter(Boolean); if (!els.length) return;
+  const pad = 10; let minL = Infinity, maxR = -Infinity;
+  for (const el of els) { const r = el.getBoundingClientRect(); if (r.left < minL) minL = r.left; if (r.right > maxR) maxR = r.right; }
+  let dx = 0;
+  if (minL < pad) dx = pad - minL;                          // overflow left → push right
+  else if (maxR > innerWidth - pad) dx = (innerWidth - pad) - maxR; // overflow right → push left
+  if (dx) for (const el of els) el.style.marginLeft = Math.round(dx) + 'px';
 }
 // Pixel transform that carries the attacker block `ae` across the board so it bumps into its target
 // `te` (edge-to-edge, with a slight overlap) rather than just nudging in place. Reads live layout, so
@@ -791,7 +803,9 @@ export async function playTimeline(tl, ctx = {}) {
       // attack (the actor block travels across the board); a pure heal/buff move stays in place.
       if (act.combo) {
         const cbs = ae ? ae.closest('.bside') : null;
-        if (ae) { ae.classList.add('lunging', 'casting'); if (cbs) cbs.classList.add('lunge-active'); dmgPopup(ae, act.combo.cjk || '✦', 'combo-cjk', -76, 1260); dmgPopup(ae, act.combo.name, 'combo', 0, 1260); }
+        if (ae) { ae.classList.add('lunging', 'casting'); if (cbs) cbs.classList.add('lunge-active');
+          const _g = dmgPopup(ae, act.combo.cjk || '✦', 'combo-cjk', -76, 1260); const _n = dmgPopup(ae, act.combo.name, 'combo', 0, 1260);
+          clampBannerX([_g, _n]); } // keep the wide banner on-screen near arena edges
         Audio.crit();
         // coloured aura on each affected unit: red hostile (damage/debuff) · green heal/buff · blue guard · red-orange warcry
         const auraEls = (act.auras || []).map((g) => { const e = el(g.side, g.i); if (e) e.classList.add('km-aura', 'km-' + g.kind); return e; }).filter(Boolean);
