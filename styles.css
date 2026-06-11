@@ -452,6 +452,31 @@ button.mini{font-size:10px;padding:3px 8px;min-width:0;letter-spacing:0.1em}
 .cs-realm{font-family:var(--cjk);font-weight:600;font-size:22px;color:var(--blood-bright);margin-bottom:4px}
 .cs-sub{font-family:var(--serif);font-size:18px;color:var(--bone-dim)}
 .cs-tags{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}
+/* Character-sheet identity chips a touch larger for readability (other .tag chips are unchanged). */
+.cs-tags .tag{font-size:12px;padding:5px 11px;letter-spacing:.12em}
+/* THEMED hover tooltip — a single body-level portal card (#tip-pop) positioned with JS so it NEVER
+   clips against scroll/overflow ancestors. Rich tooltips keep their markup in a hidden .tip data
+   holder inside a .tip-host; plain native title="" hints are intercepted and shown as a .tip-line.
+   See ui.js initTooltips(). */
+.tip-host{cursor:help}
+.tip{display:none}
+#tip-pop{position:fixed;z-index:9999;display:none;pointer-events:none;
+  width:max-content;max-width:300px;padding:9px 12px 10px;
+  text-align:left;text-transform:none;letter-spacing:normal;line-height:1.4;
+  background:linear-gradient(180deg,#191311,#100b0a);border:1px solid var(--line-strong);
+  border-top:2px solid var(--blood);border-radius:3px;
+  box-shadow:0 12px 30px rgba(0,0,0,.6),inset 0 0 0 1px rgba(0,0,0,.35);
+  font-family:var(--serif);color:var(--bone)}
+#tip-pop.on{display:block;animation:tiprise .14s ease-out}
+@keyframes tiprise{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+#tip-pop .tip-head{display:block;font-family:var(--cjk);font-weight:600;font-size:14px;letter-spacing:.02em;color:#f3e9da}
+#tip-pop .tip-sub{display:block;margin-top:2px;font-style:italic;font-size:12.5px;color:var(--muted)}
+#tip-pop .tip-eff{display:flex;flex-direction:column;gap:3px;margin-top:8px;padding-top:7px;border-top:1px solid var(--line)}
+#tip-pop .tip-eff>span{font-family:var(--mono);font-size:11px;letter-spacing:.02em;color:var(--stone)}
+#tip-pop .tip-line{display:block;font-size:13px;color:var(--bone-dim)}
+#tip-pop::after{content:"";position:absolute;left:var(--arrow-x,20px);transform:translateX(-50%);border:7px solid transparent}
+#tip-pop:not(.below)::after{top:100%;border-top-color:var(--line-strong)}
+#tip-pop.below::after{bottom:100%;border-bottom-color:var(--line-strong)}
 .cs-aside{text-align:right;font-family:var(--mono);font-size:11px;line-height:2.1;color:var(--muted);letter-spacing:.06em}
 .cs-aside b{display:block;color:var(--bone);font-weight:400;font-size:14px;letter-spacing:.1em;font-family:var(--serif)}
 .cs-aside .k{font-size:9.5px;letter-spacing:.2em}

@@ -246,6 +246,12 @@ function statusBlurb(type) {
   if (d.stun) return 'stuns — skips a turn';
   return '';
 }
+// How long a battle status lasts, for the path picker's "Inflicts" chip tooltips.
+function statusDurText(type) {
+  const d = STATUS[type]; if (!d) return '';
+  if (d.durMax) return `lasts 1–${d.durMax} actions (by Gu tier)`;
+  return `lasts ${d.dur} action${d.dur > 1 ? 's' : ''}`;
+}
 // Reused by both new-game and reincarnation (see reincarnatePathPicker). opts overrides the path set,
 // the per-card onclick handler, and the title/intro/footer copy.
 export function starterPathPicker(opts = {}) {
@@ -256,8 +262,11 @@ export function starterPathPicker(opts = {}) {
     const excel = (PATH_AFFINITY[p.id] || []).map((k) => tagLabel(k)).join(' · ');
     const stats = pathStatuses(p.id);
     const inflicts = stats.length
-      ? `<div class="sp-inflicts"><span class="sp-k">Inflicts</span> ${stats.map((t) =>
-          `<span class="statchip" style="border-color:${col}77;color:${col}" title="${(STATUS[t] && STATUS[t].label) || t} — ${statusBlurb(t)}">${(STATUS[t] && STATUS[t].label) || t}</span>`).join('')}</div>`
+      ? `<div class="sp-inflicts"><span class="sp-k">Inflicts</span> ${stats.map((t) => {
+          const lbl = (STATUS[t] && STATUS[t].label) || t;
+          return tipTag(lbl, { head: lbl, sub: statusBlurb(t), eff: [statusDurText(t)] },
+            { base: 'statchip', style: `border-color:${col}77;color:${col}` });
+        }).join('')}</div>`
       : `<div class="sp-inflicts"><span class="sp-k">Inflicts</span> <span class="muted">no status — a pure stat &amp; utility path</span></div>`;
     const arsenal = signatureGusForPath(p.id);
     const arsenalHtml = arsenal.length
@@ -1471,6 +1480,57 @@ function csImprint(c) {
   return `<dl class="spec">${rows}</dl>${action}`;
 }
 
+// A THEMED hover tooltip chip — replaces the bare native title= popup with a small design-sheet card
+// that floats above the chip on hover (pure CSS, see .tip-host/.tip). `tip` = { head, sub?, eff?[] };
+// opts.base = the chip's base class (default 'tag'; e.g. 'statchip'); opts.style / opts.cls decorate it.
+function tipTag(label, tip, opts = {}) {
+  const sub = tip.sub ? `<span class="tip-sub">${tip.sub}</span>` : '';
+  const eff = (tip.eff && tip.eff.length)
+    ? `<span class="tip-eff">${tip.eff.map((e) => `<span>${e}</span>`).join('')}</span>` : '';
+  return `<span class="${opts.base || 'tag'} tip-host${opts.cls ? ' ' + opts.cls : ''}"${opts.style ? ` style="${opts.style}"` : ''}>${label}<span class="tip"><b class="tip-head">${tip.head}</b>${sub}${eff}</span></span>`;
+}
+
+// BULLETPROOF tooltip portal. One fixed-position card (#tip-pop) appended to <body> and positioned by
+// JS, so it can never be clipped by an overflow/scroll ancestor (it flips above↔below and clamps to the
+// viewport). It serves BOTH: rich .tip-host chips (markup held in a hidden .tip child) AND any element
+// with a native title="" — the OS popup is suppressed and re-rendered in the game's theme. So every
+// hover hint in the app, present or future, gets the themed treatment with no per-call-site changes.
+const escTipHtml = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+function initTooltips() {
+  if (typeof document === 'undefined' || window.__tipInit) return;
+  window.__tipInit = true;
+  const ready = () => {
+    const pop = document.createElement('div'); pop.id = 'tip-pop'; document.body.appendChild(pop);
+    let cur = null, stash = null; // stash = { el, title } whose native title we temporarily removed
+    const hide = () => { if (stash) { stash.el.setAttribute('title', stash.title); stash = null; } cur = null; pop.classList.remove('on'); };
+    const place = () => {
+      if (!cur || !document.body.contains(cur)) return hide();
+      const r = cur.getBoundingClientRect(), pr = pop.getBoundingClientRect(), pad = 8, gap = 10;
+      let below = false, top = r.top - pr.height - gap;
+      if (top < pad) { top = r.bottom + gap; below = true; }
+      if (top + pr.height > innerHeight - pad) top = Math.max(pad, innerHeight - pr.height - pad);
+      const left = Math.max(pad, Math.min(r.left, innerWidth - pr.width - pad));
+      pop.style.left = Math.round(left) + 'px';
+      pop.style.top = Math.round(top) + 'px';
+      pop.classList.toggle('below', below);
+      pop.style.setProperty('--arrow-x', Math.max(12, Math.min(pr.width - 12, (r.left + r.width / 2) - left)) + 'px');
+    };
+    const show = (el, html) => { pop.innerHTML = html; cur = el; pop.classList.add('on'); place(); };
+    document.addEventListener('mouseover', (e) => {
+      const host = e.target.closest && e.target.closest('.tip-host');
+      if (host) { if (host !== cur) { const d = host.querySelector(':scope > .tip'); if (d) show(host, d.innerHTML); } return; }
+      const t = e.target.closest && e.target.closest('[title]');
+      if (t) { const title = t.getAttribute('title'); if (title && title.trim()) { t.removeAttribute('title'); stash = { el: t, title }; show(t, `<span class="tip-line">${escTipHtml(title)}</span>`); } }
+    });
+    document.addEventListener('mouseout', (e) => { if (cur && !(e.relatedTarget && cur.contains(e.relatedTarget))) hide(); });
+    window.addEventListener('scroll', () => { if (cur) place(); }, true);
+    window.addEventListener('resize', () => { if (cur) place(); });
+    document.addEventListener('mousedown', hide, true);
+  };
+  if (document.body) ready(); else document.addEventListener('DOMContentLoaded', ready);
+}
+initTooltips();
+
 export function viewCharacter(id) {
   const c = id && S().roster.find((x) => x.id === id);
   if (!c) return `${pagehead('人', 'Roster', 'Not Found', 'That cultivator is no longer in your roster.')}
@@ -1482,11 +1542,19 @@ export function viewCharacter(id) {
   const paths = []; for (const uid of c.gu) { const gu = guOf(uid); if (gu && !paths.includes(gu.daoPath)) paths.push(gu.daoPath); }
   const pathTags = paths.slice(0, 4).map((p) => `<span class="tag" style="border-color:${pathColor(p)}66;color:${pathColor(p)}"><span class="cjk">${pathCjk(p)}</span> ${pathName(p)}</span>`).join('');
   const affPct = Math.round((AFFINITY_EFFECT_MULT - 1) * 100), affComp = Math.round((AFFINITY_COMP_MULT - 1) * 100);
-  const affTag = affinityPaths(c).map((ap) =>
-    `<span class="tag" style="border-color:${pathColor(ap)}aa;color:${pathColor(ap)}" title="Dao Path Affinity — +${affPct}% ${pathName(ap)} Gu effectiveness · +${affComp}% ${pathName(ap)} comprehension XP">✦ <span class="cjk">${pathCjk(ap)}</span> ${affinityName(ap)}</span>`).join('');
+  const affTag = affinityPaths(c).map((ap) => tipTag(
+    `✦ <span class="cjk">${pathCjk(ap)}</span> ${affinityName(ap)}`,
+    { head: `Dao Affinity · ${pathName(ap)}`, sub: "Mastery of this path's Gu",
+      eff: [`+${affPct}% ${pathName(ap)} Gu effectiveness`, `+${affComp}% ${pathName(ap)} comprehension XP`] },
+    { style: `border-color:${pathColor(ap)}aa;color:${pathColor(ap)}` })).join('');
   const lid = lineOf(c), lineDef = lid && LINES[lid];
+  const lineEffs = lineDef ? archEffects(lid, c.rarity) : [];
   const lineTag = lineDef
-    ? `<span class="tag" title="Archetype — ${lineDef.role}${lineDef.phase2 ? ' (support effect pending)' : ''}">⚔ ${lineName(lid, c.rarity)}</span>`
+    ? tipTag(`⚔ ${lineName(lid, c.rarity)}`, {
+        head: `${LINES[lid].name} · ${lineName(lid, c.rarity)}`,
+        sub: lineDef.role + (lineDef.phase2 ? ' · support effect pending' : ''),
+        eff: lineEffs,
+      })
     : '';
   const statusTag = c.active
     ? `<span class="tag blood">Active · ${rowOf(c) === 'back' ? 'Back' : 'Front'} Row</span>`
