@@ -2070,6 +2070,11 @@ export function viewFloors() {
 // Player-facing patch notes. Add the newest release to the TOP of this list; each entry is
 // { date, title, items: [[heading, html], …] }. HTML is allowed in the item bodies.
 const WHATS_NEW = [
+  { date: 'Jun 11, 2026', title: 'Arena Combat', items: [
+    ['Brush-stroke combat text', 'Floating arena text now renders in a <b>Chinese ink-brush calligraphy</b> typeface fitting the cultivation theme — damage stays in Arabic numerals and labels in English, both in brush strokes. Killer-move <b>names</b> ride the brush, while the large <b>background glyph</b> keeps the clean serif.'],
+    ['Bigger, clearer numbers', 'Damage, crit, status and damage-over-time numbers are <b>much larger</b> and easier to read mid-fight, with wider spacing so stacked labels no longer overlap.'],
+    ['Mender feedback', 'A <b>Mender</b>’s team heal now floats a green <b>+N</b> above each restored ally, and a <b>“cleansed”</b> tag appears whenever it strips a debuff — the support worked before, just silently.'],
+  ] },
   { date: 'Jun 11, 2026', title: 'Sovereign Insight', items: [
     ['Affects your current life', '<b>Sovereign Insight</b> now takes effect the moment you buy a level — on your <b>current</b> cultivator, not just the next reincarnation. Each level grants <b>+1 Gu slot</b> and its <b>bonus stones &amp; essence</b> immediately. (The slot still re-applies, and resources still head-start, at each rebirth too.)'],
   ] },
