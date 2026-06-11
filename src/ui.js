@@ -2138,6 +2138,11 @@ export function viewFloors() {
 // Player-facing patch notes. Add the newest release to the TOP of this list; each entry is
 // { date, title, items: [[heading, html], …] }. HTML is allowed in the item bodies.
 const WHATS_NEW = [
+  { date: 'Jun 11, 2026', title: 'Interface', items: [
+    ['Themed hover tooltips', 'Hovering a trait, <b>archetype</b>, <b>Dao affinity</b> or <b>status</b> chip now shows a <b>styled info card</b> in the game’s theme instead of the plain browser popup — and it spells out the trait’s <b>actual effects</b> (an archetype’s per-rarity stat bonuses, a status’s effect and duration, and so on). Every hover hint in the game uses this card now, and it never gets clipped by the edge of the screen.'],
+    ['Sidebar regrouped', 'Related tabs now sit together: <b>Floors</b> moved directly under <b>Battle</b>, and <b>Market</b> + <b>Inventory</b> under <b>Gu Refinery</b>.'],
+    ['Cleaner reading', 'Character-sheet identity chips and the nav labels are a touch larger and easier to read.'],
+  ] },
   { date: 'Jun 11, 2026', title: 'Arena Combat', items: [
     ['Brush-stroke combat text', 'Floating arena text now renders in a <b>Chinese ink-brush calligraphy</b> typeface fitting the cultivation theme — damage stays in Arabic numerals and labels in English, both in brush strokes. Killer-move <b>names</b> ride the brush, while the large <b>background glyph</b> keeps the clean serif.'],
     ['Bigger, clearer numbers', 'Damage, crit, status and damage-over-time numbers are <b>much larger</b> and easier to read mid-fight, with wider spacing so stacked labels no longer overlap.'],
