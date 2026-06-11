@@ -5,5 +5,9 @@ node_modules/
 .vscode/
 dist/
 
+# Raw source fonts (large, incl. the 25MB Noto Serif SC); committed fonts/*.woff2 are subset from these
+# via fonts/build-subset.py — re-download the sources into fonts/_src/ to rebuild.
+fonts/_src/
+
 # Claude Code local settings (machine-specific)
 .claude/settings.local.json
