@@ -486,42 +486,49 @@ function executeKillerMove(u, foes, allies, spec, log, seed) {
   const touched = seed || new Set();
   const hits = [];
   let dmgDealt = 0;
+  // Per-unit aura category for the arena glow (lowest priority index wins): hostile=red (damage/debuff/
+  // essence-drain) · warcry=red-orange (ATK buff) · guard=blue (DEF/thorns/shield/taunt) · heal=green
+  // (heal/cleanse/SPD-or-evasion buff/essence-refuel).
+  const auras = new Map();
+  const AURA_PRI = { hostile: 0, warcry: 1, guard: 2, heal: 3 };
+  const mark = (t, k) => { const c = auras.get(t); if (c === undefined || AURA_PRI[k] < AURA_PRI[c]) auras.set(t, k); };
+  const buffAura = (stat) => (stat === 'atk' ? 'warcry' : (stat === 'def' || stat === 'thorns') ? 'guard' : 'heal');
   log(`${u.name} unleashes ${spec.name}!`);
   for (const op of (spec.ops || [])) {
     const targets = killerTargets(op.sel, u, foes, allies);
     if (op.op === 'damage') {
       const n = op.hits || 1;
-      for (const tgt of targets) { for (let h = 0; h < n && tgt.hp > 0; h++) {
+      for (const tgt of targets) { mark(tgt, 'hostile'); for (let h = 0; h < n && tgt.hp > 0; h++) {
         const r = dealHit(u, tgt, op.mult, { exec: op.exec, armorPenBonus: op.armorPen, perStatus: op.perStatus, inflict: false }, log, touched, foes);
         dmgDealt += r.dmg;
         hits.push({ tgt: { side: tgt.side, i: tgt.idx }, dmg: r.dmg, crit: r.crit, lucky: r.lucky, dodged: r.dodged, applied: r.applied });
       } }
     } else if (op.op === 'status') {
-      for (const tgt of targets) { if (tgt.hp <= 0) continue;
+      for (const tgt of targets) { if (tgt.hp <= 0) continue; mark(tgt, 'hostile');
         const a = applyKillerStatus(u, tgt, spec.statuses, op, log, touched);
         if (a.length) hits.push({ tgt: { side: tgt.side, i: tgt.idx }, dmg: 0, crit: false, lucky: false, dodged: false, applied: a });
       }
     } else if (op.op === 'heal') {
       for (const tgt of targets) { if (tgt.hp <= 0) continue;
         const amt = op.of === 'dmg' ? Math.round((op.pct || 0) * dmgDealt) : Math.round((op.pct || 0) * tgt.max);
-        if (amt > 0) { const h = Math.min(tgt.max, tgt.hp + amt); if (h !== tgt.hp) { tgt.hp = h; touched.add(tgt); } }
+        if (amt > 0) { mark(tgt, 'heal'); const h = Math.min(tgt.max, tgt.hp + amt); if (h !== tgt.hp) { tgt.hp = h; touched.add(tgt); } }
       }
     } else if (op.op === 'cleanse') {
-      for (const tgt of targets) cleanseOne(tgt, op.max || 1);
+      for (const tgt of targets) { mark(tgt, 'heal'); cleanseOne(tgt, op.max || 1); }
     } else if (op.op === 'buff') {
-      for (const tgt of targets) { if (tgt.hp <= 0) continue; applyBuff(tgt, op.stat, op.amount, op.dur); touched.add(tgt); }
+      for (const tgt of targets) { if (tgt.hp <= 0) continue; mark(tgt, buffAura(op.stat)); applyBuff(tgt, op.stat, op.amount, op.dur); touched.add(tgt); }
     } else if (op.op === 'shield') {
       const amt = Math.round((op.pct || 0) * u.max); // % of the CASTER's max HP
-      for (const tgt of targets) { if (tgt.hp <= 0) continue; tgt.shield = (tgt.shield || 0) + amt; touched.add(tgt); }
+      for (const tgt of targets) { if (tgt.hp <= 0) continue; mark(tgt, 'guard'); tgt.shield = (tgt.shield || 0) + amt; touched.add(tgt); }
     } else if (op.op === 'taunt') {
-      for (const tgt of targets) { if (tgt.hp <= 0) continue; (tgt.statuses = tgt.statuses || {}).taunt_t = { turns: op.dur || 3 }; }
+      for (const tgt of targets) { if (tgt.hp <= 0) continue; mark(tgt, 'guard'); (tgt.statuses = tgt.statuses || {}).taunt_t = { turns: op.dur || 3 }; }
     } else if (op.op === 'essence') {
       // signed: +pct refuels allies' channeling/killer essence (Wellspring); −pct drains foes (Enervate)
-      for (const tgt of targets) { if (tgt.hp <= 0 || !(tgt.essMax > 0)) continue;
+      for (const tgt of targets) { if (tgt.hp <= 0 || !(tgt.essMax > 0)) continue; mark(tgt, (op.pct || 0) >= 0 ? 'heal' : 'hostile');
         tgt.ess = Math.max(0, Math.min(tgt.essMax, (tgt.ess || 0) + (op.pct || 0) * tgt.essMax)); touched.add(tgt); }
     }
   }
-  return { target: null, dmg: 0, crit: false, lucky: false, dodged: false, applied: [], combo: { name: spec.name, cjk: spec.cjk }, hits, touched: [...touched] };
+  return { target: null, dmg: 0, crit: false, lucky: false, dodged: false, applied: [], combo: { name: spec.name, cjk: spec.cjk }, hits, auras: [...auras].map(([unit, kind]) => ({ unit, kind })), touched: [...touched] };
 }
 
 // Resolve a killer-move op selector → the list of target units. foes = enemy side, allies = own side.
@@ -575,6 +582,7 @@ function serializeAct(actor, ev) {
     a.combo = ev.combo;
     a.hits = (ev.hits || []).map((h) => ({ tgt: h.tgt, dmg: h.dmg, crit: h.crit, lucky: h.lucky, dodged: h.dodged,
       applied: h.applied && h.applied.length ? h.applied.slice() : null }));
+    if (ev.auras && ev.auras.length) a.auras = ev.auras.map((x) => ({ side: x.unit.side, i: x.unit.idx, kind: x.kind }));
   }
   // Mender aura: per-ally heal numbers + cleansed tags (side/index-addressed) for the arena to float
   if (ev.heals && ev.heals.length) a.heals = ev.heals.map((h) => ({ side: h.unit.side, i: h.unit.idx, amt: h.amt }));

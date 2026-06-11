@@ -681,11 +681,11 @@ async function _sleepAbort(ms) {
   let waited = 0;
   while (waited < ms && !_timelineAbort) { const chunk = Math.min(100, ms - waited); await _sleep(chunk); waited += chunk; }
 }
-function dmgPopup(host, text, cls, dy) {
+function dmgPopup(host, text, cls, dy, life) {
   if (!host) return;
   const d = document.createElement('div'); d.className = 'dmgpop ' + (cls || ''); d.textContent = text;
   if (dy) d.style.marginTop = dy + 'px';
-  host.appendChild(d); setTimeout(() => d.remove(), 760);
+  host.appendChild(d); setTimeout(() => d.remove(), life || 760);
 }
 // Pixel transform that carries the attacker block `ae` across the board so it bumps into its target
 // `te` (edge-to-edge, with a slight overlap) rather than just nudging in place. Reads live layout, so
@@ -789,8 +789,10 @@ export async function playTimeline(tl, ctx = {}) {
       // KILLER MOVE: a combo act has no single lunge target — float a name banner on the actor, flash &
       // float damage/status on EACH hit, apply all HP/shield changes, then skip the single-target sequence.
       if (act.combo) {
-        if (ae) { ae.classList.add('lunging', 'casting'); dmgPopup(ae, act.combo.cjk || '✦', 'combo-cjk', -76); dmgPopup(ae, act.combo.name, 'combo', 0); }
+        if (ae) { ae.classList.add('lunging', 'casting'); dmgPopup(ae, act.combo.cjk || '✦', 'combo-cjk', -76, 1260); dmgPopup(ae, act.combo.name, 'combo', 0, 1260); }
         Audio.crit();
+        // coloured aura on each affected unit: red hostile (damage/debuff) · green heal/buff · blue guard · red-orange warcry
+        const auraEls = (act.auras || []).map((g) => { const e = el(g.side, g.i); if (e) e.classList.add('km-aura', 'km-' + g.kind); return e; }).filter(Boolean);
         await _sleep(ACT_MS);
         for (const h of (act.hits || [])) {
           const he = el(h.tgt.side, h.tgt.i); if (!he) continue;
@@ -799,8 +801,9 @@ export async function playTimeline(tl, ctx = {}) {
           if (h.applied) { let off = 52; for (const t of h.applied) if (STATUS[t]) { dmgPopup(he, STATUS[t].label, 'status status-' + t, off); off += 44; } }
         }
         (act.hp || []).forEach((h) => { const u = unit(h.side, h.i); if (u) { if (u.hp > 0 && h.hp <= 0) Audio.death(); u.hp = h.hp; u.shield = h.shield || 0; drawHp(h.side, h.i); } });
-        await _sleep(IMPACT_MS + LUNGE_BACK);
+        await _sleep(IMPACT_MS + LUNGE_BACK + 700); // killer-move beat held +0.5s longer (aura + banner linger; next action delayed)
         for (const h of (act.hits || [])) { const he = el(h.tgt.side, h.tgt.i); if (he) he.classList.remove('hit'); }
+        auraEls.forEach((e) => e.classList.remove('km-aura', 'km-hostile', 'km-heal', 'km-guard', 'km-warcry'));
         if (ae) ae.classList.remove('lunging', 'casting');
         continue;
       }
