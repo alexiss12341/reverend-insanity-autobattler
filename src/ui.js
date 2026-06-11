@@ -567,9 +567,14 @@ function unitBlock(u, side, idx) {
   const essVal = u.ess != null ? u.ess : u.essMax;
   const essBar = u.essMax ? `<div class="ub-bar ess val"><i style="width:${pctEss(u)}%"></i><b class="ub-num">${compact(essVal)}</b></div>` : '';
   const stBadges = (u.statuses || []).map(statusChip).join('');
+  // Gu CHANNEL indicator: how many equipped Gu are currently channelled vs total. Drops below total when
+  // essence is too low to channel the whole loadout (any starved Gu — its effect already left combat).
+  const guN = u.guN || 0, guAct = u.activeGu == null ? guN : u.activeGu;
+  const guBadge = guN > 0 ? `<div class="ub-gu${guAct < guN ? ' starved' : ''}" title="Gu channelled (essence-gated): ${guAct} of ${guN}">蠱 ${guAct}/${guN}</div>` : '';
   return `<div class="ublock ${side === 'foe' ? 'enemy' : ''} ${row === 'back' ? 'back' : ''}${cult ? ' ub-cult' : ''} ${u.hp <= 0 ? 'dead' : ''}" id="ub-${side}-${idx}"${title} style="${tileStyle(side, row, u.lane)}">
     ${traitSeal(u)}
     <div class="ub-status">${stBadges}</div>
+    ${guBadge}
     <div class="ub-name"${nameStyle}>${cult ? '◆ ' : ''}${u.name}</div>
     ${imprintStars(u.imprint, 'ub-imp')}
     <div class="ub-bar hp val"><i style="width:${pctHp(u.hp, u.max)}%"></i><u class="ub-shield" style="width:${u.shield && u.max ? Math.min(100, (100 * u.shield) / u.max) : 0}%"></u><b class="ub-num">${hpNumHtml(u)}</b></div>
@@ -742,6 +747,13 @@ export async function playTimeline(tl, ctx = {}) {
     const sh = e.querySelector('.ub-shield'); if (sh) sh.style.width = (u.shield && u.max ? Math.min(100, (100 * u.shield) / u.max) : 0) + '%';
     const num = e.querySelector('.hp .ub-num'); if (num) num.innerHTML = hpNumHtml(u);
     e.classList.toggle('dead', u.hp <= 0); };
+  // Gu channel indicator: reflect how many of the unit's Gu are currently channelled (essence-gated).
+  const drawGu = (side, i) => { const u = unit(side, i), e = el(side, i); if (!u || !e) return;
+    const g = e.querySelector('.ub-gu'); if (!g) return; const n = u.guN || 0;
+    if (n <= 0) { g.style.display = 'none'; return; }
+    const a = u.activeGu == null ? n : u.activeGu;
+    g.textContent = `蠱 ${a}/${n}`; g.title = `Gu channelled (essence-gated): ${a} of ${n}`;
+    g.classList.toggle('starved', a < n); };
   const drawChg = (side, i, g, ms) => { const e = el(side, i); if (!e) return;
     const bar = e.querySelector('.chg>i'); if (ms != null) bar.style.transitionDuration = ms + 'ms';
     const pct = Math.max(0, Math.min(100, (100 * g) / GAUGE_MAX));
@@ -826,7 +838,7 @@ export async function playTimeline(tl, ctx = {}) {
           else if (h.dmg > 0) { he.classList.add('hit'); dmgPopup(he, compact(h.dmg) + (h.lucky ? '‼' : h.crit ? '!' : ''), h.lucky ? 'crit lucky' : h.crit ? 'crit' : ''); Audio.hit(); }
           if (h.applied) { let off = 52; for (const t of h.applied) if (STATUS[t]) { dmgPopup(he, STATUS[t].label, 'status status-' + t, off); off += 44; } }
         }
-        (act.hp || []).forEach((h) => { const u = unit(h.side, h.i); if (u) { if (u.hp > 0 && h.hp <= 0) Audio.death(); u.hp = h.hp; u.shield = h.shield || 0; drawHp(h.side, h.i); } });
+        (act.hp || []).forEach((h) => { const u = unit(h.side, h.i); if (u) { if (u.hp > 0 && h.hp <= 0) Audio.death(); u.hp = h.hp; u.shield = h.shield || 0; if (h.max != null) u.max = h.max; if (h.essMax != null) u.essMax = h.essMax; if (h.ag != null) u.activeGu = h.ag; drawHp(h.side, h.i); drawGu(h.side, h.i); } });
         if (ae && lte) { ae.style.transition = `transform ${LUNGE_BACK}ms ease`; ae.style.transform = ''; } // RECOVER home
         await _sleep(IMPACT_MS + LUNGE_BACK + 700); // killer-move beat held +0.5s longer (aura + banner linger; next action delayed)
         for (const h of (act.hits || [])) { const he = el(h.tgt.side, h.tgt.i); if (he) he.classList.remove('hit'); }
