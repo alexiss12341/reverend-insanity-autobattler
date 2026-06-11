@@ -207,10 +207,10 @@ section('killer: lifesteal & thorns net together — lifesteal directly counters
   c = mk('ally',0,500); c.def = 50; f = mk('foe',0,100000,{ thorns:0.3 });
   run(c, [f]); ok(c.hp === 470, 'attacker DEF mitigates the reflect: round(200×0.3 − 50×0.6)=30 → 500−30');
 
-  // UNCLAMPED: when DEF over-absorbs a small reflect the term goes negative (no min floor), so it nets in
-  // the attacker's favour instead of being clamped to 0
+  // floored at 0: when DEF over-absorbs the reflect, thorns is 0 (NOT negative) — over-mitigation does not
+  // heal the attacker, and there's no min-1 prick either
   c = mk('ally',0,500); c.def = 1000; f = mk('foe',0,100000,{ thorns:0.3 });
-  run(c, [f]); ok(c.hp === 1000, 'no clamp: DEF 1000 → reflect round(60−600)=−540 → net +540 heal (capped at Max)');
+  run(c, [f]); ok(c.hp === 500, 'DEF over-absorb floors thorns at 0 (no heal, no chip): round(60−600)→0 → HP unchanged');
 }
 
 section('killer: fires in battle + enemy parity');

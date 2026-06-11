@@ -475,17 +475,17 @@ function dealHit(u, tgt, mult, opts, log, touched, foes) {
   }
   // LIFESTEAL vs THORNS — resolved TOGETHER as one net HP change on the attacker, lifesteal a DIRECT
   // COUNTER to thorns: net = (lifesteal healed) − (thorns taken). The reflect keeps its original calc —
-  // mitigated by the ATTACKER's DEF (pierced by the target's Armor Pen) — but is now UNCLAMPED (no min
-  // floor) so it nets cleanly against lifesteal like lifesteal itself. Thorns reflects only if the target
-  // survived (no thorns-loop). Positive net HEALS the attacker (capped at Max HP); negative net DAMAGES it
-  // via damageUnit (so the attacker's shield soaks the overflow).
+  // mitigated by the ATTACKER's DEF (pierced by the target's Armor Pen) — floored at 0 so over-mitigation
+  // can't heal the attacker, but with NO min-1 prick. Thorns reflects only if the target survived (no
+  // thorns-loop). Positive net HEALS the attacker (capped at Max HP); negative net DAMAGES it via
+  // damageUnit (so the attacker's shield soaks the overflow).
   const lifeGain = (u.fx.lifesteal > 0) ? Math.round(dmg * u.fx.lifesteal) : 0;
   let thornsDmg = 0;
   if (tgt.hp > 0) {
     const thorns = thornsOf(tgt);
     if (thorns > 0) {
       const rdef = effDef(u) * 0.6 * Math.max(0, 1 - (tgt.fx.armorPen || 0) * ARMOR_PEN_MULT);
-      thornsDmg = Math.round(dmg * thorns - rdef); // reflect − attacker DEF; UNCLAMPED (can net negative)
+      thornsDmg = Math.max(0, Math.round(dmg * thorns - rdef)); // reflect − attacker DEF, floored at 0
     }
   }
   const netHp = lifeGain - thornsDmg;
