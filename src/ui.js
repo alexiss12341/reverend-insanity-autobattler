@@ -789,7 +789,7 @@ export async function playTimeline(tl, ctx = {}) {
       // KILLER MOVE: a combo act has no single lunge target — float a name banner on the actor, flash &
       // float damage/status on EACH hit, apply all HP/shield changes, then skip the single-target sequence.
       if (act.combo) {
-        if (ae) { ae.classList.add('lunging', 'casting'); dmgPopup(ae, act.combo.cjk || '✦', 'combo-cjk', -54); dmgPopup(ae, act.combo.name, 'combo', 0); }
+        if (ae) { ae.classList.add('lunging', 'casting'); dmgPopup(ae, act.combo.cjk || '✦', 'combo-cjk', -76); dmgPopup(ae, act.combo.name, 'combo', 0); }
         Audio.crit();
         await _sleep(ACT_MS);
         for (const h of (act.hits || [])) {
@@ -910,9 +910,13 @@ function activeSlotCard(c) {
   const unspent = unspentPoints(c);
   const guChips = Array.from({ length: guSlotsOf(c) }).map((_, i) => {
     const gu = c.gu[i] ? guOf(c.gu[i]) : null;
-    return gu
-      ? `<div class="slot filled" style="border-color:var(--t${gu.tier})" title="Click to change/unequip" onclick="G.openGuPicker('${c.id}',${i})"><b style="color:var(--t${gu.tier})">T${gu.tier}</b> ${gu.name}</div>`
-      : `<div class="slot" onclick="G.openGuPicker('${c.id}',${i})">+ Gu slot</div>`;
+    if (!gu) return `<div class="slot" onclick="G.openGuPicker('${c.id}',${i})">+ Gu slot</div>`;
+    // hover shows the Gu's details (tier · name · path · effect) via the themed tooltip portal; the
+    // click still opens the equip/unequip picker.
+    const tip = `<b class="tip-head">T${gu.tier} ${gu.name}</b>`
+      + `<span class="tip-sub">${pathName(gu.daoPath)}${isUnique(gu) ? ' · Unique' : ''}</span>`
+      + `<span class="tip-eff"><span>${effectText(gu)}</span><span>Essence ${guEssenceCost(gu)}</span></span>`;
+    return `<div class="slot filled tip-host" style="border-color:var(--t${gu.tier})" onclick="G.openGuPicker('${c.id}',${i})"><b style="color:var(--t${gu.tier})">T${gu.tier}</b> ${gu.name}<span class="tip">${tip}</span></div>`;
   }).join('');
   return `<div class="card teamslot${unspent > 0 ? ' has-alloc' : ''}">
     <div class="row start">
