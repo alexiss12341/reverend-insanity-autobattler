@@ -107,13 +107,52 @@ button.mini{font-size:10px;padding:3px 8px;min-width:0;letter-spacing:0.1em}
 .stat .val{font-size:19px;font-family:var(--mono);color:var(--bone);letter-spacing:.02em}
 .stat .val.stone{color:var(--stone)} .stat .val.jade{color:var(--jade)} .stat .val.immstone{color:var(--immstone)}
 #topbar .spacer{flex:1}
-#main{display:grid;grid-template-columns:208px 1fr;min-height:0}
-#nav{border-right:1px solid var(--line);padding:18px 12px;display:flex;flex-direction:column;gap:3px;background:rgba(8,6,5,0.5)}
-#nav button{text-align:left;background:transparent;border:1px solid transparent;border-left:2px solid transparent;
-  padding:11px 14px;font-size:13px;font-weight:500;letter-spacing:.12em;color:var(--bone-dim);border-radius:0}
-#nav button{position:relative}
-#nav button:hover{background:rgba(208,186,160,0.04);color:var(--bone)}
-#nav button.active{border-left-color:var(--blood-bright);background:linear-gradient(90deg,rgba(158,27,39,0.12),transparent);color:var(--bone)}
+#main{display:grid;grid-template-columns:208px 1fr;min-height:0;transition:grid-template-columns .18s ease}
+#nav{border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0;background:rgba(8,6,5,0.5)}
+/* collapse toggle (top of sidebar) */
+.nav-toggle{align-self:flex-end;width:26px;height:26px;margin:8px 10px 2px;padding:0;flex:none;
+  display:flex;align-items:center;justify-content:center;font-size:15px;line-height:1;color:var(--muted);
+  border:1px solid transparent;border-radius:3px;background:transparent;letter-spacing:0}
+.nav-toggle:hover{color:var(--bone);background:rgba(208,186,160,0.05);border-color:var(--line)}
+/* scrolling tab list — extra bottom padding clears the bottom-left gear FAB */
+.nav-scroll{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;display:flex;flex-direction:column;gap:2px;padding:2px 12px 78px}
+.nav-scroll::-webkit-scrollbar{width:6px}
+.nav-scroll::-webkit-scrollbar-thumb{background:var(--line-strong);border-radius:3px}
+.nav-scroll::-webkit-scrollbar-track{background:transparent}
+/* grouped sections */
+.nav-group{display:flex;flex-direction:column;gap:2px}
+.nav-grp-head{display:flex;align-items:center;gap:8px;width:100%;padding:13px 14px 5px;font-family:var(--mono);
+  font-size:9px;letter-spacing:.24em;text-transform:uppercase;color:var(--muted);user-select:none;
+  background:none;border:none;cursor:pointer;transition:color .15s ease}
+.nav-grp-head:hover{color:var(--bone-dim)}
+.nav-grp-head:hover .nav-grp-ico{color:var(--blood-bright)}
+.nav-grp-chev{margin-left:auto;font-size:8px;color:var(--muted);line-height:1;transition:transform .15s ease}
+.nav-group.collapsed .nav-grp-chev{transform:rotate(-90deg)}
+#main:not(.rail) .nav-group.collapsed button[data-tab]{display:none}
+/* a collapsed group holding the active tab keeps its header lit so the current tab stays findable */
+#main:not(.rail) .nav-group.collapsed:has(button[data-tab].active) .nav-grp-head{color:var(--bone)}
+#main:not(.rail) .nav-group.collapsed:has(button[data-tab].active) .nav-grp-ico{color:var(--blood-bright)}
+.nav-group:first-child .nav-grp-head{padding-top:6px}
+.nav-grp-ico{font-family:var(--cjk);font-size:13px;color:var(--blood-dim);line-height:1}
+#nav button[data-tab]{display:flex;align-items:center;gap:11px;text-align:left;background:transparent;
+  border:1px solid transparent;border-left:2px solid transparent;padding:10px 14px;font-size:13px;
+  font-weight:500;letter-spacing:.12em;color:var(--bone-dim);border-radius:0;position:relative}
+#nav button[data-tab]:hover{background:rgba(208,186,160,0.04);color:var(--bone)}
+#nav button[data-tab].active{border-left-color:var(--blood-bright);background:linear-gradient(90deg,rgba(158,27,39,0.12),transparent);color:var(--bone)}
+.nav-ico{flex:none;width:18px;text-align:center;font-family:var(--cjk);font-size:15px;line-height:1}
+.nav-lbl{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* ---- collapsed icon rail ---- */
+#main.rail{grid-template-columns:60px 1fr}
+#main.rail .nav-scroll{padding-left:0;padding-right:0}
+#main.rail .nav-lbl,#main.rail .nav-grp-lbl{display:none}
+#main.rail #nav button[data-tab]{justify-content:center;gap:0;padding:10px 0}
+#main.rail .nav-ico{width:auto;font-size:17px}
+#main.rail .nav-grp-head{justify-content:center;padding:9px 0 5px;pointer-events:none;cursor:default}
+#main.rail .nav-grp-chev{display:none}
+#main.rail .nav-group + .nav-group{border-top:1px solid var(--line);margin-top:4px;padding-top:2px}
+#main.rail .nav-grp-ico{font-size:14px}
+#main.rail .navbadges{right:7px;top:6px;transform:none}
+#main.rail .nav-toggle{align-self:center;margin:8px auto 4px}
 /* nav notification badges (e.g. fighters with unspent attribute points; duplicate copies to imprint) */
 .navbadges{position:absolute;right:11px;top:50%;transform:translateY(-50%);display:flex;gap:4px;pointer-events:none}
 .navbadge{display:none}

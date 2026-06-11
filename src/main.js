@@ -364,6 +364,24 @@ function migrateAttributes() {
   }
   if (S().settings.allocStep == null) S().settings.allocStep = 10;
 }
+// Apply the persisted sidebar mode: collapse to an icon rail (#main.rail) or the full labeled view, and
+// sync the toggle glyph + per-tab native tooltips (labels hide in rail mode, so title= restores them).
+function applyNavMode() {
+  const collapsed = !!(S() && S().settings && S().settings.navCollapsed);
+  const main = document.getElementById('main'); if (main) main.classList.toggle('rail', collapsed);
+  const tog = document.querySelector('#nav .nav-toggle');
+  if (tog) { tog.textContent = collapsed ? '»' : '«'; tog.setAttribute('aria-label', collapsed ? 'Expand menu' : 'Collapse menu'); }
+  document.querySelectorAll('#nav button[data-tab]').forEach((b) => {
+    const lbl = b.querySelector('.nav-lbl');
+    if (collapsed && lbl) b.title = lbl.textContent.trim(); else b.removeAttribute('title');
+  });
+}
+// Apply each sidebar group's persisted collapsed state (#nav .nav-group.collapsed). No effect in rail mode
+// (the CSS scopes the hide to #main:not(.rail)). Class-only — the nav is static HTML, not re-rendered.
+function applyNavGroups() {
+  const g = (S() && S().settings && S().settings.navGroups) || {};
+  document.querySelectorAll('#nav .nav-group').forEach((el) => el.classList.toggle('collapsed', !!g[el.dataset.group]));
+}
 function startGame(obj, isNew) {
   state.current = obj;
   autoChallenge = false; autoChallengeHighest = 0; challengeRequested = false; abortBattle = false; UI.setAutoChallenge(false);
@@ -371,6 +389,10 @@ function startGame(obj, isNew) {
   normalizeFormation(); // give every active fighter a unique board tile (repairs legacy saves)
   document.getElementById('title').classList.add('hidden');
   document.getElementById('game').classList.remove('hidden');
+  // Every open lands on Battle with a clean, compact sidebar — Combat expanded, the rest folded (the
+  // group layout resets on open just like the active tab does; in-session toggles still work).
+  S().settings.navGroups = { roster: true, cultivation: true, workshop: true, records: true };
+  applyNavMode(); applyNavGroups();
   activeTab = 'battle';
   UI.render('battle');
   if (!isNew) {
@@ -607,6 +629,10 @@ const G = {
   deleteSlot(i) { deleteSave(SLOT_KEYS[i]); renderTitle(); },
   toTitle,
   setTab(t) { activeTab = t; document.querySelectorAll('#nav button').forEach((b) => b.classList.toggle('active', b.dataset.tab === t)); UI.render(t); },
+  // Collapse/expand the sidebar between the full labeled view and a compact icon rail (persisted).
+  toggleNav() { const s = S().settings; s.navCollapsed = !s.navCollapsed; applyNavMode(); save(); },
+  // Collapse/expand a single sidebar group (Combat/Roster/…) to fold away tabs you're not using (persisted).
+  toggleNavGroup(id) { const s = S().settings; const g = s.navGroups || (s.navGroups = {}); g[id] = !g[id]; applyNavGroups(); save(); },
   // Open a single character's full design sheet (pseudo-tab; no nav button is highlighted).
   openChar(id) {
     if (!S().roster.find((x) => x.id === id)) return;

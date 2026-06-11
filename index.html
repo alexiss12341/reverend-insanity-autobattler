@@ -45,22 +45,40 @@
     </div>
     <div id="main">
       <div id="nav">
-        <button data-tab="battle" class="active" onclick="G.setTab('battle')">⚔ Battle</button>
-        <button data-tab="floors" onclick="G.setTab('floors')">塔 Floors</button>
-        <button data-tab="char" onclick="G.openCharTab()">己 Character</button>
-        <button data-tab="team" onclick="G.setTab('team')">人 Team<span class="navbadges"><span class="navbadge dup" id="dup-alert" title="Duplicate cultivators ready to Soul Imprint"></span><span class="navbadge" id="team-alert" title="Fighters with unspent attribute points"></span></span></button>
-        <button data-tab="formation" onclick="G.setTab('formation')">阵 Formation</button>
-        <button data-tab="recruit" onclick="G.setTab('recruit')">召 Recruit</button>
-        <button data-tab="quests" onclick="G.setTab('quests')">日 Quests<span class="navbadges"><span class="navbadge quest" id="quest-alert" title="Daily quest rewards ready to claim"></span></span></button>
-        <button data-tab="bounties" onclick="G.setTab('bounties')">賞 Bounties</button>
-        <button data-tab="gu" onclick="G.setTab('gu')">蛊 Gu Refinery</button>
-        <button data-tab="shop" onclick="G.setTab('shop')">市 Market</button>
-        <button data-tab="inv" onclick="G.setTab('inv')">囊 Inventory</button>
-        <button data-tab="dao" onclick="G.setTab('dao')">道 Dao</button>
-        <button data-tab="attainment" onclick="G.setTab('attainment')">悟 Attainment</button>
-        <button data-tab="almanac" onclick="G.setTab('almanac')">谱 Almanac</button>
-        <button data-tab="codex" onclick="G.setTab('codex')">典 Guide</button>
-        <button data-tab="whatsnew" onclick="G.setTab('whatsnew')">新 What's New</button>
+        <button class="nav-toggle" onclick="G.toggleNav()" aria-label="Collapse menu">«</button>
+        <div class="nav-scroll">
+          <div class="nav-group" data-group="combat">
+            <button class="nav-grp-head" onclick="G.toggleNavGroup('combat')" aria-label="Toggle Combat group"><span class="nav-grp-ico" aria-hidden="true">戦</span><span class="nav-grp-lbl">Combat</span><span class="nav-grp-chev" aria-hidden="true">▾</span></button>
+            <button data-tab="battle" class="active" onclick="G.setTab('battle')" aria-label="Battle"><span class="nav-ico" aria-hidden="true">⚔</span><span class="nav-lbl">Battle</span></button>
+            <button data-tab="floors" onclick="G.setTab('floors')" aria-label="Floors"><span class="nav-ico" aria-hidden="true">塔</span><span class="nav-lbl">Floors</span></button>
+            <button data-tab="bounties" onclick="G.setTab('bounties')" aria-label="Bounties"><span class="nav-ico" aria-hidden="true">賞</span><span class="nav-lbl">Bounties</span></button>
+            <button data-tab="quests" onclick="G.setTab('quests')" aria-label="Quests"><span class="nav-ico" aria-hidden="true">日</span><span class="nav-lbl">Quests</span><span class="navbadges"><span class="navbadge quest" id="quest-alert" title="Daily quest rewards ready to claim"></span></span></button>
+          </div>
+          <div class="nav-group" data-group="roster">
+            <button class="nav-grp-head" onclick="G.toggleNavGroup('roster')" aria-label="Toggle Roster group"><span class="nav-grp-ico" aria-hidden="true">衆</span><span class="nav-grp-lbl">Roster</span><span class="nav-grp-chev" aria-hidden="true">▾</span></button>
+            <button data-tab="char" onclick="G.openCharTab()" aria-label="Character"><span class="nav-ico" aria-hidden="true">己</span><span class="nav-lbl">Character</span></button>
+            <button data-tab="team" onclick="G.setTab('team')" aria-label="Team"><span class="nav-ico" aria-hidden="true">人</span><span class="nav-lbl">Team</span><span class="navbadges"><span class="navbadge dup" id="dup-alert" title="Duplicate cultivators ready to Soul Imprint"></span><span class="navbadge" id="team-alert" title="Fighters with unspent attribute points"></span></span></button>
+            <button data-tab="formation" onclick="G.setTab('formation')" aria-label="Formation"><span class="nav-ico" aria-hidden="true">阵</span><span class="nav-lbl">Formation</span></button>
+            <button data-tab="recruit" onclick="G.setTab('recruit')" aria-label="Recruit"><span class="nav-ico" aria-hidden="true">召</span><span class="nav-lbl">Recruit</span></button>
+          </div>
+          <div class="nav-group" data-group="cultivation">
+            <button class="nav-grp-head" onclick="G.toggleNavGroup('cultivation')" aria-label="Toggle Cultivation group"><span class="nav-grp-ico" aria-hidden="true">修</span><span class="nav-grp-lbl">Cultivation</span><span class="nav-grp-chev" aria-hidden="true">▾</span></button>
+            <button data-tab="dao" onclick="G.setTab('dao')" aria-label="Dao"><span class="nav-ico" aria-hidden="true">道</span><span class="nav-lbl">Dao</span></button>
+            <button data-tab="attainment" onclick="G.setTab('attainment')" aria-label="Attainment"><span class="nav-ico" aria-hidden="true">悟</span><span class="nav-lbl">Attainment</span></button>
+          </div>
+          <div class="nav-group" data-group="workshop">
+            <button class="nav-grp-head" onclick="G.toggleNavGroup('workshop')" aria-label="Toggle Workshop group"><span class="nav-grp-ico" aria-hidden="true">匠</span><span class="nav-grp-lbl">Workshop</span><span class="nav-grp-chev" aria-hidden="true">▾</span></button>
+            <button data-tab="gu" onclick="G.setTab('gu')" aria-label="Gu Refinery"><span class="nav-ico" aria-hidden="true">蛊</span><span class="nav-lbl">Gu Refinery</span></button>
+            <button data-tab="shop" onclick="G.setTab('shop')" aria-label="Market"><span class="nav-ico" aria-hidden="true">市</span><span class="nav-lbl">Market</span></button>
+            <button data-tab="inv" onclick="G.setTab('inv')" aria-label="Inventory"><span class="nav-ico" aria-hidden="true">囊</span><span class="nav-lbl">Inventory</span></button>
+          </div>
+          <div class="nav-group" data-group="records">
+            <button class="nav-grp-head" onclick="G.toggleNavGroup('records')" aria-label="Toggle Records group"><span class="nav-grp-ico" aria-hidden="true">録</span><span class="nav-grp-lbl">Records</span><span class="nav-grp-chev" aria-hidden="true">▾</span></button>
+            <button data-tab="almanac" onclick="G.setTab('almanac')" aria-label="Almanac"><span class="nav-ico" aria-hidden="true">谱</span><span class="nav-lbl">Almanac</span></button>
+            <button data-tab="codex" onclick="G.setTab('codex')" aria-label="Guide"><span class="nav-ico" aria-hidden="true">典</span><span class="nav-lbl">Guide</span></button>
+            <button data-tab="whatsnew" onclick="G.setTab('whatsnew')" aria-label="What's New"><span class="nav-ico" aria-hidden="true">新</span><span class="nav-lbl">What's New</span></button>
+          </div>
+        </div>
       </div>
       <div id="content"></div>
     </div>
