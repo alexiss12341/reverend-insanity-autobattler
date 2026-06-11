@@ -831,6 +831,16 @@ button.mini{font-size:10px;padding:3px 8px;min-width:0;letter-spacing:0.1em}
 #settings-fab:hover{color:var(--bone);border-color:var(--blood-dim);background:var(--bg3);transform:rotate(45deg)}
 #title:not(.hidden) ~ #settings-fab{display:none} /* hidden on the title screen */
 
+/* topbar external plugs — Ko-fi + Discord, tucked beside Save & Title (brand fill on hover) */
+.topbar-actions{display:flex;align-items:center;gap:10px}
+.tb-link{width:34px;height:34px;flex:none;display:inline-flex;align-items:center;justify-content:center;
+  border:1px solid var(--line);border-radius:2px;
+  background:linear-gradient(180deg,rgba(255,255,255,0.015),rgba(0,0,0,0.25));transition:.16s ease}
+.tb-kofi{color:#ff5e5b}
+.tb-kofi:hover{color:#fff;background:#ff5e5b;border-color:#ff5e5b}
+.tb-discord{color:#7b84f0}
+.tb-discord:hover{color:#fff;background:#5865f2;border-color:#5865f2}
+
 .modal.narrow{width:380px}
 .set-row{display:flex;align-items:center;gap:14px;padding:15px 0;border-bottom:1px solid var(--line)}
 .set-row:last-of-type{border-bottom:none}
