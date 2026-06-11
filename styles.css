@@ -301,7 +301,10 @@ button.mini{font-size:10px;padding:3px 8px;min-width:0;letter-spacing:0.1em}
   box-shadow:inset 0 0 0 1px rgba(143,217,255,.5)}
 /* KILLER MOVE: name banner + path glyph float, and the casting actor's glow */
 .dmgpop.combo{color:var(--stone);font-size:46px;font-weight:400;letter-spacing:.06em;text-shadow:0 0 8px rgba(199,154,69,.6),0 1px 2px #000}
-.dmgpop.combo-cjk{color:#fff0bd;font-size:66px;text-shadow:0 0 10px rgba(199,154,69,.7),0 1px 2px #000}
+/* The killer-move NAME stays in the brush font (--brush, inherited); the large background CJK glyph
+   reverts to the previous serif (--cjk, Noto Serif SC) at its old heavy weight — cleaner than the
+   cursive brush for a single big character. */
+.dmgpop.combo-cjk{color:#fff0bd;font-family:var(--cjk);font-weight:900;font-size:66px;text-shadow:0 0 10px rgba(199,154,69,.7),0 1px 2px #000}
 .ublock.casting{filter:brightness(1.35) drop-shadow(0 0 8px rgba(199,154,69,.7))}
 /* Team-tab inline killer-move editor (on roster cards) — an open card spans the full grid row for room */
 .card.member.km-open{grid-column:1 / -1}
