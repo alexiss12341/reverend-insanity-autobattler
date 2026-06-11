@@ -11,6 +11,3 @@ fonts/_src/
 
 # Claude Code local settings (machine-specific)
 .claude/settings.local.json
-
-# Private local-only save editor / trainer (never ship this)
-trainer.html

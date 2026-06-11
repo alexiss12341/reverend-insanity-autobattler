@@ -106,10 +106,52 @@ export function newGame(slotKey, playerName = 'Fang Yuan', starter = null) {
 }
 
 // ---- Save files (localStorage) ----
+// TAMPER-EVIDENCE. Each slot is stored as a wrapper `{ sig, data }`, where `sig` is a non-cryptographic
+// signature of `data` keyed by SAVE_SECRET. On load the signature is recomputed; a mismatch makes the
+// save refuse to load (the slot then shows up empty). This stops CASUAL editing — DevTools "Application"
+// tab edits, bookmarklets, console snippets — because changing any value invalidates the signature.
+//
+// IMPORTANT — this is DETERRENCE, not security. The algorithm and SAVE_SECRET ship in this (unminified,
+// no-build) client, so a determined reverse-engineer can recompute a valid signature. The only real fix
+// is server-authoritative saves. Treat this as a speed-bump, not a lock.
+const SAVE_SECRET = 'rev-ins::v1::a8F3-9pLx-2Qh7-vK51-zN4r-7Dm2';
+// REJECT_UNSIGNED: when false (default) UNSIGNED saves — legacy pre-checksum saves, or anything with the
+// wrapper stripped — are still accepted and re-signed on the next save(), so EXISTING players keep their
+// progress. The trade-off: a "downgrade to a raw unsigned object" bypass stays open. Flip to true for
+// maximum lockdown, but be aware it WIPES every pre-checksum save on next load (they appear as empty
+// slots). Leave false unless you're willing to reset existing players.
+const REJECT_UNSIGNED = false;
+
+// cyrb53 — fast 53-bit non-cryptographic hash (public-domain). Two seeded passes are concatenated for a
+// wider signature. Deterministic and dependency-free.
+function cyrb53(str, seed = 0) {
+  let h1 = 0xdeadbeef ^ seed, h2 = 0x41c6ce57 ^ seed;
+  for (let i = 0; i < str.length; i++) {
+    const ch = str.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507);
+  h1 ^= Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507);
+  h2 ^= Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return 4294967296 * (2097151 & h2) + (h1 >>> 0);
+}
+// Signature over a save object's JSON, salted with SAVE_SECRET on both sides (two passes → two chunks).
+export function saveSignature(saveObj) {
+  const payload = JSON.stringify(saveObj);
+  const a = cyrb53(SAVE_SECRET + '|' + payload, 0x9e3779b1).toString(36);
+  const b = cyrb53(payload + '|' + SAVE_SECRET, 0x85ebca77).toString(36);
+  return `${a}.${b}`;
+}
+
 export function save() {
   if (!S()) return;
   S().lastSave = Date.now();
-  try { localStorage.setItem(S().slot, JSON.stringify(S())); } catch (e) { /* storage full / blocked */ }
+  try {
+    const data = S();
+    localStorage.setItem(data.slot, JSON.stringify({ sig: saveSignature(data), data }));
+  } catch (e) { /* storage full / blocked */ }
 }
 
 // Migrate older saves to the current schema. Currently: the `gold` currency was renamed to `stones`
@@ -267,7 +309,25 @@ export function migrateSave(o) {
 export function load(slotKey) {
   try {
     const raw = localStorage.getItem(slotKey);
-    return raw ? migrateSave(JSON.parse(raw)) : null;
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    let data;
+    if (parsed && typeof parsed.sig === 'string' && parsed.data && typeof parsed.data === 'object') {
+      // Signed save: verify it hasn't been altered. A mismatch → refuse (slot shows empty).
+      if (saveSignature(parsed.data) !== parsed.sig) {
+        console.warn(`[save] signature mismatch for ${slotKey} — refusing a tampered save.`);
+        return null;
+      }
+      data = parsed.data;
+    } else {
+      // Unsigned (legacy pre-checksum, or a stripped wrapper).
+      if (REJECT_UNSIGNED) {
+        console.warn(`[save] unsigned save for ${slotKey} — refused (REJECT_UNSIGNED).`);
+        return null;
+      }
+      data = parsed; // grandfather in; it gets re-signed on the next save()
+    }
+    return migrateSave(data);
   } catch { return null; }
 }
 
