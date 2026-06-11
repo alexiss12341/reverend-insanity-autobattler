@@ -7,7 +7,7 @@ import { validateKiller, profileKiller, assemble, autoConfigure, nearestCore, de
   guInDomain, guDomains, KM_TAG_DOMAIN, EFFECT_DOMAINS, ARCHETYPES, ARCHETYPE_ORDER, KILLER_COST_MULT, KILLER_COOLDOWN } from '../src/data/combos.js';
 import { guList } from '../src/data/gu.js';
 import { generateEncounter } from '../src/data/floors.js';
-import { resolveEncounter, damageUnit } from '../src/systems/battle.js';
+import { resolveEncounter, damageUnit, killerTargets } from '../src/systems/battle.js';
 
 // single-effect fire Gu of a given effect kind (robust lookup by daoPath + kind)
 const fireKind = (kind) => guList().find((g) => g.daoPath === 'fire' && (g.tier || 1) <= 4
@@ -96,6 +96,26 @@ ok(autoConfigure([{ uid: atkA.id, gu: atkA }, { uid: atkB.id, gu: atkB }]) === n
 const near = nearestCore([{ uid: atkA.id, gu: atkA }, { uid: atkB.id, gu: atkB }]);
 ok(near && near.have === 2 && near.need === 1, 'nearestCore reports closest-to-3 path');
 ok(KILLER_COOLDOWN === 3 && KILLER_COST_MULT >= 2 && KILLER_COST_MULT <= 4, 'constants in band');
+
+section('killer: AoE ignores formation (board-wide splashes the protected back row)');
+{
+  // foeBack sits behind a living foeFront in the SAME lane — under per-lane protection a single-target
+  // attack can only reach foeFront. An AREA attack must splash the back row anyway.
+  const caster   = { ally: true, side: 'ally', idx: 0, row: 'front', lane: 2, hp: 100, max: 100, atk: 10 };
+  const foeFront  = { side: 'foe', idx: 0, row: 'front', lane: 2, hp: 100, max: 100, atk: 10 };
+  const foeBack   = { side: 'foe', idx: 1, row: 'back',  lane: 2, hp: 100, max: 100, atk: 10 };
+  const foes = [foeFront, foeBack];
+  const board = killerTargets('allFoes', caster, foes, [caster]); // Annihilation / Contagion delivery
+  ok(board.includes(foeFront) && board.includes(foeBack), 'board-wide AoE hits BOTH front and the PROTECTED back-row foe');
+  const reach = killerTargets('reach', caster, foes, [caster]);   // ±1-lane column
+  ok(reach.includes(foeBack), 'reach (±1 column) AoE includes the protected back-row foe in range');
+  const single = killerTargets('target', caster, foes, [caster]); // single-target still gated by protection
+  ok(single.length === 1 && single[0] === foeFront, 'single-target STILL respects protection (only the unshielded front)');
+  // a dead front no longer shields the back from single-target either (sanity that protection is real)
+  foeFront.hp = 0;
+  const single2 = killerTargets('target', caster, foes, [caster]);
+  ok(single2.length === 1 && single2[0] === foeBack, 'with the front dead, single-target reaches the back row');
+}
 
 section('killer: shield (damageUnit) absorbs before HP');
 const u = { hp: 100, max: 100, shield: 10 };

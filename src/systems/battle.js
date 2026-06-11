@@ -537,14 +537,21 @@ function executeKillerMove(u, foes, allies, spec, log, seed) {
 }
 
 // Resolve a killer-move op selector → the list of target units. foes = enemy side, allies = own side.
-function killerTargets(sel, u, foes, allies) {
+// SINGLE-target selectors (`target`/`lane`) honour formation (per-lane protection + column reach via
+// chooseTarget). AREA selectors do NOT: an AoE splashes the whole area, and "a front unit shields the
+// back unit in its lane" is a single-target targeting rule, not a wall that blocks area damage. So:
+//   reach   = the caster's ±1-lane column (front AND back, protected or not; expands to the whole board
+//             only if that window is empty)
+//   allFoes = the ENTIRE enemy board (every living foe) — board-wide moves like Annihilation/Contagion
+//             must hit protected back-row units too.
+export function killerTargets(sel, u, foes, allies) {
   if (sel === 'self') return [u];
   if (sel === 'team') return alive(allies);
   if (sel === 'lowestAlly') { const a = alive(allies); return a.length ? [a.reduce((b, x) => (x.hp / x.max < b.hp / b.max ? x : b), a[0])] : []; }
   if (sel === 'target' || sel === 'lane') { const t = chooseTarget(u, foes); return t ? [t] : []; }
-  const all = targetList(foes); // reach = ±1 lane window (expand only if empty); allFoes = every targetable foe
-  if (sel === 'reach') { const near = all.filter((x) => Math.abs((x.lane | 0) - (u.lane | 0)) <= 1); return near.length ? near : all; }
-  return all;
+  const living = alive(foes); // AoE ignores per-lane protection — hit everything in the area
+  if (sel === 'reach') { const near = living.filter((x) => Math.abs((x.lane | 0) - (u.lane | 0)) <= 1); return near.length ? near : living; }
+  return living; // allFoes (board-wide)
 }
 
 // Apply the core's status riders to a target (killer `status` op). `forced` skips the chance roll; for
