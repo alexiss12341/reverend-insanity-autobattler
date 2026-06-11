@@ -116,7 +116,9 @@ const favorabilityOf = (profile) =>
 //   ops: { op, sel, ... }  selectors: self|target|lane|reach|allFoes|team|lowestAlly
 //   op kinds: damage(mult,hits,exec,perStatus) · status(from:'set',stacks) · heal(pct,of) · cleanse(max)
 //             · buff(stat:atk/def/spd/thorns/evasion,amount,dur) · shield(pct) · taunt(dur) · essence(pct ±)
-const setStatus = (p, sel, extra = {}) => (p.statuses.length ? [{ op: 'status', sel, from: 'set', forced: true, ...extra }] : []);
+// A `status` op carries the set's riders; battle.js applies them in a SECOND pass (after the move's
+// damage lands) and rolls each one's INFLICT chance vs the target's Status Resistance — no longer forced.
+const setStatus = (p, sel, extra = {}) => (p.statuses.length ? [{ op: 'status', sel, from: 'set', ...extra }] : []);
 
 export const ARCHETYPES = {
   // ===== OFFENSE — burst, AoE & lifesteal (core: atk/crit/critDmg/hit/armorPen/lifesteal) =====
@@ -144,7 +146,9 @@ export const ARCHETYPES = {
   soulrend:     { domain: 'mystic', delivery: 'single', name: 'Soulrend', glyph: '魂',
     build: (p, m) => [...setStatus(p, 'target', { stacks: 2 }), { op: 'damage', sel: 'target', mult: m.dmg }] },
   anathema:     { domain: 'mystic', delivery: 'single', name: 'Anathema', glyph: '詛',
-    build: (p, m) => [...setStatus(p, 'target'), { op: 'damage', sel: 'target', mult: m.dmg, perStatus: 0.5 }] },
+    // inflictFirst: on a connecting hit, afflict the target FIRST (rolled vs Status Resistance), THEN
+    // compute damage — so this strike's perStatus bonus counts the debuff it just applied.
+    build: (p, m) => [{ op: 'damage', sel: 'target', mult: m.dmg, perStatus: 0.5, inflictFirst: true }] },
   enervate:     { domain: 'mystic', delivery: 'reach', name: 'Enervate', glyph: '枯', // saps foes' essence (no Gu channel / no killers)
     build: (p, m) => [{ op: 'essence', sel: 'reach', pct: -0.5 }, ...setStatus(p, 'reach')] },
   // ===== GUARD — protection (core: def/critRes/statusRes/thorns) =====
@@ -304,7 +308,7 @@ export function describeOps(spec) {
   if (!spec || !spec.ops) return [];
   const where = (s) => SEL_LABEL[s] || s;
   return spec.ops.map((op) => {
-    if (op.op === 'damage') return `${op.hits > 1 ? `${op.hits}× ` : ''}strike ${where(op.sel)} for ${Math.round(op.mult * 100)}% ATK${op.exec ? ' (+execute)' : ''}${op.perStatus ? ' (+per debuff)' : ''}`;
+    if (op.op === 'damage') return `${op.inflictFirst ? 'afflict, then ' : ''}${op.hits > 1 ? `${op.hits}× ` : ''}strike ${where(op.sel)} for ${Math.round(op.mult * 100)}% ATK${op.exec ? ' (+execute)' : ''}${op.perStatus ? ' (+per debuff)' : ''}`;
     if (op.op === 'status') return `afflict ${where(op.sel)} with the core's status${op.stacks ? ` ×${op.stacks}` : ''}`;
     if (op.op === 'heal') return `heal ${where(op.sel)} ${Math.round(op.pct * 100)}% ${op.of === 'dmg' ? 'of damage dealt' : 'max HP'}`;
     if (op.op === 'cleanse') return `cleanse ${where(op.sel)} (up to ${op.max})`;

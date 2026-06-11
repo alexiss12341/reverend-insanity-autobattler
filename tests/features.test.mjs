@@ -2,7 +2,7 @@
 import { ok, section } from './assert.mjs';
 import { state, newGame, immortalUnlocked, migrateSave } from '../src/state.js';
 import { generateEncounter } from '../src/data/floors.js';
-import { resolveEncounter, applyTeamAuras, teamHeal, cleanseTeam } from '../src/systems/battle.js';
+import { resolveEncounter, applyTeamAuras, teamHeal, cleanseTeam, applyChannel } from '../src/systems/battle.js';
 import { pull, dismiss, pityCount, PITY_CAP, imprint, imprintCandidates, IMPRINT_CAP } from '../src/systems/gacha.js';
 import { effectiveStats, breakthroughCost, breakthroughChance, breakthroughFloorReq, attemptBreakthrough, isInjured, respecAttributes, respecCost, RESPEC_COST_PER_POINT, RESPEC_ESSENCE_COST } from '../src/systems/cultivation.js';
 import { addComprehension, injuryMult, resonanceMult } from '../src/systems/dao.js';
@@ -830,4 +830,37 @@ section('features: legacy immortal-Gu purge migration (one-time)');
   const e0 = clean.essence;
   migrateSave(clean);
   ok(clean.immGuPurged === true && clean.essence === e0, 'a save with no immortal Gu is flagged but not paid');
+}
+
+section('channel: a starved unit drops its HP Gu — Max HP falls and the snapshot carries it');
+{
+  // tiers = [bare, +HP-Gu]. The HP tier costs 100 essence to channel; the bare tier costs 0. The unit
+  // starts on the full (HP) tier with brimming HP, then we starve it.
+  const u = { side: 'ally', idx: 0, ess: 30, max: 1500, hp: 1500, essMax: 200, activeGu: 1,
+    tiers: [ { cost: 0,   atk: 10, def: 0, spd: 10, max: 1000, essMax: 200, essRegen: 3, fx: {} },
+             { cost: 100, atk: 10, def: 0, spd: 10, max: 1500, essMax: 200, essRegen: 3, fx: {} } ] };
+  const touched = new Set();
+  applyChannel(u, touched); // ess 30 < 100 → can't channel the HP Gu → drop to the bare tier
+  ok(u.activeGu === 0, 'starved unit drops to the bare-handed tier');
+  ok(u.max === 1000, 'Max HP fell when the HP Gu was dropped (this was the unreflected bug)');
+  ok(u.hp === 1000, 'current HP clamped down to the lowered Max');
+  ok(touched.has(u), 'the unit is marked TOUCHED so the action snapshot carries its new caps to the arena');
+  // recovery: essence back up → the HP Gu channels again and Max HP returns (but lost current HP does not)
+  u.ess = 200; const t2 = new Set();
+  applyChannel(u, t2);
+  ok(u.activeGu === 1 && u.max === 1500, 'Max HP restored when essence recovers');
+  ok(u.hp === 1000, 'HP lost to starvation does NOT come back on recovery');
+  ok(t2.has(u), 'recovery also marks the unit touched (caps changed)');
+}
+
+section('channel: dropping ANY Gu (not just HP) marks the unit touched for the arena indicator');
+{
+  // two tiers with the SAME Max HP but different ATK — i.e. the second Gu is an ATK Gu, not an HP Gu.
+  const u = { side: 'ally', idx: 0, ess: 30, max: 1000, hp: 1000, essMax: 200, activeGu: 1,
+    tiers: [ { cost: 0,   atk: 10, def: 0, spd: 10, max: 1000, essMax: 200, essRegen: 3, fx: {} },
+             { cost: 100, atk: 50, def: 0, spd: 10, max: 1000, essMax: 200, essRegen: 3, fx: {} } ] };
+  const touched = new Set();
+  applyChannel(u, touched); // ess 30 < 100 → drop the ATK Gu
+  ok(u.activeGu === 0 && u.atk === 10, 'a starved ATK Gu is dropped (atk falls; Max HP unchanged)');
+  ok(touched.has(u), 'dropping a non-HP Gu STILL marks the unit touched (active-Gu count changed) → arena indicator updates');
 }

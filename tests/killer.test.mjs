@@ -7,7 +7,7 @@ import { validateKiller, profileKiller, assemble, autoConfigure, nearestCore, de
   guInDomain, guDomains, KM_TAG_DOMAIN, EFFECT_DOMAINS, ARCHETYPES, ARCHETYPE_ORDER, KILLER_COST_MULT, KILLER_COOLDOWN } from '../src/data/combos.js';
 import { guList } from '../src/data/gu.js';
 import { generateEncounter } from '../src/data/floors.js';
-import { resolveEncounter, damageUnit, killerTargets } from '../src/systems/battle.js';
+import { resolveEncounter, damageUnit, killerTargets, executeKillerMove, shieldTotal, ageShields } from '../src/systems/battle.js';
 
 // single-effect fire Gu of a given effect kind (robust lookup by daoPath + kind)
 const fireKind = (kind) => guList().find((g) => g.daoPath === 'fire' && (g.tier || 1) <= 4
@@ -117,11 +117,65 @@ section('killer: AoE ignores formation (board-wide splashes the protected back r
   ok(single2.length === 1 && single2[0] === foeBack, 'with the front dead, single-target reaches the back row');
 }
 
-section('killer: shield (damageUnit) absorbs before HP');
-const u = { hp: 100, max: 100, shield: 10 };
-damageUnit(u, 6); ok(u.shield === 4 && u.hp === 100, 'shield soaks a small hit (no HP loss)');
-damageUnit(u, 8); ok(u.shield === 0 && u.hp === 96, 'big hit drains shield then spills to HP');
-u.shield += 20; damageUnit(u, 5); ok(u.shield === 15 && u.hp === 96, 'stacked shield keeps absorbing');
+section('killer: status lands AFTER the hit, only on struck foes, rolled vs Status Resistance');
+{
+  const FX0 = { atk:0, hitChance:0, crit:0, critDamage:1.5, critResist:0, armorPen:0, luckyHit:0, potency:0,
+    statusResist:0, essDrain:0, dotSpread:0, thorns:0, lifesteal:0, regen:0, burn:0, inflicts:[], dodge:0 };
+  const mk = (side, idx, row, lane, fx = {}) => ({ side, idx, row, lane, ally: side === 'ally', name: side + idx,
+    hp: 1000, max: 1000, atk: 200, def: 0, actions: 0, statuses: {}, essMax: 0, ess: 0, fx: { ...FX0, ...fx } });
+  const caster = mk('ally', 0, 'front', 0);
+  const foeA = mk('foe', 0, 'front', 0);                  // struck, no resist → afflicted
+  const foeB = mk('foe', 1, 'back',  0, { dodge: 2 });    // always dodges → never afflicted
+  const foeC = mk('foe', 2, 'front', 1, { statusResist: 0.95 }); // struck but resists → not afflicted
+  const foes = [foeA, foeB, foeC];
+  // status op listed FIRST (proving the two-pass reorder); board-wide damage; burn rider at 90% base.
+  const spec = { name: 'TestNova', cjk: '試', statuses: [{ type: 'burn', base: 0.9, dur: 2, mag: 0.1 }],
+    ops: [{ op: 'status', sel: 'allFoes', from: 'set' }, { op: 'damage', sel: 'allFoes', mult: 2 }] };
+  const realRandom = Math.random;
+  Math.random = () => 0.5; // foeA/foeC hit (0.5<0.85), foeB dodges (0.5>0.01); burn lands at 0.9, resisted at 0.01
+  try { executeKillerMove(caster, foes, [caster], spec, () => {}, null); }
+  finally { Math.random = realRandom; }
+  ok(Array.isArray(foeA.statuses.burn) && foeA.statuses.burn.length === 1, 'struck low-resist foe IS afflicted (status follows the hit)');
+  ok(!foeB.statuses.burn, 'DODGED foe is NOT afflicted (status needs a connecting hit)');
+  ok(!foeC.statuses.burn, 'struck HIGH-RESIST foe resists the status (inflict vs Status Resistance)');
+  ok(foeA.hp < 1000 && foeC.hp < 1000 && foeB.hp === 1000, 'damage landed on the struck foes, dodged foe took none');
+}
+
+section('killer: Anathema afflicts BEFORE its damage (perStatus counts the fresh debuff)');
+{
+  const FX0 = { atk:0, hitChance:0, crit:0, critDamage:1.5, critResist:0, armorPen:0, luckyHit:0, potency:0,
+    statusResist:0, essDrain:0, dotSpread:0, thorns:0, lifesteal:0, regen:0, burn:0, inflicts:[], dodge:0 };
+  const mk = (side, idx, fx = {}) => ({ side, idx, row:'front', lane:0, ally: side === 'ally', name: side + idx,
+    hp: 1000, max: 1000, atk: 200, def: 0, actions: 0, statuses: {}, essMax: 0, ess: 0, fx: { ...FX0, ...fx } });
+  const caster = mk('ally', 0);
+  const foe = mk('foe', 0);                                  // no pre-existing debuff
+  // Anathema shape: single damage with perStatus 0.5 + inflictFirst, weaken rider at 100% base.
+  const spec = { name: 'Anathema', cjk: '詛', statuses: [{ type: 'weaken', base: 1, dur: 2 }],
+    ops: [{ op: 'damage', sel: 'target', mult: 1, perStatus: 0.5, inflictFirst: true }] };
+  const realRandom = Math.random; Math.random = () => 0.5; // hit lands; weaken applies (chance ~0.99)
+  try { executeKillerMove(caster, [foe], [caster], spec, () => {}, null); }
+  finally { Math.random = realRandom; }
+  // 200 base ATK × (1 + 0.5 × 1 debuff) = 300 — the +50% only happens if weaken was applied BEFORE the
+  // damage calc. (Applied after, debuffCount would be 0 → 200 damage → hp 800.)
+  ok(foe.statuses.weaken, 'Anathema applied its debuff on the hit');
+  ok(foe.hp === 700, 'damage counted the freshly-applied debuff (300 dmg, not 200) — afflict resolves before damage calc');
+}
+
+section('killer: shield buffs — independent, oldest-first depletion, total + 2-turn expiry');
+{
+  const u = { hp: 100, max: 100, shields: [{ amt: 10, turns: 2 }] };
+  damageUnit(u, 6); ok(shieldTotal(u) === 4 && u.hp === 100, 'shield soaks a small hit (no HP loss)');
+  damageUnit(u, 8); ok(shieldTotal(u) === 0 && u.shields.length === 0 && u.hp === 96, 'a hit past the shield drains it, spills to HP, and the emptied buff is removed');
+  // two INDEPENDENT buffs: damage consumes the OLDEST first
+  u.shields = [{ amt: 5, turns: 2 }, { amt: 20, turns: 2 }];
+  damageUnit(u, 8); // 5 (oldest, fully) + 3 from the newer
+  ok(u.shields.length === 1 && u.shields[0].amt === 17, 'depletion starts from the OLDEST shield buff');
+  ok(shieldTotal(u) === 17, 'displayed total = sum of the remaining buffs');
+  // 2-turn expiry: each buff ages on its own timer and drops at 0
+  const v = { shields: [{ amt: 10, turns: 2 }, { amt: 5, turns: 1 }] };
+  ageShields(v); ok(v.shields.length === 1 && v.shields[0].amt === 10 && v.shields[0].turns === 1, 'buffs age independently — the 1-turn one expires, the 2-turn survives at 1');
+  ageShields(v); ok(v.shields.length === 0, 'a shield buff is gone after 2 turns');
+}
 
 section('killer: fires in battle + enemy parity');
 state.current = newGame('tkiller2'); const S2 = state.current;

@@ -77,7 +77,7 @@ function initFromFull(u) {
   u.atk = t.atk; u.def = t.def; u.spd = Math.max(1, t.spd); u.fx = t.fx;
   u.max = t.max; u.hp = t.max; u.essMax = t.essMax; u.essRegen = t.essRegen; u.ess = t.essMax;
   u.activeGu = u.tiers.length - 1;
-  u.shield = 0;        // KILLER MOVE: temporary absorb pool (drained before HP by damageUnit); starts empty
+  u.shields = [];      // KILLER MOVE: independent temp-HP buffs [{ amt, turns }]; total soaked before HP
   u.killerCd = 0;      // KILLER MOVE: actions-until-next-cast cooldown (0 = ready)
   return u;
 }
@@ -143,17 +143,22 @@ function enemyCombatant(u, pos) {
 // Pick the largest affordable Gu prefix from CURRENT essence, swap the unit onto that tier's profile,
 // clamp any HP/essence overflow down to the new (possibly lower) caps, then spend that tier's cost.
 // All-or-nothing per Gu; a fully-starved unit lands on tier 0 (bare-handed) and spends nothing.
-function applyChannel(u) {
+export function applyChannel(u, touched) {
   const tiers = u.tiers; if (!tiers) return;
   let k = 0;
   for (let i = tiers.length - 1; i > 0; i--) { if (u.ess + 1e-9 >= tiers[i].cost) { k = i; break; } }
   const t = tiers[k];
+  const prevMax = u.max, prevHp = u.hp, prevEssMax = u.essMax, prevK = u.activeGu; // detect channel changes
   u.atk = t.atk; u.def = t.def; u.spd = Math.max(1, t.spd); u.fx = t.fx;
   u.max = t.max; u.essMax = t.essMax; u.essRegen = t.essRegen;
   if (u.hp > u.max) u.hp = u.max;        // a dropped HP-Gu lowered Max HP → keep current HP, clamp overflow
   if (u.ess > u.essMax) u.ess = u.essMax; // a dropped aperture-Gu lowered the pool → clamp overflow
   u.ess = Math.max(0, u.ess - t.cost);   // pay only the active prefix's channel cost
   u.activeGu = k;
+  // Mark the unit touched on ANY channel change (a different active-Gu count, or shifted HP/aperture caps)
+  // so this action's snapshot carries the new caps + active-Gu count — the arena reflects EVERY starved Gu
+  // (its effect already left combat via the tier swap), not just HP/aperture ones.
+  if (touched && (k !== prevK || u.max !== prevMax || u.hp !== prevHp || u.essMax !== prevEssMax)) touched.add(u);
 }
 // Overall combat power, used only as an aura tiebreaker (atk+def+hp, off pre-aura effectiveStats).
 const auraPower = (u) => (u.atk || 0) + (u.def || 0) + (u.max || 0);
@@ -332,13 +337,31 @@ const effAtk = (u) => u.atk * (1 - stMag(u, 'weaken')) * (1 + buffMag(u, 'atk'))
 const effDef = (u) => u.def * (1 - stMag(u, 'sunder')) * (1 + buffMag(u, 'def'));
 const thornsOf = (u) => (u.fx.thorns || 0) + buffMag(u, 'thorns'); // reflect % incl. any Bulwark thorns buff
 const frailMult = (u) => 1 + stMag(u, 'frail');
-// KILLER MOVE: route ALL incoming damage through a unit's shield (temp HP) before its real HP. The
-// shield is a plain pool — no duration; it stacks additively and is gone when depleted. Status riders
-// are applied separately (inflictStatuses), so a fully-absorbed hit still lands its afflictions.
+// KILLER MOVE shields (temp HP). A unit's `shields` is a list of INDEPENDENT buffs, each { amt, turns } —
+// tracked separately (each gained shield is its own instance with its own 2-turn timer) but displayed as
+// one TOTAL. A shield buff is removed when its value is fully drained by damage OR when its timer expires
+// (ageShields, on the wearer's activation). Incoming damage routes through the shields before real HP and
+// drains the OLDEST buff first (FIFO). Status riders are applied separately, so a fully-absorbed hit still
+// lands its afflictions.
+export const SHIELD_DURATION = 2; // a shield buff lasts this many of the wearer's activations
+export const shieldTotal = (u) => (u.shields ? u.shields.reduce((s, x) => s + x.amt, 0) : 0);
+// Age every shield buff one of the wearer's turns; drop any whose timer runs out. (Buffs emptied by
+// damage are already removed in damageUnit.) Called once per activation from tickStatuses.
+export function ageShields(u) {
+  if (u.shields && u.shields.length) u.shields = u.shields.filter((s) => (s.turns -= 1) > 0);
+}
 export function damageUnit(u, amt) {
   if (!(amt > 0)) return 0;
   let rem = amt;
-  if (u.shield > 0) { const a = Math.min(u.shield, rem); u.shield -= a; rem -= a; }
+  const sh = u.shields;
+  if (sh && sh.length) {
+    while (rem > 0 && sh.length) {            // drain the OLDEST shield buff first (FIFO)
+      const inst = sh[0];
+      const a = Math.min(inst.amt, rem);
+      inst.amt -= a; rem -= a;
+      if (inst.amt <= 0) sh.shift();          // exhausted → remove this buff
+    }
+  }
   u.hp -= rem;
   return amt;
 }
@@ -390,7 +413,8 @@ function inflictStatuses(u, tgt, log, touched) {
 // Start of a unit's activation: tick DoTs, decrement every status one action, report whether the unit
 // is incapacitated this action (Stun or Frozen) and which (so the UI can label the skip).
 function tickStatuses(u, log, touched) {
-  const st = u.statuses; if (!st) return { dot: 0, dots: null, stunned: false, frozen: false };
+  const st = u.statuses;
+  if (!st) { ageShields(u); return { dot: 0, dots: null, stunned: false, frozen: false }; } // still age shields
   // DoT damage = sum of EVERY live instance of each DoT type (each tracked & expiring independently).
   // `dots` keeps the per-type breakdown so the UI can float distinct Burn/Poison/Bleed numbers.
   let dot = 0; let dots = null;
@@ -408,6 +432,7 @@ function tickStatuses(u, log, touched) {
     if (Array.isArray(st[k])) { st[k] = st[k].filter((inst) => (inst.turns -= 1) > 0); if (!st[k].length) delete st[k]; }
     else { st[k].turns -= 1; if (st[k].turns <= 0) delete st[k]; }
   }
+  ageShields(u); // age shield buffs at end of turn — they soaked this turn's DoT first, then tick down
   return { dot, dots, stunned, frozen };
 }
 
@@ -427,6 +452,9 @@ function dealHit(u, tgt, mult, opts, log, touched, foes) {
   // (1) HIT — 85% base + attacker Hit-bonus − target Evasion, clamped to [1%,99%].
   const hitP = clampP(BASE_HIT + (u.fx.hitChance || 0) - ((tgt.fx.dodge || 0) + buffMag(tgt, 'evasion')));
   if (Math.random() > hitP) { dodged = true; log(`${tgt.name} evades ${u.name}.`); return { tgt, dmg, crit, lucky, dodged, applied }; }
+  // HIT CONFIRMED → optional pre-damage hook. Anathema uses this to afflict the target FIRST (rolled vs
+  // Status Resistance), so the perStatus bonus below counts the freshly-applied debuff.
+  if (opts.onHit) opts.onHit(tgt);
   // base damage; Armor Penetration (+ any op bonus) ignores a % of the target's (Sunder-reduced) mitigated DEF.
   const armorPen = ((u.fx.armorPen || 0) + (opts.armorPenBonus || 0)) * ARMOR_PEN_MULT; // UNCAPPED stat, halved effect
   const def = effDef(tgt) * 0.6 * Math.max(0, 1 - armorPen);                              // ≥200% stat → DEF fully ignored
@@ -486,7 +514,7 @@ function takeAction(u, foes, log, seed) {
 // small handler applies it (reusing dealHit / applyStatus / heal / buff / shield). Returns an event with
 // `combo` (name/cjk) + a `hits` list (per-target damage/affliction) for the timeline; `touched` collects
 // every unit whose HP/shield changed. `allies` = the actor's OWN side (for team heals/buffs).
-function executeKillerMove(u, foes, allies, spec, log, seed) {
+export function executeKillerMove(u, foes, allies, spec, log, seed) {
   if (u.ally) u.actions++; // a killer move trains the wielder's Gu paths like any action
   const touched = seed || new Set();
   const hits = [];
@@ -499,20 +527,28 @@ function executeKillerMove(u, foes, allies, spec, log, seed) {
   const mark = (t, k) => { const c = auras.get(t); if (c === undefined || AURA_PRI[k] < AURA_PRI[c]) auras.set(t, k); };
   const buffAura = (stat) => (stat === 'atk' ? 'warcry' : (stat === 'def' || stat === 'thorns') ? 'guard' : 'heal');
   log(`${u.name} unleashes ${spec.name}!`);
+  // The move HITS first: PASS 1 resolves every non-status op (damage/heal/buff/shield/taunt/essence),
+  // recording which foes a damage op actually LANDED on (`struck`). Status ops are deferred to PASS 2 so
+  // afflictions only follow a connecting blow — a dodged foe is never afflicted.
+  const struck = new Set();
+  const hasDamage = (spec.ops || []).some((o) => o.op === 'damage');
   for (const op of (spec.ops || [])) {
+    if (op.op === 'status') continue; // deferred to pass 2 (afflict only after the hit lands)
     const targets = killerTargets(op.sel, u, foes, allies);
     if (op.op === 'damage') {
       const n = op.hits || 1;
+      // inflictFirst (Anathema): on a CONNECTING hit, afflict with the move's statuses (rolled vs Status
+      // Resistance) BEFORE damage is computed, so this op's perStatus bonus counts the fresh debuff.
+      const onHit = op.inflictFirst ? (t) => {
+        const a = applyKillerStatus(u, t, spec.statuses, op, log, touched);
+        if (a.length) hits.push({ tgt: { side: t.side, i: t.idx }, dmg: 0, crit: false, lucky: false, dodged: false, applied: a });
+      } : undefined;
       for (const tgt of targets) { mark(tgt, 'hostile'); for (let h = 0; h < n && tgt.hp > 0; h++) {
-        const r = dealHit(u, tgt, op.mult, { exec: op.exec, armorPenBonus: op.armorPen, perStatus: op.perStatus, inflict: false }, log, touched, foes);
+        const r = dealHit(u, tgt, op.mult, { exec: op.exec, armorPenBonus: op.armorPen, perStatus: op.perStatus, inflict: false, onHit }, log, touched, foes);
         dmgDealt += r.dmg;
+        if (!r.dodged) struck.add(tgt); // a connecting blow → this foe is eligible for the move's status riders
         hits.push({ tgt: { side: tgt.side, i: tgt.idx }, dmg: r.dmg, crit: r.crit, lucky: r.lucky, dodged: r.dodged, applied: r.applied });
       } }
-    } else if (op.op === 'status') {
-      for (const tgt of targets) { if (tgt.hp <= 0) continue; mark(tgt, 'hostile');
-        const a = applyKillerStatus(u, tgt, spec.statuses, op, log, touched);
-        if (a.length) hits.push({ tgt: { side: tgt.side, i: tgt.idx }, dmg: 0, crit: false, lucky: false, dodged: false, applied: a });
-      }
     } else if (op.op === 'heal') {
       for (const tgt of targets) { if (tgt.hp <= 0) continue;
         const amt = op.of === 'dmg' ? Math.round((op.pct || 0) * dmgDealt) : Math.round((op.pct || 0) * tgt.max);
@@ -524,13 +560,27 @@ function executeKillerMove(u, foes, allies, spec, log, seed) {
       for (const tgt of targets) { if (tgt.hp <= 0) continue; mark(tgt, buffAura(op.stat)); applyBuff(tgt, op.stat, op.amount, op.dur); touched.add(tgt); }
     } else if (op.op === 'shield') {
       const amt = Math.round((op.pct || 0) * u.max); // % of the CASTER's max HP
-      for (const tgt of targets) { if (tgt.hp <= 0) continue; mark(tgt, 'guard'); tgt.shield = (tgt.shield || 0) + amt; touched.add(tgt); }
+      for (const tgt of targets) { if (tgt.hp <= 0 || amt <= 0) continue; mark(tgt, 'guard');
+        (tgt.shields = tgt.shields || []).push({ amt, turns: SHIELD_DURATION }); touched.add(tgt); } // independent 2-turn buff
     } else if (op.op === 'taunt') {
       for (const tgt of targets) { if (tgt.hp <= 0) continue; mark(tgt, 'guard'); (tgt.statuses = tgt.statuses || {}).taunt_t = { turns: op.dur || 3 }; }
     } else if (op.op === 'essence') {
       // signed: +pct refuels allies' channeling/killer essence (Wellspring); −pct drains foes (Enervate)
       for (const tgt of targets) { if (tgt.hp <= 0 || !(tgt.essMax > 0)) continue; mark(tgt, (op.pct || 0) >= 0 ? 'heal' : 'hostile');
         tgt.ess = Math.max(0, Math.min(tgt.essMax, (tgt.ess || 0) + (op.pct || 0) * tgt.essMax)); touched.add(tgt); }
+    }
+  }
+  // PASS 2 — afflictions, AFTER the move has hit. Each status rolls INFLICT vs RESIST (its base chance +
+  // caster Potency − target Status Resistance, in applyKillerStatus). When the move dealt damage only the
+  // foes it actually STRUCK can be afflicted (a dodge avoids the status too); a status-only move (e.g.
+  // Enervate) afflicts its selector's targets directly.
+  for (const op of (spec.ops || [])) {
+    if (op.op !== 'status') continue;
+    let targets = killerTargets(op.sel, u, foes, allies);
+    if (hasDamage) targets = targets.filter((t) => struck.has(t));
+    for (const tgt of targets) { if (tgt.hp <= 0) continue; mark(tgt, 'hostile');
+      const a = applyKillerStatus(u, tgt, spec.statuses, op, log, touched);
+      if (a.length) hits.push({ tgt: { side: tgt.side, i: tgt.idx }, dmg: 0, crit: false, lucky: false, dodged: false, applied: a });
     }
   }
   return { target: null, dmg: 0, crit: false, lucky: false, dodged: false, applied: [], combo: { name: spec.name, cjk: spec.cjk }, hits, auras: [...auras].map(([unit, kind]) => ({ unit, kind })), touched: [...touched] };
@@ -560,6 +610,10 @@ function applyKillerStatus(u, tgt, statuses, op, log, touched) {
   const applied = [];
   for (const st of (statuses || [])) {
     const def = STATUS[st.type]; if (!def) continue;
+    // INFLICT vs RESIST: roll the rider's authored base chance, boosted by the caster's Potency and
+    // reduced by the target's Status Resistance — the same calculus a basic attack uses (inflictStatuses).
+    const base = st.base != null ? st.base : 1;
+    if (Math.random() >= clampP(base + (u.fx.potency || 0) - (tgt.fx.statusResist || 0))) continue; // resisted
     const reps = (op.stacks && def.dot) ? op.stacks : 1;
     for (let r = 0; r < reps; r++) applyStatus(tgt, st.type, u, st.dur, st.mag);
     touched.add(tgt); applied.push(st.type);
@@ -586,8 +640,10 @@ function serializeAct(actor, ev) {
     stun: !!ev.stunned, frozen: !!ev.frozen, dot: ev.dot || 0, // self-affliction: DoT tick / skipped action
     dots: ev.dots || null, // per-type DoT breakdown ({burn,poison,bleed}) for distinct floating numbers
     applied: ev.applied && ev.applied.length ? ev.applied.slice() : null, // statuses landed on the target
-    // every touched unit's HP + shield after this action (shield = killer-move temp HP overlay)
-    hp: ev.touched.map((u) => ({ side: u.side, i: u.idx, hp: Math.max(0, Math.round(u.hp)), shield: Math.round(u.shield || 0) })),
+    // every touched unit's HP + shield after this action (shield = killer-move temp HP overlay). `max` +
+    // `essMax` ride along so the arena's HP/essence bars track channel-driven cap changes (a starved unit
+    // dropping an HP/aperture Gu lowers them; recovery raises them back).
+    hp: ev.touched.map((u) => ({ side: u.side, i: u.idx, hp: Math.max(0, Math.round(u.hp)), shield: Math.round(shieldTotal(u)), max: Math.round(u.max || u.maxHp || 0), essMax: Math.round(u.essMax || 0), ag: u.activeGu })),
     ess: Math.round(actor.ess), // actor's essence after channeling this action (for the arena bar)
   };
   if (ev.combo) { // KILLER MOVE: name banner + per-target hit list (multi-target / heal events)
@@ -616,7 +672,9 @@ export function resolveEncounter(encounter, onLog, opts = {}) {
 
   // line/affinity/rarity ride along so the arena can show each unit's trait seal + the per-side panel.
   // Allies expose them via their source character (u.ch); enemy snapshot units carry them directly.
-  const snap = (u) => ({ name: u.name, max: u.max || u.maxHp, hp: u.hp, spd: Math.max(1, u.spd), shield: u.shield || 0,
+  const snap = (u) => ({ name: u.name, max: u.max || u.maxHp, hp: u.hp, spd: Math.max(1, u.spd), shield: shieldTotal(u),
+    guN: u.tiers ? u.tiers.length - 1 : (u.gu || []).length, // equipped Gu count → arena channel indicator
+    activeGu: u.activeGu,
     row: u.row || 'front', lane: (u.lane | 0), kind: u.kind, gu: u.gu,
     guInfo: u.ch ? guInfoFor(u.ch) : (u.guInfo || []), // equipped Gu (name + effect) for the traits panel
     essMax: u.essMax != null ? u.essMax : (u.essencePool || 0),
@@ -685,14 +743,15 @@ export function resolveEncounter(encounter, onLog, opts = {}) {
           u.ess = Math.max(0, u.ess - u.comboCost); u.killerCd = KILLER_COOLDOWN; applyTopTier(u);
           ev = executeKillerMove(u, enemySide, allySide, u.killer, log, pre); ev.dot = dot; ev.dots = dots;
         }
-        else { applyChannel(u); ev = takeAction(u, enemySide, log, pre); ev.dot = dot; ev.dots = dots; // gate Gu by essence → this action's active prefix
+        else { applyChannel(u, pre); ev = takeAction(u, enemySide, log, pre); ev.dot = dot; ev.dots = dots; // gate Gu by essence → this action's active prefix
           if (u.teamHealPct) { const healed = new Set(ev.touched); ev.heals = []; ev.cleansed = []; // Mender: heal + cleanse on its action
             teamHeal(u, allies, healed, ev.heals); cleanseTeam(u, allies, ev.cleansed); ev.touched = [...healed]; } }
         actions++;
         if (rec) step.acts.push(serializeAct(u, ev));
         if (!stunned && u.hp > 0 && Math.random() < (u.fx.extra_turn || 0) && sideAlive(enemySide)) {
-          applyChannel(u);
-          const ev2 = takeAction(u, enemySide, log); actions++;
+          const pre2 = new Set();
+          applyChannel(u, pre2);
+          const ev2 = takeAction(u, enemySide, log, pre2); actions++;
           if (rec) step.acts.push(serializeAct(u, ev2));
         }
         if (!sideAlive(allies) || !sideAlive(foes)) break;
