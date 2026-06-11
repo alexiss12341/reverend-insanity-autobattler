@@ -469,16 +469,28 @@ function dealHit(u, tgt, mult, opts, log, touched, foes) {
   if (stMag(tgt, 'frail')) dmg = Math.max(1, Math.round(dmg * frailMult(tgt))); // Frail amplifies hits
   damageUnit(tgt, dmg); touched.add(tgt); // shield soaks first, then HP
   if (isFirePath(u) && dispelByFire(tgt).length) log(`${tgt.name}'s ice shatters in the flames.`);
-  if (u.fx.lifesteal > 0) { u.hp = Math.min(u.max, u.hp + Math.round(dmg * u.fx.lifesteal)); touched.add(u); }
   if ((u.fx.essDrain || 0) > 0 && (tgt.essMax || 0) > 0) { // Reaver: steal a slice of the target's essence on hit
     const d = Math.round(tgt.essMax * u.fx.essDrain);
     if (d > 0) { tgt.ess = Math.max(0, (tgt.ess || 0) - d); u.ess = Math.min(u.essMax || u.ess || 0, (u.ess || 0) + d); }
   }
-  const thorns = thornsOf(tgt);
-  if (thorns > 0 && tgt.hp > 0) { // reflect, mitigated by the ATTACKER's DEF; plain damage (no thorns-loop)
-    const rdef = effDef(u) * 0.6 * Math.max(0, 1 - (tgt.fx.armorPen || 0) * ARMOR_PEN_MULT);
-    damageUnit(u, Math.max(1, Math.round(dmg * thorns - rdef))); touched.add(u);
+  // LIFESTEAL vs THORNS — resolved TOGETHER as one net HP change on the attacker, lifesteal a DIRECT
+  // COUNTER to thorns: net = (lifesteal healed) − (thorns taken). The reflect keeps its original calc —
+  // mitigated by the ATTACKER's DEF (pierced by the target's Armor Pen) — but is now UNCLAMPED (no min
+  // floor) so it nets cleanly against lifesteal like lifesteal itself. Thorns reflects only if the target
+  // survived (no thorns-loop). Positive net HEALS the attacker (capped at Max HP); negative net DAMAGES it
+  // via damageUnit (so the attacker's shield soaks the overflow).
+  const lifeGain = (u.fx.lifesteal > 0) ? Math.round(dmg * u.fx.lifesteal) : 0;
+  let thornsDmg = 0;
+  if (tgt.hp > 0) {
+    const thorns = thornsOf(tgt);
+    if (thorns > 0) {
+      const rdef = effDef(u) * 0.6 * Math.max(0, 1 - (tgt.fx.armorPen || 0) * ARMOR_PEN_MULT);
+      thornsDmg = Math.round(dmg * thorns - rdef); // reflect − attacker DEF; UNCLAMPED (can net negative)
+    }
   }
+  const netHp = lifeGain - thornsDmg;
+  if (netHp > 0) { u.hp = Math.min(u.max, u.hp + netHp); touched.add(u); }
+  else if (netHp < 0) { damageUnit(u, -netHp); touched.add(u); }
   if (opts.inflict !== false) applied = inflictStatuses(u, tgt, log, touched); // Potency vs Status Resistance per rider
   log(`${u.name} hits ${tgt.name} for ${dmg}${lucky ? ' (lucky crit!)' : crit ? ' (crit!)' : ''}.`);
   if (tgt.hp <= 0) log(`${tgt.name} is slain.`);

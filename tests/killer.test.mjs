@@ -177,6 +177,42 @@ section('killer: shield buffs — independent, oldest-first depletion, total + 2
   ageShields(v); ok(v.shields.length === 0, 'a shield buff is gone after 2 turns');
 }
 
+section('killer: lifesteal & thorns net together — lifesteal directly counters thorns');
+{
+  const FX0 = { atk:0,hitChance:0,crit:0,critDamage:1.5,critResist:0,armorPen:0,luckyHit:0,potency:0,
+    statusResist:0,essDrain:0,dotSpread:0,thorns:0,lifesteal:0,regen:0,burn:0,inflicts:[],dodge:0 };
+  const mk = (side, idx, hp, fx = {}) => ({ side, idx, row:'front', lane:0, ally: side === 'ally', name: side+idx,
+    hp, max: 1000, atk: 200, def: 0, actions: 0, statuses: {}, essMax: 0, ess: 0, fx: { ...FX0, ...fx } });
+  const spec = { name:'Strike', cjk:'打', statuses: [], ops: [{ op:'damage', sel:'target', mult: 1 }] }; // dmg = 200
+  const run = (caster, foes) => { const r = Math.random; Math.random = () => 0.5;
+    try { executeKillerMove(caster, foes, [caster], spec, () => {}, null); } finally { Math.random = r; } };
+
+  // lifesteal 0.5 → +100 heal vs thorns 0.3 → 60 reflect → net +40 heal
+  let c = mk('ally',0,500,{ lifesteal:0.5 }), f = mk('foe',0,100000,{ thorns:0.3 });
+  run(c, [f]); ok(c.hp === 540, 'net = lifesteal 100 − thorns 60 = +40 → attacker heals 40');
+
+  // lifesteal 0.1 → +20 vs thorns 0.3 → 60 → net −40 → attacker TAKES 40
+  c = mk('ally',0,500,{ lifesteal:0.1 }); f = mk('foe',0,100000,{ thorns:0.3 });
+  run(c, [f]); ok(c.hp === 460, 'net = 20 − 60 = −40 → thorns wins, attacker loses 40');
+
+  // target DIES → no thorns reflect; lifesteal still heals in full
+  c = mk('ally',0,500,{ lifesteal:0.5 }); f = mk('foe',0,50,{ thorns:0.3 });
+  run(c, [f]); ok(f.hp <= 0 && c.hp === 600, 'a slain target reflects no thorns; lifesteal heals +100');
+
+  // a net thorns LOSS is soaked by the attacker's shield first
+  c = mk('ally',0,500); c.shields = [{ amt:100, turns:2 }]; f = mk('foe',0,100000,{ thorns:0.3 });
+  run(c, [f]); ok(shieldTotal(c) === 40 && c.hp === 500, 'net thorns loss (60) drains the attacker shield first, HP untouched');
+
+  // the reflect KEEPS its DEF mitigation (round(dmg×thorns − attackerDEF·0.6)); no lifesteal here
+  c = mk('ally',0,500); c.def = 50; f = mk('foe',0,100000,{ thorns:0.3 });
+  run(c, [f]); ok(c.hp === 470, 'attacker DEF mitigates the reflect: round(200×0.3 − 50×0.6)=30 → 500−30');
+
+  // UNCLAMPED: when DEF over-absorbs a small reflect the term goes negative (no min floor), so it nets in
+  // the attacker's favour instead of being clamped to 0
+  c = mk('ally',0,500); c.def = 1000; f = mk('foe',0,100000,{ thorns:0.3 });
+  run(c, [f]); ok(c.hp === 1000, 'no clamp: DEF 1000 → reflect round(60−600)=−540 → net +540 heal (capped at Max)');
+}
+
 section('killer: fires in battle + enemy parity');
 state.current = newGame('tkiller2'); const S2 = state.current;
 const pl = S2.roster[0];
