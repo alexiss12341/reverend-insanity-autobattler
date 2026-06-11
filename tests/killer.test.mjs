@@ -213,6 +213,24 @@ section('killer: lifesteal & thorns net together — lifesteal directly counters
   run(c, [f]); ok(c.hp === 500, 'DEF over-absorb floors thorns at 0 (no heal, no chip): round(60−600)→0 → HP unchanged');
 }
 
+section('combat: attack damage is not flat — random ±10% swing');
+{
+  const FX0 = { atk:0,hitChance:0,crit:0,critDamage:1.5,critResist:0,armorPen:0,luckyHit:0,potency:0,
+    statusResist:0,essDrain:0,dotSpread:0,thorns:0,lifesteal:0,regen:0,burn:0,inflicts:[],dodge:0 };
+  const mk = (side, idx, hp) => ({ side, idx, row:'front', lane:0, ally: side === 'ally', name: side+idx,
+    hp, max: 100000, atk: 200, def: 0, actions: 0, statuses: {}, essMax: 0, ess: 0, fx: { ...FX0 } });
+  const spec = { name:'Strike', cjk:'打', statuses: [], ops: [{ op:'damage', sel:'target', mult: 1 }] }; // base 200
+  // random calls per cast: chooseTarget, hit, VARIANCE, lucky (fx.crit 0 → no crit roll). The 3rd drives variance.
+  const dmgAtVariance = (vroll) => { const c = mk('ally',0,1000), f = mk('foe',0,100000);
+    const seq = [0, 0, vroll, 0]; let si = 0; const r = Math.random; Math.random = () => seq[si++ % seq.length];
+    try { executeKillerMove(c, [f], [c], spec, () => {}, null); } finally { Math.random = r; }
+    return 100000 - f.hp; };
+  ok(dmgAtVariance(0) === 180, 'min roll → −10% → 180 (base 200)');
+  ok(dmgAtVariance(0.5) === 200, 'mid roll → 0% → 200');
+  ok(dmgAtVariance(1) === 220, 'max roll → +10% → 220');
+  ok(dmgAtVariance(0) < dmgAtVariance(1), 'damage is NOT flat — it swings with the roll');
+}
+
 section('killer: fires in battle + enemy parity');
 state.current = newGame('tkiller2'); const S2 = state.current;
 const pl = S2.roster[0];

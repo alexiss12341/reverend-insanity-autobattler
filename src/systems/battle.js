@@ -43,6 +43,7 @@ const THRESHOLD = 1000; // movement gauge cap
 const ESS_REGEN_SCALE = 0.16;
 const FRONT = 3;        // fallback enemy front-row size if a unit lacks an explicit row
 const BASE_HIT = 0.85;  // every attack starts from an 85% chance to land before Hit/Evasion adjust it
+const DMG_VARIANCE = 0.10;     // every hit's base damage rolls a random ±10% swing (so damage isn't flat)
 const ARMOR_PEN_MULT = 0.5;    // armour pen is UNCAPPED now → its EFFECTIVE DEF-ignore is halved (need 200% stat to fully ignore DEF)
 // Every contested roll-chance (Hit, Crit) is clamped to [1%, 99%] — a max build floors the opposing
 // chance at 1% (near-immunity, never literal 0/100); Lucky Hit is the one roll left unclamped.
@@ -458,7 +459,8 @@ function dealHit(u, tgt, mult, opts, log, touched, foes) {
   // base damage; Armor Penetration (+ any op bonus) ignores a % of the target's (Sunder-reduced) mitigated DEF.
   const armorPen = ((u.fx.armorPen || 0) + (opts.armorPenBonus || 0)) * ARMOR_PEN_MULT; // UNCAPPED stat, halved effect
   const def = effDef(tgt) * 0.6 * Math.max(0, 1 - armorPen);                              // ≥200% stat → DEF fully ignored
-  dmg = Math.max(1, Math.round(effAtk(u) * (mult || 1) - def));
+  const variance = 1 + (Math.random() * 2 - 1) * DMG_VARIANCE; // random ±10% swing — no two hits are identical
+  dmg = Math.max(1, Math.round((effAtk(u) * (mult || 1) - def) * variance));
   if (opts.exec) dmg = Math.round(dmg * (1 + opts.exec * Math.max(0, 1 - tgt.hp / tgt.max))); // Execution: bonus vs missing HP
   if (opts.perStatus) dmg = Math.round(dmg * (1 + opts.perStatus * debuffCount(tgt)));        // Anathema: bonus per debuff on the target
   // (2) LUCKY HIT — forced crit that IGNORES Crit Resistance and hits for ×1.5×CritDamage (unclamped).
