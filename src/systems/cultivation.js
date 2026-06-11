@@ -99,20 +99,20 @@ export function effectiveStats(ch, activeSet) {
     atkBase: Math.round(d.atk * (1 + add.atkPct - guAtkPct) * w * pm), // atk WITHOUT the Gu atk% (channel floor)
     def: Math.round(d.def * (1 + add.defPct) * w),
     spd: Math.max(1, Math.round(d.spd * (1 + add.spdPct) * w)),
-    lifesteal: Math.min(0.9, Math.max(0, add.lifesteal)),
-    crit: Math.min(0.95, Math.max(0, d.critChance + add.crit)),
+    lifesteal: Math.max(0, add.lifesteal),               // UNCAPPED (heal still bounded by max HP at use)
+    crit: Math.max(0, d.critChance + add.crit),          // UNCAPPED — battle.js subtracts target critResist FIRST, then clamps the contested roll (like hit/evasion)
     dodge: Math.max(0, d.evasion + add.evasion),         // UNCAPPED — scales past 100% like potency (no 95% pin)
-    thorns: Math.max(0, add.thorns),
+    thorns: Math.min(1, Math.max(0, add.thorns)),
     essDrain: Math.max(0, lnEssDrain),   // Reaver: fraction of target essence stolen on hit
     dotSpread: Math.max(0, lnDotSpread), // Afflictor: chance to spread the victim's DoTs on a kill
     regen: Math.round((a.con || 0) * 0.15 + add.regenPct * maxHpF),
     burn: 0, extra_turn: 0, stone_find: 0, // legacy fields (battle reads them; no Gu grants them now)
     critDamage: Math.max(1, d.critDamage + add.critDmg),
-    critResist: Math.min(0.95, Math.max(0, d.critResist + add.critRes)),
+    critResist: Math.max(0, d.critResist + add.critRes), // UNCAPPED — subtracted raw from attacker crit in battle.js, so overcap resist fully counters overcap crit
     hitChance: d.hitChance + add.hit,
-    armorPen: Math.min(0.95, Math.max(0, d.armorPen + add.armorPen)),
+    armorPen: Math.max(0, d.armorPen + add.armorPen),    // UNCAPPED (battle.js floors def-reduction at 0, so ≥100% just fully ignores DEF)
     potency: Math.max(0, d.potency + add.potency),
-    statusResist: Math.min(0.95, Math.max(0, d.statusResist + add.statusRes)),
+    statusResist: Math.max(0, d.statusResist + add.statusRes), // UNCAPPED (contested inflict roll clamps the result in battle.js)
     luckyHit: Math.max(0, d.luckyHit + add.lucky),
     // APERTURE pool = INT base × essence QUALITY × CAPACITY (aptitude), + Gu essence-pool %.
     essencePool: Math.round((d.essencePool + lnApBase) * essenceQuality(ch.realm) * apertureCapacity(effAptitude(ch)) * (1 + add.essPoolPct)),

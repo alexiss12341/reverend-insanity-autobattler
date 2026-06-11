@@ -89,7 +89,7 @@ export function deriveStats(a) {
     hitChance: (15 + agi * 0.25) / 100,      // LINEAR: 15% base + 0.25% per AGI point (+bonus over the 85% base hit)
     armorPen: dim(str, K, 1),
     potency: dim(int, K, 0.9),               // +bonus over a status's base inflict
-    statusResist: dim(con, K, 1),
+    statusResist: dim(con, K, 1) * 0.5,      // CON contribution HALVED — status-resist is uncapped now, so raw CON alone shouldn't dominate (Gu status-resist is added full in effectiveStats)
     luckyHit: dim(luck, K, 0.5),
   };
 }

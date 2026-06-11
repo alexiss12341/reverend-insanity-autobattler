@@ -43,6 +43,7 @@ const THRESHOLD = 1000; // movement gauge cap
 const ESS_REGEN_SCALE = 0.16;
 const FRONT = 3;        // fallback enemy front-row size if a unit lacks an explicit row
 const BASE_HIT = 0.85;  // every attack starts from an 85% chance to land before Hit/Evasion adjust it
+const ARMOR_PEN_MULT = 0.5;    // armour pen is UNCAPPED now → its EFFECTIVE DEF-ignore is halved (need 200% stat to fully ignore DEF)
 // Every contested roll-chance (Hit, Crit) is clamped to [1%, 99%] — a max build floors the opposing
 // chance at 1% (near-immunity, never literal 0/100); Lucky Hit is the one roll left unclamped.
 const clampP = (p) => Math.max(0.01, Math.min(0.99, p));
@@ -422,8 +423,8 @@ function dealHit(u, tgt, mult, opts, log, touched, foes) {
   const hitP = clampP(BASE_HIT + (u.fx.hitChance || 0) - ((tgt.fx.dodge || 0) + buffMag(tgt, 'evasion')));
   if (Math.random() > hitP) { dodged = true; log(`${tgt.name} evades ${u.name}.`); return { tgt, dmg, crit, lucky, dodged, applied }; }
   // base damage; Armor Penetration (+ any op bonus) ignores a % of the target's (Sunder-reduced) mitigated DEF.
-  const armorPen = Math.min(0.95, (u.fx.armorPen || 0) + (opts.armorPenBonus || 0));
-  const def = effDef(tgt) * 0.6 * Math.max(0, 1 - armorPen);
+  const armorPen = ((u.fx.armorPen || 0) + (opts.armorPenBonus || 0)) * ARMOR_PEN_MULT; // UNCAPPED stat, halved effect
+  const def = effDef(tgt) * 0.6 * Math.max(0, 1 - armorPen);                              // ≥200% stat → DEF fully ignored
   dmg = Math.max(1, Math.round(effAtk(u) * (mult || 1) - def));
   if (opts.exec) dmg = Math.round(dmg * (1 + opts.exec * Math.max(0, 1 - tgt.hp / tgt.max))); // Execution: bonus vs missing HP
   if (opts.perStatus) dmg = Math.round(dmg * (1 + opts.perStatus * debuffCount(tgt)));        // Anathema: bonus per debuff on the target
@@ -442,7 +443,7 @@ function dealHit(u, tgt, mult, opts, log, touched, foes) {
   }
   const thorns = thornsOf(tgt);
   if (thorns > 0 && tgt.hp > 0) { // reflect, mitigated by the ATTACKER's DEF; plain damage (no thorns-loop)
-    const rdef = effDef(u) * 0.6 * Math.max(0, 1 - (tgt.fx.armorPen || 0));
+    const rdef = effDef(u) * 0.6 * Math.max(0, 1 - (tgt.fx.armorPen || 0) * ARMOR_PEN_MULT);
     damageUnit(u, Math.max(1, Math.round(dmg * thorns - rdef))); touched.add(u);
   }
   if (opts.inflict !== false) applied = inflictStatuses(u, tgt, log, touched); // Potency vs Status Resistance per rider
