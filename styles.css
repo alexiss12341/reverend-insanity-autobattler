@@ -304,7 +304,7 @@ button.mini{font-size:10px;padding:3px 8px;min-width:0;letter-spacing:0.1em}
 /* The killer-move NAME stays in the brush font (--brush, inherited); the large background CJK glyph
    reverts to the previous serif (--cjk, Noto Serif SC) at its old heavy weight — cleaner than the
    cursive brush for a single big character. */
-.dmgpop.combo-cjk{color:#fff0bd;font-family:var(--cjk);font-weight:900;font-size:66px;text-shadow:0 0 10px rgba(199,154,69,.7),0 1px 2px #000}
+.dmgpop.combo-cjk{color:#fff0bd;font-family:var(--cjk);font-weight:900;font-size:86px;text-shadow:0 0 10px rgba(199,154,69,.7),0 1px 2px #000}
 .ublock.casting{filter:brightness(1.35) drop-shadow(0 0 8px rgba(199,154,69,.7))}
 /* Team-tab inline killer-move editor (on roster cards) — an open card spans the full grid row for room */
 .card.member.km-open{grid-column:1 / -1}
