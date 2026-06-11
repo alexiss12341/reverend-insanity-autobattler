@@ -121,19 +121,21 @@ button.mini{font-size:10px;padding:3px 8px;min-width:0;letter-spacing:0.1em}
 .nav-scroll::-webkit-scrollbar-track{background:transparent}
 /* grouped sections */
 .nav-group{display:flex;flex-direction:column;gap:2px}
-.nav-grp-head{display:flex;align-items:center;gap:8px;width:100%;padding:13px 14px 5px;font-family:var(--mono);
-  font-size:9px;letter-spacing:.24em;text-transform:uppercase;color:var(--muted);user-select:none;
-  background:none;border:none;cursor:pointer;transition:color .15s ease}
-.nav-grp-head:hover{color:var(--bone-dim)}
+.nav-grp-head{display:flex;align-items:center;gap:11px;width:100%;padding:11px 14px;font-family:var(--mono);
+  font-size:13px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--bone-dim);
+  user-select:none;background:none;border:none;cursor:pointer;transition:color .15s ease,background .15s ease}
+.nav-grp-head:hover{color:var(--bone);background:rgba(208,186,160,0.04)}
 .nav-grp-head:hover .nav-grp-ico{color:var(--blood-bright)}
-.nav-grp-chev{margin-left:auto;font-size:8px;color:var(--muted);line-height:1;transition:transform .15s ease}
+.nav-grp-head:hover .nav-grp-chev{color:var(--bone-dim)}
+.nav-grp-lbl{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.nav-grp-chev{margin-left:auto;font-size:11px;color:var(--muted);line-height:1;transition:transform .15s ease,color .15s ease}
 .nav-group.collapsed .nav-grp-chev{transform:rotate(-90deg)}
 #main:not(.rail) .nav-group.collapsed button[data-tab]{display:none}
 /* a collapsed group holding the active tab keeps its header lit so the current tab stays findable */
 #main:not(.rail) .nav-group.collapsed:has(button[data-tab].active) .nav-grp-head{color:var(--bone)}
 #main:not(.rail) .nav-group.collapsed:has(button[data-tab].active) .nav-grp-ico{color:var(--blood-bright)}
-.nav-group:first-child .nav-grp-head{padding-top:6px}
-.nav-grp-ico{font-family:var(--cjk);font-size:13px;color:var(--blood-dim);line-height:1}
+.nav-group + .nav-group{margin-top:7px;padding-top:7px;border-top:1px solid var(--line)} /* section divider */
+.nav-grp-ico{flex:none;width:18px;text-align:center;font-family:var(--cjk);font-size:17px;color:var(--stone);line-height:1}
 #nav button[data-tab]{display:flex;align-items:center;gap:11px;text-align:left;background:transparent;
   border:1px solid transparent;border-left:2px solid transparent;padding:10px 14px;font-size:13px;
   font-weight:500;letter-spacing:.12em;color:var(--bone-dim);border-radius:0;position:relative}
