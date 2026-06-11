@@ -102,8 +102,13 @@ function attachKiller(u, ch) {
   // move saved before unlocking simply never fires.
   if (rankOf(ch.realm) + 1 < KILLER_MIN_RANK) return;
   if (!S().clearedFloors[KILLER_UNLOCK_FLOOR]) return;
-  const cfg = ch && ch.killer;
-  if (!cfg || !cfg.archetype || !cfg.core || !Array.isArray(cfg.support) || cfg.support.length < 2) return;
+  const raw = ch && ch.killer;
+  if (!raw || !raw.archetype || !raw.core || !Array.isArray(raw.support)) return;
+  // Count only support Gu STILL EQUIPPED — mirrors the UI (ui.js csKiller/killerSummary), so a move the
+  // player sees as valid actually fires even if an unrelated Gu was swapped out after it was configured.
+  // (Without this, one stale support uid makes validateKiller reject the whole move so it never fires.)
+  const cfg = { archetype: raw.archetype, core: raw.core, support: raw.support.filter((uid) => (ch.gu || []).includes(uid)) };
+  if (cfg.support.length < 2) return;
   if (!validateKiller(cfg, ch.gu, guOf)) return;
   const coreGu = guOf(cfg.core);
   const supportGu = cfg.support.map(guOf).filter(Boolean);

@@ -118,3 +118,18 @@ ok(fired, 'a configured killer move fires in a recorded encounter');
 ok(res.win === true || res.win === false, 'encounter resolves cleanly');
 const enemyKiller = [50, 100, 250, 450].some((f) => generateEncounter(f).waves.flat().some((eu) => eu.killer && eu.killer.ops));
 ok(enemyKiller, 'some deep/boss enemy auto-configures a killer move');
+
+// REGRESSION (reported bug): the player set up a valid move, then swapped out an unrelated Gu, leaving a
+// STALE support uid in the saved config (no longer in c.gu). The UI still showed the move + its cost, but
+// battle.js attachKiller used to reject the whole move on the stale uid → it silently never fired despite
+// a full essence pool. attachKiller now filters support to equipped (mirroring the UI), so it fires.
+state.current = newGame('tkiller_stale'); const S3 = state.current;
+const pst = S3.roster[0];
+S3.clearedFloors[100] = true; pst.realm = 8; pst.attrs.int = 80;
+const kcore = atkA, ksup = [atkB, critG].filter(Boolean);
+pst.gu = [kcore, ...ksup].map((g) => { const uid = 'ks_' + g.id; S3.guInv.push({ uid, guId: g.id }); return uid; });
+// saved support = the 2 equipped support PLUS a dangling uid for a Gu that's no longer equipped
+pst.killer = { core: pst.gu[0], support: [...pst.gu.slice(1), 'ks_unequipped_stale'], archetype: 'cataclysm' };
+const resStale = resolveEncounter(generateEncounter(2), null, { record: true });
+const firedStale = resStale.timeline.steps.some((st) => (st.acts || []).some((a) => a.combo && a.combo.name));
+ok(firedStale, 'a killer move with a STALE (unequipped) support uid still fires');

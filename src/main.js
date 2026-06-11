@@ -556,6 +556,17 @@ function applyKillerArchetype(c, id) {
   UI.refreshTop(); UI.render(activeTab === 'battle' ? 'team' : activeTab); save();
 }
 
+// Drop any killer-move core/support Gu that's no longer equipped, so the saved config never references a
+// swapped-out Gu — a stale uid would silently stop the move firing (battle.js attachKiller) and skew the
+// displayed essence cost. Called after every equip/unequip. (Crafting fodder is unequipped spares only,
+// so it can't touch an equipped core/support and needs no scrub.)
+function scrubKiller(c) {
+  const k = c && c.killer; if (!k) return;
+  const eq = c.gu || [];
+  if (k.core && !eq.includes(k.core)) { k.core = null; k.support = []; return; } // lost the core → no move
+  if (Array.isArray(k.support)) k.support = k.support.filter((uid) => eq.includes(uid));
+}
+
 // ---------- global event API ----------
 const G = {
   // New game is a four-step modal chain (name → Dao path → first Gu → archetype), carried by `pendingNew`
@@ -1010,8 +1021,8 @@ const G = {
     UI.render(activeTab === 'battle' ? 'dao' : activeTab); save();
   },
   openGuPicker,
-  equipGu(charId, slot, uid) { const c = S().roster.find((x) => x.id === charId); c.gu[slot] = uid; UI.closeModal(); UI.render(activeTab === 'battle' ? 'team' : activeTab); save(); },
-  unequipGu(charId, slot) { const c = S().roster.find((x) => x.id === charId); c.gu.splice(slot, 1); UI.closeModal(); UI.render(activeTab === 'battle' ? 'team' : activeTab); save(); },
+  equipGu(charId, slot, uid) { const c = S().roster.find((x) => x.id === charId); c.gu[slot] = uid; scrubKiller(c); UI.closeModal(); UI.render(activeTab === 'battle' ? 'team' : activeTab); save(); },
+  unequipGu(charId, slot) { const c = S().roster.find((x) => x.id === charId); c.gu.splice(slot, 1); scrubKiller(c); UI.closeModal(); UI.render(activeTab === 'battle' ? 'team' : activeTab); save(); },
   // Reorder a Gu's channel PRIORITY (slot order): swap it with the adjacent equipped Gu (skipping empty
   // slots). dir = -1 raises priority (fires earlier when essence is tight), +1 lowers it.
   moveGu(charId, slot, dir) {
