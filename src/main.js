@@ -1204,5 +1204,6 @@ window.addEventListener('load', () => {
   renderTitle();
   Audio.init(); // procedural music + SFX; the context starts on the first user gesture (autoplay policy)
   setInterval(() => { if (S()) save(); }, 20000); // autosave heartbeat
+  setInterval(() => { if (S() && activeTab === 'bounties') UI.tickBounties(); }, 1000); // live bounty countdowns
   document.addEventListener('visibilitychange', onVisibilityChange); // pause + catch up across browser-tab switches
 });

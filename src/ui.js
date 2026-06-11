@@ -2240,6 +2240,13 @@ function fmtReset(ms) {
   const h = Math.floor(m / 60), mm = m % 60;
   return h ? `${h}h ${mm}m` : `${mm}m`;
 }
+// Seconds-precision clock for short countdowns (e.g. the bounty respawn): M:SS, or H:MM:SS past an hour.
+function fmtCountdown(ms) {
+  const s = Math.max(0, Math.ceil(ms / 1000));
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+  const pad = (n) => String(n).padStart(2, '0');
+  return h ? `${h}:${pad(m)}:${pad(sec)}` : `${m}:${pad(sec)}`;
+}
 export function viewQuests() {
   ensureDaily();
   const done = DAILY_QUESTS.filter((q) => questComplete(q.id)).length;
@@ -2304,6 +2311,32 @@ export function viewQuests() {
 // requested fields — boss NAME, RANK, ARCHETYPE (its trait line) and RARITY — plus the shared attempts
 // pool. Rewards are shown for context (their tuning is the next pass). The daily roster is deterministic
 // (data/bounties.js); the Challenge button runs a real fight via main.js G.attemptBounty.
+// A bounty card's action button (locked / respawning / challenge). Carries id="bc-act-N" + a state key
+// so the live ticker (tickBounties) can swap just this element when its state changes — no full re-render.
+const bountyActionKey = (left, cd, open) => !open ? 'lock' : cd > 0 ? 'cd' + Math.ceil(cd / 1000) : 'rdy' + (left > 0 ? 1 : 0);
+function bountyActionHTML(slot, left, cd, open) {
+  const k = bountyActionKey(left, cd, open);
+  if (!open) return `<button class="bc-go" id="bc-act-${slot}" data-k="${k}" disabled>🔒 Reach Floor ${slotUnlockFloor(slot)}</button>`;
+  if (cd > 0) return `<button class="bc-go" id="bc-act-${slot}" data-k="${k}" disabled>⏳ Respawning · ${fmtCountdown(cd)}</button>`;
+  return `<button class="primary bc-go" id="bc-act-${slot}" data-k="${k}" ${left > 0 ? '' : 'disabled'} onclick="G.attemptBounty(${slot})">${left > 0 ? '⚔ Challenge' : 'No attempts left'}</button>`;
+}
+// Live 1-second updater for the Bounties tab: ticks the respawn / next-attempt / roster-reset countdowns
+// and re-enables a card's Challenge button the moment its respawn cooldown expires — surgically (no full
+// re-render, so scroll & hover survive). Called from main.js's heartbeat while the Bounties tab is open.
+export function tickBounties() {
+  if (!document.querySelector('.bounty-grid')) return; // not on the Bounties tab
+  const left = attemptsLeft();
+  const set = (id, t) => { const e = document.getElementById(id); if (e && e.textContent !== t) e.textContent = t; };
+  set('bnt-attempts', `${left} / ${BOUNTY_MAX_ATTEMPTS}`);
+  set('bnt-next', left >= BOUNTY_MAX_ATTEMPTS ? 'Full' : fmtReset(msToNextAttempt()));
+  set('bnt-reset', fmtReset(msToReset()));
+  document.querySelectorAll('[id^="bc-act-"]').forEach((btn) => {
+    const slot = +btn.id.slice(7);
+    const open = slotUnlocked(slot), cd = open ? respawnRemaining(slot) : 0;
+    if (btn.dataset.k !== bountyActionKey(left, cd, open)) btn.outerHTML = bountyActionHTML(slot, left, cd, open);
+  });
+}
+
 export function viewBounties() {
   const list = dailyBounties();
   const left = attemptsLeft();
@@ -2343,19 +2376,15 @@ export function viewBounties() {
         <div class="bc-rtile"><span class="sk">Immortal Essence</span><span class="sv jade">+${b.rewards.essence} ✦</span></div>
         <div class="bc-rtile bc-gu"><span class="sk">${pathName(b.path).replace(/ Path$/, '')} Gu Drop</span><span class="sv-gu">${guRewardDesc(b.rewards.guReward)}</span></div>
       </div>
-      ${!open
-        ? `<button class="bc-go" disabled>🔒 Reach Floor ${slotUnlockFloor(b.slot)}</button>`
-        : cd > 0
-          ? `<button class="bc-go" disabled>⏳ Respawning · ${fmtReset(cd)}</button>`
-          : `<button class="primary bc-go" ${left > 0 ? '' : 'disabled'} onclick="G.attemptBounty(${b.slot})">${left > 0 ? '⚔ Challenge' : 'No attempts left'}</button>`}
+      ${bountyActionHTML(b.slot, left, cd, open)}
     </div>`;
   }).join('');
   return `${pagehead('賞', 'Hunt · 悬赏', 'Bounties',
     'Hunt a daily roster of <b>lone raid-boss</b> targets. You hold <b>5 attempts</b> that recharge <b>+1 per hour</b> — spent win or lose. Higher-rank bounties unlock as you climb the tower.')}
   <div class="cs-statgrid" style="grid-template-columns:repeat(3,1fr);margin-bottom:14px">
-    <div class="cs-stat"><span class="sk">Attempts</span><span class="sv stone">${left} / ${BOUNTY_MAX_ATTEMPTS}</span></div>
-    <div class="cs-stat"><span class="sk">Next Attempt</span><span class="sv">${left >= BOUNTY_MAX_ATTEMPTS ? 'Full' : fmtReset(nextMs)}</span></div>
-    <div class="cs-stat"><span class="sk">Roster Resets</span><span class="sv">${fmtReset(msToReset())}</span></div>
+    <div class="cs-stat"><span class="sk">Attempts</span><span class="sv stone" id="bnt-attempts">${left} / ${BOUNTY_MAX_ATTEMPTS}</span></div>
+    <div class="cs-stat"><span class="sk">Next Attempt</span><span class="sv" id="bnt-next">${left >= BOUNTY_MAX_ATTEMPTS ? 'Full' : fmtReset(nextMs)}</span></div>
+    <div class="cs-stat"><span class="sk">Roster Resets</span><span class="sv" id="bnt-reset">${fmtReset(msToReset())}</span></div>
   </div>
   <div class="bounty-grid">${cards}</div>`;
 }
