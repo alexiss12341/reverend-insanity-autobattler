@@ -340,6 +340,8 @@ button.mini{font-size:10px;padding:3px 8px;min-width:0;letter-spacing:0.1em}
 .ub-bar.hp .ub-shield{position:absolute;left:0;top:0;height:100%;z-index:1;pointer-events:none;transition:width .18s ease;
   background:repeating-linear-gradient(135deg,rgba(143,217,255,.55) 0 4px,rgba(143,217,255,.22) 4px 8px);
   box-shadow:inset 0 0 0 1px rgba(143,217,255,.5)}
+/* The "+shield" amount appended to the HP number — cyan to match the shield overlay */
+.ub-bar.hp .ub-num .ub-sh-num{color:#8fd9ff;text-shadow:0 0 3px rgba(143,217,255,.5),0 1px 2px #000}
 /* KILLER MOVE: name banner + path glyph float, and the casting actor's glow */
 .dmgpop.combo{color:var(--stone);font-size:46px;font-weight:400;letter-spacing:.06em;z-index:4;animation-duration:1.32s;text-shadow:0 0 8px rgba(199,154,69,.65),0 2px 4px #000,0 0 3px #000}
 /* The killer-move NAME stays in the brush font (--brush, inherited); the large background CJK glyph

@@ -468,6 +468,12 @@ const compact = (n) => {
   if (n >= 1e4) return (n / 1e3).toFixed(0) + 'K';
   return '' + n;
 };
+// HP-bar label: plain HP, plus a cyan "+shield" when the unit carries temp-HP (killer-move shield), so
+// the readout shows e.g. "1715+380" instead of hiding the shield. Cyan matches the .ub-shield overlay.
+const hpNumHtml = (u) => {
+  const hp = compact(Math.max(0, u.hp));
+  return u.shield > 0 ? `${hp}<span class="ub-sh-num">+${compact(u.shield)}</span>` : hp;
+};
 // Grid position of a unit's tile. Player faces right (Front column toward centre), enemy faces left.
 function tileStyle(side, row, lane) {
   const col = side === 'ally' ? (row === 'front' ? 2 : 1) : (row === 'front' ? 1 : 2);
@@ -566,7 +572,7 @@ function unitBlock(u, side, idx) {
     <div class="ub-status">${stBadges}</div>
     <div class="ub-name"${nameStyle}>${cult ? '◆ ' : ''}${u.name}</div>
     ${imprintStars(u.imprint, 'ub-imp')}
-    <div class="ub-bar hp val"><i style="width:${pctHp(u.hp, u.max)}%"></i><u class="ub-shield" style="width:${u.shield && u.max ? Math.min(100, (100 * u.shield) / u.max) : 0}%"></u><b class="ub-num">${compact(Math.max(0, u.hp))}</b></div>
+    <div class="ub-bar hp val"><i style="width:${pctHp(u.hp, u.max)}%"></i><u class="ub-shield" style="width:${u.shield && u.max ? Math.min(100, (100 * u.shield) / u.max) : 0}%"></u><b class="ub-num">${hpNumHtml(u)}</b></div>
     ${essBar}
     <div class="ub-bar chg"><i style="width:0%"></i></div></div>`;
 }
@@ -734,7 +740,7 @@ export async function playTimeline(tl, ctx = {}) {
   const drawHp = (side, i) => { const u = unit(side, i), e = el(side, i); if (!u || !e) return;
     e.querySelector('.hp>i').style.width = pctHp(u.hp, u.max) + '%';
     const sh = e.querySelector('.ub-shield'); if (sh) sh.style.width = (u.shield && u.max ? Math.min(100, (100 * u.shield) / u.max) : 0) + '%';
-    const num = e.querySelector('.hp .ub-num'); if (num) num.textContent = compact(Math.max(0, u.hp));
+    const num = e.querySelector('.hp .ub-num'); if (num) num.innerHTML = hpNumHtml(u);
     e.classList.toggle('dead', u.hp <= 0); };
   const drawChg = (side, i, g, ms) => { const e = el(side, i); if (!e) return;
     const bar = e.querySelector('.chg>i'); if (ms != null) bar.style.transitionDuration = ms + 'ms';
