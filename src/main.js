@@ -130,6 +130,7 @@ function endAutoChallenge(reason) {
 }
 
 let pendingArena = null; // a one-shot arena challenge: { encounter, seed, server } (mirrors pendingBounty)
+const ARENA_RESULT_HOLD_MS = 2800; // how long the arena VICTORY/DEFEAT stamp lingers before the view moves on
 async function runBattle() {
   idleTimer = null;
   if (!S() || battleBusy) return;
@@ -175,7 +176,9 @@ async function runBattle() {
       if (verbose) UI.clearLog();                                 // a lone manual attempt starts a fresh feed
       UI.logLine(`— Assaulting Floor ${floor}${enc.isBoss ? ' BOSS' : ''} (${enc.waves.length} wave${enc.waves.length > 1 ? 's' : ''}) —`, auto ? '' : 'rare');
     }
-    await UI.playTimeline(res.timeline, { floor: dispFloor, isBoss: enc.isBoss });    // animated arena: charge bars, clashes, damage popups
+    await UI.playTimeline(res.timeline, isArena                                       // animated arena: charge bars, clashes, damage popups
+      ? { arena: { opponent: arenaJob.server.defender.name } }                        // ranked PvP: header shows the opponent, not a floor
+      : { floor: dispFloor, isBoss: enc.isBoss });
     if (verbose && !abortBattle) log.forEach((m) => UI.logLine(m)); // dump the full feed after a single manual attempt / hunt
   } else {
     await sleepAbortable(fightWallMs(res.simTime));   // background: pace by the fight's real duration (interruptible)
@@ -199,6 +202,7 @@ async function runBattle() {
     const sv = arenaJob.server;
     const won = sv.winner === 'attacker';
     const d = sv.attacker.delta, sign = d >= 0 ? '+' : '';
+    if (animate) UI.showArenaResult(won, sv.defender.name, d, sv.attacker.points); // VICTORY/DEFEAT stamp over the battlefield
     if (activeTab === 'battle') UI.logLine(won
       ? `★ ARENA — you defeated ${sv.defender.name}!  ${sign}${d} → ${sv.attacker.points}`
       : `ARENA — ${sv.defender.name} held the line.  ${sign}${d} → ${sv.attacker.points}`, won ? 'win' : 'lose');
@@ -250,7 +254,15 @@ async function runBattle() {
   // Don't reschedule while the browser tab is hidden — its timers are throttled/frozen, so a live loop
   // there just crawls. We pause instead and credit an offline-style estimate when the tab returns (see
   // the visibilitychange handler). The in-flight run that's settling now is the last one until we're back.
-  if (!isHidden() && (autoChallenge || S().settings.idle || challengeRequested || pendingBounty != null || pendingArena != null)) idleTimer = setTimeout(runBattle, animate ? 350 : 0); // loop
+  // Settle: loop the idle/auto/queued battle, or (battle tab, nothing queued) drop back to the calm arena.
+  const settle = () => {
+    if (!isHidden() && (autoChallenge || S().settings.idle || challengeRequested || pendingBounty != null || pendingArena != null)) idleTimer = setTimeout(runBattle, 0);
+    else if (activeTab === 'battle') { Audio.scene(false); UI.render('battle'); } // settled: drop the music back + refresh
+  };
+  // After a ranked bout, HOLD the VICTORY/DEFEAT stamp a beat before farming resumes / the view repaints
+  // over it — otherwise the result flashes by and the arena snaps straight back to autobattle.
+  if (isArena && animate) idleTimer = setTimeout(settle, ARENA_RESULT_HOLD_MS);
+  else if (!isHidden() && (autoChallenge || S().settings.idle || challengeRequested || pendingBounty != null || pendingArena != null)) idleTimer = setTimeout(runBattle, animate ? 350 : 0); // loop
   else if (activeTab === 'battle') { Audio.scene(false); UI.render('battle'); } // settled on the battle tab: drop the music back to the calm arena mood + refresh
 }
 

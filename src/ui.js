@@ -596,7 +596,28 @@ function setArenaFloor(floor, isBoss) {
   const el = $('arena-floor'); if (!el || floor == null) return;
   el.textContent = `塔 Floor ${floor}${isBoss ? ' · BOSS' : ''}`;
   el.classList.toggle('boss', !!isBoss);
+  el.classList.remove('arena-vs');
 }
+// Ranked-PvP bout header — replaces the floor/wave readout with the opponent label during an arena fight.
+function setArenaHeader(arena) {
+  const f = $('arena-floor'); if (f) { f.textContent = `擂 Arena · vs ${arena.opponent}`; f.classList.remove('boss'); f.classList.add('arena-vs'); }
+  const w = $('wave-ind'); if (w) w.textContent = 'Ranked Bout';
+}
+// Arena bout result — a VICTORY/DEFEAT stamp over the battlefield after a ranked fight (opponent + rating
+// delta). Persists until the next fight starts; playTimeline clears it. Battle-tab (animated) fights only.
+export function showArenaResult(won, opponent, delta, points) {
+  const arena = document.querySelector('.arena'); if (!arena) return;
+  clearArenaResult();
+  const sign = delta >= 0 ? '+' : '';
+  const el = document.createElement('div');
+  el.id = 'arena-result'; el.className = 'arena-result ' + (won ? 'win' : 'lose');
+  el.innerHTML = `<b class="ar-verdict">${won ? '勝' : '敗'}</b>
+    <b class="ar-title">${won ? 'VICTORY' : 'DEFEAT'}</b>
+    <span class="ar-opp">vs ${esc(opponent)}</span>
+    <span class="ar-delta">Rating ${sign}${delta} → ${points}</span>`;
+  arena.appendChild(el);
+}
+export function clearArenaResult() { const e = $('arena-result'); if (e) e.remove(); }
 export function renderArena() {
   const a = $('side-A'), b = $('side-B'); if (!a || !b) return;
   if (liveArena) {
@@ -634,7 +655,7 @@ function auraRow(aura) {
 }
 // One cultivator block: archetype-line seal + name, its TIERED line name + affinity, then the unit's
 // equipped Gu each with its effect text (from guInfo).
-function traitRow(u, side, idx) {
+function traitRow(u, side, idx, hideGu) {
   const lineNm = (u.line && LINES[u.line]) ? lineName(u.line, u.rarity) : null;
   const aff = (u.affinity || []).map((p) => affinityName(p)).filter(Boolean);
   const tags = [];
@@ -655,9 +676,11 @@ function traitRow(u, side, idx) {
   const lineEffHtml = lineEffs.length
     ? `<div class="tp-lineeff" style="color:${color}">${esc(lineEffs.join(' · '))}</div>`
     : (isSupport ? '<div class="tp-lineeff muted">↑ contributes a team aura (above)</div>' : '');
-  const guHtml = gu.length
-    ? `<ul class="tp-gu">${gu.map((g) => `<li><b>${esc(g.name)}</b><span class="tp-gueff">${esc(g.eff)}</span></li>`).join('')}</ul>`
-    : '<div class="tp-nogu">No Gu equipped</div>';
+  const guHtml = hideGu
+    ? '<div class="tp-nogu">蠱 Gu loadout concealed</div>'
+    : gu.length
+      ? `<ul class="tp-gu">${gu.map((g) => `<li><b>${esc(g.name)}</b><span class="tp-gueff">${esc(g.eff)}</span></li>`).join('')}</ul>`
+      : '<div class="tp-nogu">No Gu equipped</div>';
   const idAttr = side != null ? ` id="tp-${side}-${idx}"` : '';
   return `<div class="tp-unit"${idAttr}>
     <div class="tp-row tp-trait">
@@ -670,20 +693,21 @@ function traitRow(u, side, idx) {
   </div>`;
 }
 // Build a side's panel HTML: active auras section (if any) + a per-cultivator section (traits + Gu).
-function traitPanelHtml(units, auras, side) {
+function traitPanelHtml(units, auras, side, hideGu) {
   const auraRows = (auras || []).map(auraRow).join('');
   // keep the TRUE index (for live buff updates: tp-{side}-{i} aligns with the timeline snapshot arrays);
   // dead units render nothing but their slot index is preserved for the living ones.
-  const unitRows = (units || []).map((u, i) => ((u.hp > 0 || u.hp == null) ? traitRow(u, side, i) : '')).join('');
+  const unitRows = (units || []).map((u, i) => ((u.hp > 0 || u.hp == null) ? traitRow(u, side, i, hideGu) : '')).join('');
   if (!auraRows && !unitRows) return '<div class="tp-empty">No active auras or traits.</div>';
   return `${auraRows ? `<div class="tp-h">Team Auras</div>${auraRows}` : ''}${unitRows ? `<div class="tp-h">Cultivators &amp; Gu</div>${unitRows}` : ''}`;
 }
 // Repaint both side panels. `foeAuras` is a single enemy-wave aura (object|null) or an array of them.
-export function renderTraitPanels(allyUnits, allyAuras, foeUnits, foeAuras) {
+export function renderTraitPanels(allyUnits, allyAuras, foeUnits, foeAuras, opts = {}) {
   const A = $('traits-A'), B = $('traits-B');
   const foe = Array.isArray(foeAuras) ? foeAuras : (foeAuras ? [foeAuras] : []);
-  if (A) A.innerHTML = traitPanelHtml(allyUnits, allyAuras, 'ally');
-  if (B) B.innerHTML = traitPanelHtml(foeUnits, foe.filter(Boolean), 'foe');
+  if (A) A.innerHTML = traitPanelHtml(allyUnits, allyAuras, 'ally', false);
+  // opts.hideFoeGu: PvP arena — conceal the enemy's Gu loadout (auras + archetype bonuses still show).
+  if (B) B.innerHTML = traitPanelHtml(foeUnits, foe.filter(Boolean), 'foe', !!opts.hideFoeGu);
 }
 
 // ---- animated timeline playback ----
@@ -737,10 +761,11 @@ export async function playTimeline(tl, ctx = {}) {
   let wave = 0, foes = (tl.waves[0] || []).map((u) => ({ ...u, ess: u.essMax }));
   a.innerHTML = allies.map((u, i) => unitBlock(u, 'ally', i)).join('');
   b.innerHTML = foes.map((u, i) => unitBlock(u, 'foe', i)).join('');
-  setWaveIndicator(1, tl.waves.length);
-  setArenaFloor(ctx.floor, ctx.isBoss); // which floor this fight is on (frontier attempt or farm run)
+  clearArenaResult();                   // wipe any lingering result stamp from a previous bout
+  if (ctx.arena) setArenaHeader(ctx.arena); // ranked PvP: label the opponent instead of a floor / wave
+  else { setWaveIndicator(1, tl.waves.length); setArenaFloor(ctx.floor, ctx.isBoss); }
   // per-side Auras & Traits panel: ally auras are fixed for the fight; foe auras swap with each wave.
-  renderTraitPanels(allies, tl.allyAuras || [], foes, (tl.waveAuras || [])[0]);
+  renderTraitPanels(allies, tl.allyAuras || [], foes, (tl.waveAuras || [])[0], { hideFoeGu: !!ctx.arena });
 
   const el = (side, i) => $(`ub-${side}-${i}`);
   const unit = (side, i) => (side === 'ally' ? allies[i] : foes[i]);
@@ -795,7 +820,7 @@ export async function playTimeline(tl, ctx = {}) {
     if (step.gauges && step.wave !== wave) {
       wave = step.wave; foes = (tl.waves[wave] || []).map((u) => ({ ...u, ess: u.essMax }));
       b.innerHTML = foes.map((u, i) => unitBlock(u, 'foe', i)).join('');
-      renderTraitPanels(allies, tl.allyAuras || [], foes, (tl.waveAuras || [])[wave]); // new wave → its foe panel
+      renderTraitPanels(allies, tl.allyAuras || [], foes, (tl.waveAuras || [])[wave], { hideFoeGu: !!ctx.arena }); // new wave → its foe panel
       setWaveIndicator(wave + 1, tl.waves.length);
     }
     if (step.heal) { step.heal.forEach((hp, i) => { if (allies[i]) { allies[i].hp = hp; drawHp('ally', i); } }); await _sleep(ACT_MS * 2); continue; }
@@ -1849,8 +1874,12 @@ function csMarrow(c) {
 function csTemperedFlesh(s) {
   const hit = 0.85 + s.hitChance;   // mirrors csStatGrid: 85% base + bonus, uncapped
   const cell = (k, v) => `<div class="ch5-fcell"><span class="ch5-fk">${k}</span><span class="ch5-fv">${v}</span></div>`;
+  const core = (k, v) => `<div class="ch5-ccell"><span class="ch5-fk">${k}</span><span class="ch5-cv">${v}</span></div>`;
   return `<div class="ch5-panel">
     <div class="ch5-h">Tempered Flesh</div>
+    <div class="ch5-core">
+      ${core('ATK', compact(s.atk))}${core('HP', compact(s.maxHp))}${core('DEF', compact(s.def))}${core('SPD', s.spd)}
+    </div>
     <div class="ch5-flesh">
       ${cell('Crit', pct(s.crit))}${cell('Crit Dmg', '×' + s.critDamage.toFixed(2))}
       ${cell('Evasion', pct(s.dodge))}${cell('Hit', pct(hit))}
@@ -3144,20 +3173,30 @@ function viewPvp() {
 // Accepts members shaped like the server payload ({name,rarity,realm,row,lane,daoPath,line}).
 const arenaSealOf = (m) => m.daoPath ? pathCjk(m.daoPath) : (m.line ? lineCjk(m.line) : '蛊');
 const arenaSealColor = (m) => m.daoPath ? pathColor(m.daoPath) : 'var(--stone)';
-function arenaFormation(members) {
+const arenaTile = (m, title) => {
+  const rc = rarityColor(m.rarity) || 'var(--stone)';
+  return `<div class="afm-tile" style="border-left-color:${rc}" title="${esc(title)}">
+    <span class="afm-seal" style="color:${arenaSealColor(m)}">${arenaSealOf(m)}</span>
+    <span class="afm-name" style="color:${rc}">${escTipHtml(m.name)}</span>
+    <span class="afm-realm">${realmName(m.realm).replace('Rank ', 'R')}</span></div>`;
+};
+// `conceal` (opponents): hide the Gu loadout, killer move AND front/back formation — a flat, power-sorted
+// roster whose tooltip reveals only name / rarity / realm. Without it (your own team) the full positional
+// grid + Gu/killer tooltip shows. Path seal + rarity stay either way (identity, not loadout).
+function arenaFormation(members, opts = {}) {
+  if (opts.conceal) {
+    const flat = (members || []).slice().sort((a, b) => (rarityTier(b.rarity) - rarityTier(a.rarity)) || ((b.realm | 0) - (a.realm | 0)));
+    return `<div class="afm-grid concealed">${flat.map((m) => arenaTile(m, `${m.name} — ${m.rarity || ''} · ${realmName(m.realm)}`)).join('')}</div>`;
+  }
   const sorted = (members || []).slice().sort((a, b) => (a.lane | 0) - (b.lane | 0));
   const front = sorted.filter((m) => m.row !== 'back'), back = sorted.filter((m) => m.row === 'back');
   const rows = Math.max(front.length, back.length, 1);
   const col = (list) => `<div class="afm-col">${Array.from({ length: rows }, (_, i) => {
     const m = list[i];
     if (!m) return '<div class="afm-tile empty"></div>';
-    const rc = rarityColor(m.rarity) || 'var(--stone)';
     const title = `${m.name} — ${m.rarity || ''} · ${realmName(m.realm)} · ${m.row === 'back' ? 'Back' : 'Front'} ${(m.lane | 0) + 1}`
       + `${m.gu && m.gu.length ? '\nGu: ' + m.gu.join(', ') : ''}${m.killer ? '\nKiller: ' + m.killer : ''}`;
-    return `<div class="afm-tile" style="border-left-color:${rc}" title="${esc(title)}">
-      <span class="afm-seal" style="color:${arenaSealColor(m)}">${arenaSealOf(m)}</span>
-      <span class="afm-name" style="color:${rc}">${escTipHtml(m.name)}</span>
-      <span class="afm-realm">${realmName(m.realm).replace('Rank ', 'R')}</span></div>`;
+    return arenaTile(m, title);
   }).join('')}</div>`;
   return `<div class="afm-grid">${col(back)}${col(front)}</div>`; // back column outside, front toward the ladder
 }
@@ -3273,22 +3312,23 @@ function arenaPodiumCard(t, rank, mine, noAtt, eligible, registered) {
     <div class="apd-owner">${escTipHtml(t.name || 'Anonymous')}${mine ? ' <span class="muted">· you</span>' : ''}</div>
     <div class="apd-pts">${t.points}<span>RATING</span></div>
     <div class="apd-rec">${arenaRecordHtml(t.wins, t.losses)}</div>
-    <div class="apd-fm">${arenaFormation(members)}</div>
+    <div class="apd-fm">${arenaFormation(members, { conceal: !mine })}</div>
     <div class="apd-foot"><span class="apd-pwr">PWR ${compact(t.power)}</span>${arenaChallengeBtn(t, mine, noAtt, true, eligible, registered)}</div>
   </div>`;
 }
 function arenaRow(t, rank, mine, noAtt, eligible, registered) {
   const members = arenaMembersOf(t);
-  const killers = members.map((m) => m.killer).filter(Boolean);
+  // Conceal opponents' loadout intel: only YOUR OWN row spells out the Gu count + killer moves.
+  const killers = mine ? members.map((m) => m.killer).filter(Boolean) : [];
   const guN = members.reduce((s, m) => s + ((m.gu || []).length), 0);
   return `<div class="apv-row${mine ? ' mine' : ''}">
     <div class="apr-rank"><span class="apr-rk-n">${rank}</span><span class="apr-rk-l">RANK</span></div>
     <div class="apr-owner">
       <b>${escTipHtml(t.name || 'Anonymous')}</b>${mine ? '<i class="apr-you">your defense</i>' : ''}
-      <span class="apr-sub">${members.length} cultivator${members.length === 1 ? '' : 's'} · 蠱 ${guN} Gu</span>
+      <span class="apr-sub">${members.length} cultivator${members.length === 1 ? '' : 's'}${mine ? ` · 蠱 ${guN} Gu` : ''}</span>
       ${killers.length ? `<span class="apr-killers" title="${esc('Killer moves: ' + killers.join(', '))}">擂 ${escTipHtml(killers.join(' · '))}</span>` : ''}
     </div>
-    ${arenaFormation(members)}
+    ${arenaFormation(members, { conceal: !mine })}
     <div class="apr-stamp"><b>${t.points}</b><span>RATING</span><i>PWR ${compact(t.power)}</i><span class="apr-rec">${arenaRecordHtml(t.wins, t.losses)}</span></div>
     <div class="apr-act">${arenaChallengeBtn(t, mine, noAtt, false, eligible, registered)}</div>
   </div>`;

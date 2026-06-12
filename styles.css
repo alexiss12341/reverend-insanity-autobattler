@@ -250,6 +250,17 @@ button.mini{font-size:10px;padding:3px 8px;min-width:0;letter-spacing:0.1em}
 .wave-indicator{color:var(--bone-dim);border:1px solid var(--line)}
 .arena-floor{color:var(--stone);border:1px solid rgba(199,154,69,0.4)}
 .arena-floor.boss{color:#e7a7ad;border-color:rgba(200,49,60,0.55);background:rgba(158,27,39,0.14)}
+.arena-floor.arena-vs{color:#e7a7ad;border-color:rgba(200,49,60,0.55);background:rgba(158,27,39,0.14)}
+/* ranked-bout VICTORY/DEFEAT stamp over the battlefield (added/removed by playTimeline + showArenaResult) */
+.arena-result{position:absolute;inset:0;z-index:5;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;
+  background:radial-gradient(60% 60% at 50% 45%,rgba(8,6,5,0.82),rgba(8,6,5,0.52));pointer-events:none;animation:arResult .45s cubic-bezier(.2,.9,.25,1) both}
+.arena-result .ar-verdict{font-family:var(--cjk);font-weight:900;font-size:100px;line-height:.9;text-shadow:0 4px 30px rgba(0,0,0,0.6)}
+.arena-result .ar-title{font-family:var(--mono);font-size:22px;letter-spacing:.42em;text-indent:.42em;font-weight:700}
+.arena-result .ar-opp{font-family:var(--serif);font-size:19px;color:var(--bone);font-style:italic}
+.arena-result .ar-delta{font-family:var(--mono);font-size:12px;letter-spacing:.18em;color:var(--bone-dim)}
+.arena-result.win .ar-verdict,.arena-result.win .ar-title{color:var(--jade)}
+.arena-result.lose .ar-verdict,.arena-result.lose .ar-title{color:var(--blood-bright)}
+@keyframes arResult{from{opacity:0;transform:scale(1.14)}to{opacity:1;transform:scale(1)}}
 .side-lbl{font-family:var(--mono);font-size:10px;letter-spacing:.24em;color:var(--muted);text-transform:uppercase}
 /* per-side "Auras & Traits" panels, side by side below the meta bar */
 .arena-panels{display:flex;gap:30px;width:100%;position:relative;z-index:1}
@@ -941,6 +952,7 @@ button.mini{font-size:10px;padding:3px 8px;min-width:0;letter-spacing:0.1em}
 
 /* formation mini-grid (side preview + podium cards + ladder rows) */
 .afm-grid{display:flex;gap:7px}
+.afm-grid.concealed{flex-wrap:wrap} /* opponents: no front/back columns — a flat, position-agnostic roster */
 .afm-col{display:flex;flex-direction:column;gap:6px}
 .afm-tile{position:relative;width:104px;border:1px solid var(--line);border-left-width:3px;background:var(--bg3);
   padding:5px 9px;display:flex;flex-direction:column;gap:1px}
@@ -1418,6 +1430,9 @@ button.mini{font-size:10px;padding:3px 8px;min-width:0;letter-spacing:0.1em}
 
 /* Tempered flesh — combat stats, 2-up grid */
 .ch5-flesh{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--line);border:1px solid var(--line)}
+.ch5-core{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line);border:1px solid var(--line);margin-bottom:12px}
+.ch5-ccell{display:flex;flex-direction:column;gap:3px;background:var(--bg3);padding:9px 11px;align-items:flex-start}
+.ch5-cv{font-family:var(--mono);font-size:18px;font-weight:700;color:var(--bone)}
 .ch5-fcell{display:flex;flex-direction:column;gap:3px;background:var(--bg2);padding:9px 12px}
 .ch5-fk{font-family:var(--mono);font-size:8px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted)}
 .ch5-fv{font-family:var(--mono);font-size:15px;color:var(--bone)}
