@@ -12,6 +12,8 @@ import { PULL_COST, PULL_COST_10, PITY_CAP, pityCount } from './systems/gacha.js
 import { prestige, BOONS, boonCost, boonLevel, boonAtMax, canReincarnate, soulsAward, reincarnationPathChoices } from './systems/prestige.js';
 import { DAILY_QUESTS, COMPLETE_ALL_BONUS, ensureDaily, questProgress, questGoal, questComplete, questClaimed, questClaimable, allClaimed, bonusClaimable, pendingReward, claimableCount, msToReset } from './systems/quests.js';
 import { dailyBounties, attemptsLeft, msToNextAttempt, slotUnlocked, respawnRemaining, BOUNTY_MAX_ATTEMPTS } from './systems/bounties.js';
+import { ensureArenaMeta, arenaAttemptsLeft, arenaMsToNextAttempt, ARENA_MAX_ATTEMPTS, arenaUnlocked, ARENA_UNLOCK_FLOOR } from './systems/arenaMeta.js';
+import { arenaCanChallenge, ARENA_UP, ARENA_DOWN } from './data/arena.js';
 import { slotUnlockFloor } from './data/bounties.js';
 import { canCraft, refineSpec, canUpgrade } from './systems/crafting.js';
 import { resourceCost, dropEstimate, shopResources, highestRosterRank, marketUnlocked } from './systems/economy.js';
@@ -128,7 +130,7 @@ export function render(tab) {
   const views = {
     battle: viewBattle, team: viewTeam, formation: viewFormation, recruit: viewRecruit,
     gu: viewGu, shop: viewShop, inv: viewInventory, floors: viewFloors, codex: viewCodex, dao: viewDao,
-    quests: viewQuests, bounties: viewBounties,
+    quests: viewQuests, bounties: viewBounties, pvp: viewPvp,
     attainment: viewAttainment, almanac: viewAlmanac, res: () => viewResource(_resId),
     whatsnew: viewWhatsNew,
     char: () => viewCharacter(_charId),
@@ -945,48 +947,76 @@ export function charNavOrder() {
     (RARITY_ORDER.indexOf(b.rarity) - RARITY_ORDER.indexOf(a.rarity)) || a.name.localeCompare(b.name));
   return [...active, ...reserve];
 }
-// The 6 active slots, each holding the current active fighter (with inline Gu equip/unequip).
+// Rich themed-tooltip body for an equipped Gu (tier · name · path · EFFECT · essence, plus optional
+// channel priority / starved). Embedded as a hidden `.tip` child of a `.tip-host` chip so the portal
+// (initTooltips) floats it as a design-sheet card — the effect line is the part players actually need.
+function guTipBody(gu, extra = {}) {
+  const sub = [pathName(gu.daoPath)];
+  if (isUnique(gu)) sub.push('Unique');
+  if (extra.priority) sub.push(`P${extra.priority}${extra.ok === false ? ' · starved' : ''}`);
+  const ess = extra.cost != null ? `Essence ◇${Math.round(extra.cost)}/use` : `Essence ◇${guEssenceCost(gu)}`;
+  return `<b class="tip-head">T${gu.tier} ${esc(gu.name)}</b>`
+    + `<span class="tip-sub">${sub.join(' · ')}</span>`
+    + `<span class="tip-eff"><span>${effectText(gu)}</span><span>${ess}</span></span>`;
+}
+
+// One hero card for a deployed cultivator (Active Team panel, 3×2).
 function activeSlotCard(c) {
   const s = effectiveStats(c);
   const rc = rarityColor(c.rarity);
-  const unspent = unspentPoints(c);
-  const guChips = Array.from({ length: guSlotsOf(c) }).map((_, i) => {
+  const pos = `${rowOf(c) === 'back' ? 'BACK' : 'FRONT'} · L${laneOf(c) + 1}`;
+  const rank = rankOf(c.realm) + 1;
+  // Gu chips in channel-priority order + empty slots (each opens the picker at that slot)
+  const pool = s.essencePool; let cum = 0, lit = 0, equipped = 0;
+  const chips = Array.from({ length: guSlotsOf(c) }).map((_, i) => {
     const gu = c.gu[i] ? guOf(c.gu[i]) : null;
-    if (!gu) return `<div class="slot" onclick="G.openGuPicker('${c.id}',${i})">+ Gu slot</div>`;
-    // hover shows the Gu's details (tier · name · path · effect) via the themed tooltip portal; the
-    // click still opens the equip/unequip picker.
-    const tip = `<b class="tip-head">T${gu.tier} ${gu.name}</b>`
-      + `<span class="tip-sub">${pathName(gu.daoPath)}${isUnique(gu) ? ' · Unique' : ''}</span>`
-      + `<span class="tip-eff"><span>${effectText(gu)}</span><span>Essence ${guEssenceCost(gu)}</span></span>`;
-    return `<div class="slot filled tip-host" style="border-color:var(--t${gu.tier})" onclick="G.openGuPicker('${c.id}',${i})"><b style="color:var(--t${gu.tier})">T${gu.tier}</b> ${gu.name}<span class="tip">${tip}</span></div>`;
+    if (!gu) return `<i class="tc-chip empty" onclick="G.openGuPicker('${c.id}',${i})" title="Empty slot ${i + 1}">＋</i>`;
+    equipped++; cum += guEssenceCostFor(gu, rank);
+    const ok = cum <= pool + 1e-9; if (ok) lit++;
+    const col = pathColor(gu.daoPath);
+    return `<i class="tc-chip tip-host${ok ? '' : ' starved'}" style="color:${col};border-color:${col}55"
+      onclick="G.openGuPicker('${c.id}',${i})">${pathCjk(gu.daoPath)}<span class="tip">${guTipBody(gu, { priority: i + 1, ok, cost: guEssenceCostFor(gu, rank) })}</span></i>`;
   }).join('');
-  return `<div class="card teamslot${unspent > 0 ? ' has-alloc' : ''}">
-    <div class="row start">
-      <span class="uname big" style="cursor:pointer" onclick="G.openChar('${c.id}')"><span class="cjk" style="color:${rc};margin-right:6px">${charGlyph(c)}</span>${c.name}</span>
-      <span class="rar" style="color:var(--jade);white-space:nowrap">● ${rowOf(c) === 'back' ? 'BACK' : 'FRONT'} L${laneOf(c) + 1}</span>
+  const killer = killerSummary ? killerSummary(c) : '';
+  return `<div class="card h4-card" style="border-top-color:${rc}" onclick="G.openChar('${c.id}')">
+    <div class="h4-head">
+      <span class="tc-seal cjk" style="color:${rc};border-color:${rc}88">${charGlyph(c) || '蛊'}</span>
+      <div class="h4-id">
+        <b style="color:${rc}">${esc(c.name)}${c.isPlayer ? '<i class="h4-you">you</i>' : ''}</b>
+        <span>${c.rarity} · ${realmName(c.realm)}${(c.imprint || 0) > 0 ? ' ' + imprintStars(c.imprint) : ''}</span>
+      </div>
+      <span class="h4-pos">${pos}</span>
     </div>
-    <div class="cult">${realmName(c.realm)} · ${c.rarity}${(c.imprint || 0) > 0 ? ` · ${imprintStars(c.imprint)}` : ''}</div>
-    <div class="statline"><span>HP <b>${compact(s.maxHp)}</b></span><span>ATK <b>${compact(s.atk)}</b></span><span>DEF <b>${compact(s.def)}</b></span><span>SPD <b>${s.spd}</b></span></div>
-    ${unspent > 0 ? `<div class="alloc-note" title="Open ${esc(c.name)}'s sheet to allocate" onclick="G.openChar('${c.id}')">▲ ${compact(unspent)} attribute point${unspent === 1 ? '' : 's'} to allocate</div>` : ''}
-    <div class="side-lbl" style="margin-top:12px">Gu Loadout — click a slot to equip/unequip</div>
-    <div class="slot-row">${guChips}</div>
-    <div class="row" style="margin-top:12px">
-      <button onclick="G.openChar('${c.id}')">View Sheet ▸</button>
-      <button onclick="G.toggleActive('${c.id}')">Bench</button>
+    <div class="h4-stats">
+      <div><span>ATK</span><b>${compact(s.atk)}</b></div><div><span>HP</span><b>${compact(s.maxHp)}</b></div>
+      <div><span>DEF</span><b>${compact(s.def)}</b></div><div><span>SPD</span><b>${s.spd}</b></div>
+    </div>
+    <div class="h4-gulbl"><span>GU · tap a slot to equip</span><i>◇ sustains ${lit}/${equipped || 0}</i></div>
+    <div class="tc-chips" onclick="event.stopPropagation()">${chips}</div>
+    <div class="h4-foot" onclick="event.stopPropagation()">
+      ${killer ? `<span class="t1-killer">${killer}</span>` : '<span class="h4-nok">no killer move</span>'}
+      <span class="h4-acts">
+        <button class="mini" onclick="G.openChar('${c.id}')">Sheet</button>
+        ${c.isPlayer ? '' : `<button class="mini" onclick="G.toggleActive('${c.id}')">Bench</button>`}
+      </span>
     </div>
   </div>`;
 }
+
 function emptySlotCard(n) {
-  return `<div class="card teamslot empty"><div>
+  return `<div class="card h4-card h4-empty"><div>
     <div class="big" style="color:var(--muted)">Empty Slot ${n}</div>
-    <div class="tiny muted" style="margin-top:7px">Activate a reserve from the roster below</div></div></div>`;
+    <div class="tiny muted" style="margin-top:7px">Deploy a reserve from the roster below</div></div></div>`;
 }
+
 function activeTeamPanel() {
   const active = charNavOrder().filter((c) => c.active);
   const cells = [];
   for (let i = 0; i < 6; i++) cells.push(active[i] ? activeSlotCard(active[i]) : emptySlotCard(i + 1));
-  return `<div class="grid cards teamslots">${cells.join('')}</div>`;
+  return `<div class="h4-grid">${cells.join('')}</div>`;
 }
+
+
 // Team-tab banner listing every duplicate set in the roster. Each set gets a redirect chip (opens the
 // copy you'd keep/imprint INTO) plus a single Auto-Imprint action that consolidates them all at once.
 function dupBanner() {
@@ -1049,19 +1079,29 @@ export function viewTeam() {
   ${secHead(2, 'The Roster', `${S().roster.length} cultivators`)}
   ${dupBanner()}
   ${teamControls(sort, filter, rar, pathF, st.teamSearch || '')}
-  <div class="grid cards" id="rosterResults">${rosterCardsHtml()}</div>`;
+  <div class="h4-roster" id="rosterResults">${rosterCardsHtml()}</div>`;
 }
-function fmUnit(c) {
+// ---------- formation ----------
+let fmSelId = null; // unit shown in the inspector (module-level — survives re-renders, not persisted)
+export function fmSelect(id) { fmSelId = id; const w = $('fmWrap'); if (w) w.innerHTML = renderFormation(); }
+const fmSelected = () => activeTeam().find((c) => c.id === fmSelId)
+  || S().roster.find((c) => c.isPlayer && c.active) || activeTeam()[0] || null;
+
+// One occupied board tile. Draggable; click selects into the inspector.
+function fmUnit(c, sel) {
   const s = effectiveStats(c);
   const rc = rarityColor(c.rarity);
-  return `<div class="fmunit" draggable="true" ondragstart="G.dragStart(event,'${c.id}')" title="${esc(c.name)} — ${c.rarity} · ${realmName(c.realm)} · HP ${s.maxHp} · ATK ${s.atk} · DEF ${s.def} · SPD ${s.spd}">
+  return `<div class="fmunit${sel ? ' sel' : ''}" draggable="true" ondragstart="G.dragStart(event,'${c.id}')"
+    onclick="G.fmSelect('${c.id}')" title="${esc(c.name)} — ${c.rarity} · ${realmName(c.realm)}">
+    ${charGlyph(c) ? `<span class="fm4-seal cjk" style="color:${rc}">${charGlyph(c)}</span>` : ''}
     <span class="uname" style="color:${rc}">${c.name}</span>
     <span class="fmrealm">${realmName(c.realm)}${(c.imprint || 0) > 0 ? ' ' + imprintStars(c.imprint) : ''}</span>
     <span class="muted tiny">A ${compact(s.atk)} · H ${compact(s.maxHp)} · S ${s.spd}</span>
-    ${c.isPlayer ? '' : `<button class="fmx" title="Bench" onclick="G.benchChar('${c.id}')">×</button>`}
+    ${c.isPlayer ? '' : `<button class="fmx" title="Bench" onclick="event.stopPropagation();G.benchChar('${c.id}')">×</button>`}
   </div>`;
 }
-// Reserve filter bar for the Formation page (sort + rarity + path), mirroring the Team controls.
+
+// Reserve filter bar (sort + rarity + path) — unchanged wiring, lives above the deploy list.
 function formationControls(sort, rar, pathF, count) {
   const sb = (k) => `<button class="${sort === k ? 'primary' : ''}" onclick="G.setView('fmSort','${k}')">${TEAM_SORTS[k].label}</button>`;
   const rarOpts = ['all', ...RARITY_ORDER].map((r) => `<option value="${r}" ${rar === r ? 'selected' : ''}>${r === 'all' ? 'All rarities' : r}</option>`).join('');
@@ -1073,12 +1113,79 @@ function formationControls(sort, rar, pathF, count) {
     <span class="muted small" style="margin-left:auto">${count} reserve${count === 1 ? '' : 's'}</span>
   </div>`;
 }
-function renderFormation() {
+
+// The 2×5 board with lane headers, shield-direction row labels and the enemy-side rule.
+function fmBoardHtml(sel) {
   const lanes = [...Array(LANES).keys()];
   const rowHtml = (row) => lanes.map((lane) => {
     const occ = tileOccupant(row, lane);
-    return `<div class="fmtile${occ ? ' on' : ''}" ondragover="G.dragOver(event)" ondragleave="G.dragLeave(event)" ondrop="G.dropTile(event,'${row}',${lane})">${occ ? fmUnit(occ) : `<span class="muted tiny">L${lane + 1}</span>`}</div>`;
+    return `<div class="fmtile${occ ? ' on' : ''}${occ && sel && occ.id === sel.id ? ' seltile' : ''}"
+      ondragover="G.dragOver(event)" ondragleave="G.dragLeave(event)" ondrop="G.dropTile(event,'${row}',${lane})"
+      ${occ ? `style="border-left:3px solid ${rarityColor(occ.rarity)}"` : ''}>${occ ? fmUnit(occ, sel && occ.id === sel.id) : `<span class="muted tiny">L${lane + 1}</span>`}</div>`;
   }).join('');
+  return `<div class="card formation fm4-board">
+    <div class="fm4-lanehead"><span></span>${lanes.map((l) => `<i>LANE ${l + 1}</i>`).join('')}</div>
+    <div class="fmboard fm4">
+      <div class="fmrowlbl">Front<i>shields</i></div><div class="fmrow">${rowHtml('front')}</div>
+      <div class="fmrowlbl">Back<i>shielded</i></div><div class="fmrow">${rowHtml('back')}</div>
+    </div>
+    <div class="fm4-enemy">敵 — enemy side · front row meets them first</div>
+  </div>`;
+}
+
+// One reserve row: identity + stats + one-click deploys (also draggable onto the board).
+function fmReserveRow(c) {
+  const s = effectiveStats(c);
+  const rc = rarityColor(c.rarity);
+  return `<div class="fm4-row" style="border-left-color:${rc}" draggable="true" ondragstart="G.dragStart(event,'${c.id}')">
+    ${charGlyph(c) ? `<span class="fm4-rseal cjk" style="color:${rc}">${charGlyph(c)}</span>` : ''}
+    <b style="color:${rc}">${c.name}</b>
+    <span class="fm4-sub">${realmName(c.realm)}${(c.imprint || 0) > 0 ? ' ' + imprintStars(c.imprint) : ''}</span>
+    <span class="fm4-stats">A ${compact(s.atk)} · H ${compact(s.maxHp)} · S ${s.spd}</span>
+    <span class="fm4-acts">
+      <button class="mini" onclick="G.deployTo('${c.id}','front')">→ Front</button>
+      <button class="mini" onclick="G.deployTo('${c.id}','back')">→ Back</button>
+    </span>
+  </div>`;
+}
+
+// Sticky Unit Inspector: stats, position + lane coverage, killer move, Gu load, team summary.
+function fmInspectorHtml(sel) {
+  if (!sel) return '<div class="fm4-h">Unit Inspector</div><div class="muted small">Deploy a fighter to inspect them.</div>';
+  const s = effectiveStats(sel);
+  const rc = rarityColor(sel.rarity);
+  const lane = laneOf(sel), row = rowOf(sel);
+  const lo = Math.max(1, lane), hi = Math.min(LANES, lane + 2); // ±1 reach, 1-based display
+  const team = activeTeam();
+  const front = team.filter((c) => rowOf(c) === 'front').length;
+  const guN = (sel.gu || []).filter(Boolean).length;
+  return `<div class="fm4-h">Unit Inspector</div>
+    <div class="fm4-id">
+      ${charGlyph(sel) ? `<span class="fm4-bigseal cjk" style="color:${rc}">${charGlyph(sel)}</span>` : ''}
+      <div><b class="fm4-name" style="color:${rc}">${sel.name}</b>
+        <div class="fm4-isub">${sel.rarity} · ${realmName(sel.realm)}${(sel.imprint || 0) > 0 ? ` · <span class="fm4-imp">${imprintStars(sel.imprint)}</span>` : ''}</div></div>
+    </div>
+    <div class="fm4-statgrid">
+      <div><span>HP</span><b>${fmt(s.maxHp)}</b></div><div><span>ATK</span><b>${fmt(s.atk)}</b></div>
+      <div><span>DEF</span><b>${fmt(s.def)}</b></div><div><span>SPD</span><b>${s.spd}</b></div>
+    </div>
+    <div class="fm4-irow"><span class="fm4-h">Position</span><span class="fm4-pos">${row.toUpperCase()} · LANE ${lane + 1} <i>· strikes lanes ${lo}–${hi}</i></span></div>
+    <div class="fm4-irow"><span class="fm4-h">Killer Move</span><span>${killerSummary(sel)}</span></div>
+    <div class="fm4-irow"><span class="fm4-h">Gu</span><span>蠱 ${guN} equipped${guN ? '' : ' <span class="muted">— equip on the Team tab</span>'}</span></div>
+    ${breakthroughChip(sel)}
+    <div class="fm4-iacts">
+      <button class="mini" onclick="G.openChar('${sel.id}')">Open Sheet</button>
+      ${sel.isPlayer ? '' : `<button class="mini" onclick="G.benchChar('${sel.id}')">Bench</button>`}
+    </div>
+    <hr class="fm4-rule">
+    <div class="fm4-h">Team</div>
+    <div class="fm4-team">
+      <div><span>Deployed</span><b>${team.length} / 6</b></div>
+      <div><span>Front / Back</span><b>${front} / ${team.length - front}</b></div>
+    </div>`;
+}
+
+function renderFormation() {
   const st = S().settings;
   const sort = TEAM_SORTS[st.fmSort] ? st.fmSort : 'power';
   const rar = st.fmRarity || 'all';
@@ -1088,27 +1195,29 @@ function renderFormation() {
   if (pathF !== 'all') bench = bench.filter((c) => c.gu.some((uid) => { const g = guOf(uid); return g && g.daoPath === pathF; }));
   bench.sort(TEAM_SORTS[sort].cmp);
   const anyReserve = S().roster.some((c) => !c.active);
+  const sel = fmSelected();
   const benchHtml = bench.length
-    ? bench.map(fmUnit).join('')
-    : `<span class="muted small">${anyReserve ? 'No reserves match these filters.' : 'No reserves — recruit more in 召 Recruit.'}</span>`;
-  return `<div class="card formation">
-    <div class="fmboard">
-      <div class="fmrowlbl">Front</div><div class="fmrow">${rowHtml('front')}</div>
-      <div class="fmrowlbl">Back</div><div class="fmrow">${rowHtml('back')}</div>
-    </div>
-    <div class="fmbench">
-      <div class="side-lbl">Reserves — drag onto the board to deploy</div>
+    ? bench.map(fmReserveRow).join('')
+    : `<div class="muted small" style="padding:10px 2px">${anyReserve ? 'No reserves match these filters.' : 'No reserves — recruit more in 召 Recruit.'}</div>`;
+  return `<div class="fm4-split">
+    <div>
+      ${fmBoardHtml(sel)}
+      ${secHead(2, 'Reserves', 'click to deploy — drag works too')}
       ${formationControls(sort, rar, pathF, bench.length)}
-      <div class="fmbenchrow">${benchHtml}</div>
+      ${benchHtml}
     </div>
+    <aside class="fm4-desk">${fmInspectorHtml(sel)}</aside>
   </div>`;
 }
-// Dedicated Formation page — the drag-and-drop 2×5 battle board, kept off the (often crowded) Team tab.
+
+// Dedicated Formation page — board + inspector + quick-deploy reserves.
 export function viewFormation() {
   return `${pagehead('阵', 'Battle Array · 布阵', 'Formation',
     'Arrange your active fighters on the 2×5 board. A <b>front</b> unit shields the <b>back</b> unit in its lane until it falls; units strike only within <b>±1 of their own lane</b>, reaching farther only when those are clear. Max 6 fighters, ≤5 per row. Turn order is by SPD, not position.')}
-  ${renderFormation()}`;
+  <div id="fmWrap">${renderFormation()}</div>`;
 }
+
+
 // Short "Xm" / "Xh Ym" label for a remaining-time span (breakthrough injuries are minute-scale).
 const fmtMins = (ms) => { const m = Math.max(1, Math.ceil(ms / 60000)); return m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m`; };
 // Mortal breakthrough readiness line for a roster card: cost + odds, or an injured badge. Empty for
@@ -1137,37 +1246,33 @@ function killerSummary(c) {
   }
   return '<span class="muted">no killer move set</span>';
 }
-// Compact, clickable roster card → opens the full character sheet. Carries a collapsible KILLER MOVE
-// editor (reuses csKiller) so moves can be configured right on the Team tab.
+// One compact roster row (replaces the old member card grid — rosterCardsHtml/viewTeam unchanged,
+// but swap their wrapper class "grid cards" → "h4-roster" so rows stack; see README step 1b).
 function memberCard(c) {
   const s = effectiveStats(c);
   const rc = rarityColor(c.rarity);
-  const unspent = unspentPoints(c);
-  const kmOpen = !!(S().settings.killerOpen || {})[c.id];
-  return `<div class="card member clickable${unspent > 0 ? ' has-alloc' : ''}${kmOpen ? ' km-open' : ''}" onclick="G.openChar('${c.id}')" title="Open ${esc(c.name)}'s sheet">
-    ${c.active ? `<span class="active-mark">● ${rowOf(c) === 'back' ? 'BACK' : 'FRONT'} · L${laneOf(c) + 1}</span>` : ''}
-    <div class="row start"><span class="uname big">${charGlyph(c) ? `<span class="cjk" style="color:${rc};margin-right:8px">${charGlyph(c)}</span>` : ''}${c.name}</span>
-      <span class="rar" style="color:${rc}">${c.rarity}</span></div>
-    <div class="cult">${realmName(c.realm)}</div>
-    <div class="muted small">${realmClass(c.realm)} · ${apertureGrade(apertureCapacity(effAptitude(c))).grade}-grade aperture${(c.imprint || 0) > 0 ? ` · ${imprintStars(c.imprint)}` : ''}</div>
-    ${breakthroughChip(c)}
-    <div class="statline"><span>HP <b>${compact(s.maxHp)}</b></span><span>ATK <b>${compact(s.atk)}</b></span><span>DEF <b>${compact(s.def)}</b></span><span>SPD <b>${s.spd}</b></span></div>
-    ${unspent > 0 ? `<div class="alloc-note" onclick="event.stopPropagation();G.openChar('${c.id}')">▲ ${compact(unspent)} attribute point${unspent === 1 ? '' : 's'} to allocate</div>` : ''}
-    ${compSummary(c)}
-    <div class="km-row" onclick="event.stopPropagation()">
-      <button class="mini" onclick="G.toggleKillerEdit('${c.id}')" title="Configure this cultivator's killer move here">⚔ Killer Move ${kmOpen ? '▾' : '▸'}</button>
-      <span class="km-sum">${killerSummary(c)}</span>
-    </div>
-    ${kmOpen ? `<div class="km-editor" onclick="event.stopPropagation()">${csKiller(c)}</div>` : ''}
-    <div class="row" style="margin-top:12px">
-      <span class="muted tiny">View sheet ▸</span>
-      <span class="gap" style="display:flex">
-        <button onclick="event.stopPropagation();G.toggleActive('${c.id}')">${c.active ? 'Bench' : 'Activate'}</button>
-        ${(!c.isPlayer && !c.active) ? `<button class="danger" onclick="event.stopPropagation();G.dismissPrompt('${c.id}')">Dismiss</button>` : ''}
-      </span>
-    </div>
+  const gu = c.gu.map((uid, i) => {
+    const g = uid && guOf(uid);
+    return g ? `<i class="tc-chip sm tip-host" style="color:${pathColor(g.daoPath)};border-color:${pathColor(g.daoPath)}55">${pathCjk(g.daoPath)}<span class="tip">${guTipBody(g)}</span></i>` : '';
+  }).join('');
+  const lid = lineOf(c);
+  return `<div class="h4-row${c.active ? ' act' : ''}" style="border-left-color:${rc}" onclick="G.openChar('${c.id}')">
+    <span class="tc-seal cjk" style="color:${rc};border-color:${rc}88;width:26px;height:26px;font-size:14px">${charGlyph(c) || '蛊'}</span>
+    <span class="h4-rid">
+      <b style="color:${rc}">${esc(c.name)}${c.isPlayer ? '<i class="h4-you">you</i>' : ''}</b>
+      <i>${c.rarity} · ${realmName(c.realm)}${lid ? ' · ' + lineName(lid, c.rarity) : ''}${(c.imprint || 0) > 0 ? ' · ' + imprintStars(c.imprint) : ''}</i>
+    </span>
+    <span class="h4-rstat">A ${compact(s.atk)} · H ${compact(s.maxHp)} · S ${s.spd}</span>
+    <span class="tc-chips">${gu}</span>
+    <span class="t1-pwr">${compact(s.atk + s.def + s.maxHp)}</span>
+    <span onclick="event.stopPropagation()">
+      ${c.active
+        ? (c.isPlayer ? '<span class="muted tiny">always active</span>' : `<button class="mini" onclick="G.toggleActive('${c.id}')">Bench</button>`)
+        : `<button class="mini primary" onclick="G.toggleActive('${c.id}')">Deploy</button>`}
+    </span>
   </div>`;
 }
+
 
 // ---------- character sheet (hero view) ----------
 // Shared per-click step selector (1/10/100/1k/Max) — sets how much each ＋/－ stages on the board.
@@ -1308,6 +1413,138 @@ function csGuLoadout(c) {
 // KILLER MOVE config (character sheet): pick an ARCHETYPE → a CORE Gu of its favored domain → 2+ SUPPORT
 // Gu of the core's Dao path. Favorability = how much of that same-path support also matches the favored
 // domain. "Suggest" auto-fills; the preview shows the assembled effect, essence cost, synergy.
+// Lore essence colors by Gu Master rank — drives the liquid gradient (see styles .ap-liquid.rN).
+const APERTURE_SEA = {
+  1: { name: 'Green Copper', cls: 'r1' }, 2: { name: 'Red Steel', cls: 'r2' },
+  3: { name: 'White Silver', cls: 'r3' }, 4: { name: 'Yellow Gold', cls: 'r4' },
+  5: { name: 'Purple Crystal', cls: 'r5' },
+};
+const seaOf = (c) => APERTURE_SEA[Math.min(5, Math.max(1, rankOf(c.realm) + 1))];
+
+// CONCENTRIC-RING slot layout (700×720 box, centre 350/360). Slots spread across up to 3 rings —
+// inner rings hold FEWER, outer rings MORE — so they never overlap as the Gu-slot count grows
+// (3 at Rank 1 → 7 at Rank 5, + bonus slots). Returns { pos:[[x,y]…] in channel-priority order, radii }.
+const MANDALA_CX = 350, MANDALA_CY = 360;
+const MANDALA_RING_R = { 1: [210], 2: [162, 286], 3: [145, 235, 322] };
+function mandalaSlotPos(n) {
+  if (n <= 0) return { pos: [], radii: [] };
+  let counts;
+  if (n <= 5) counts = [n];                                    // single ring
+  else if (n <= 10) { const inner = Math.max(2, Math.min(n - 3, Math.floor(n * 0.42))); counts = [inner, n - inner]; }
+  else { const a = Math.floor(n * 0.2), b = Math.floor(n * 0.33); counts = [a, b, n - a - b]; } // three rings
+  const radii = MANDALA_RING_R[counts.length];
+  const pos = [];
+  counts.forEach((cnt, ri) => {
+    const r = radii[ri];
+    const off = ri * (Math.PI / 8);                            // rotate each ring 22.5° so spokes never align
+    for (let i = 0; i < cnt; i++) {
+      const a = -Math.PI / 2 + off + (i * 2 * Math.PI / cnt);  // first slot near the top, clockwise
+      pos.push([Math.round(MANDALA_CX + r * Math.cos(a)), Math.round(MANDALA_CY + r * Math.sin(a))]);
+    }
+  });
+  return { pos, radii };
+}
+
+export function csApertureMandala(c) {
+  const s = effectiveStats(c);
+  const rank = rankOf(c.realm) + 1;
+  const sea = seaOf(c);
+  const pool = s.essencePool, regen = s.essenceRegen;
+  const grade = apertureGrade(apertureCapacity(effAptitude(c)));
+  // channel-priority walk: cumulative cost vs pool = sustained prefix (same math as old csGuLoadout)
+  let cum = 0, lit = 0, upkeep = 0; const slots = [];
+  for (let i = 0; i < guSlotsOf(c); i++) {
+    const gu = c.gu[i] ? guOf(c.gu[i]) : null;
+    if (gu) {
+      const cost = guEssenceCostFor(gu, rank); cum += cost; upkeep += cost;
+      const ok = cum <= pool + 1e-9; if (ok) lit++;
+      slots.push({ gu, ok, cost, p: slots.filter((x) => x.gu).length + 1, i });
+    } else slots.push({ gu: null, i });
+  }
+  const equipped = slots.filter((x) => x.gu).length;
+  const net = Math.round((regen - upkeep) * 10) / 10;
+  // Liquid LEVEL = aperture CAPACITY (the grade as a %). An Extreme aperture (capacity 1.0) fills the
+  // whole sea; a D-grade sits low. (Essence channelling is shown separately by sustains/regen/upkeep.)
+  const capFrac = apertureCapacity(effAptitude(c));
+  const fillPct = Math.max(4, Math.min(99, Math.round(capFrac * 100)));
+  const { pos, radii } = mandalaSlotPos(slots.length);
+  const ringGuides = radii.map((r) => `<div class="ap-ring" style="width:${r * 2}px;height:${r * 2}px"></div>`).join('');
+  const slotHtml = slots.map((sl, idx) => {
+    const [x, y] = pos[idx] || [MANDALA_CX, MANDALA_CY];
+    if (!sl.gu) return `<div class="ap-node empty" style="left:${x}px;top:${y}px" onclick="G.openGuPicker('${c.id}',${sl.i})" title="Empty slot ${sl.i + 1} — click to equip a Gu">
+      <span class="ap-disc">＋</span><span class="ap-nname">slot ${sl.i + 1}</span></div>`;
+    const col = pathColor(sl.gu.daoPath);
+    return `<div class="ap-node tip-host${sl.ok ? '' : ' starved'}" style="left:${x}px;top:${y}px" onclick="G.openGuPicker('${c.id}',${sl.i})">
+      <span class="tip">${guTipBody(sl.gu, { priority: sl.p, ok: sl.ok, cost: sl.cost })}</span>
+      <span class="ap-disc" style="color:${col};border-color:${col}99"><i class="cjk">${pathCjk(sl.gu.daoPath)}</i><b class="ap-p">P${sl.p}</b></span>
+      <span class="ap-nname">${esc(sl.gu.name)}</span>
+      <span class="ap-nmeta">T${sl.gu.tier} · ◇${Math.round(sl.cost)}</span>
+      <span class="ap-mv" onclick="event.stopPropagation()">
+        <button class="ap-mvb" ${sl.p <= 1 ? 'disabled' : ''} title="Raise channel priority" onclick="G.moveGu('${c.id}',${sl.i},-1)">▲</button>
+        <button class="ap-mvb" title="Lower channel priority" onclick="G.moveGu('${c.id}',${sl.i},1)">▼</button>
+      </span>
+    </div>`;
+  }).join('');
+  return `<div class="ap-mandala" id="ap-mandala">
+    <div class="ap-box" id="ap-box">
+      ${ringGuides}
+      <div class="ap-liquid ${sea.cls}" title="Primeval sea · ${sea.name} · ${grade.grade}-grade">
+        <i class="ap-wave w1" style="top:${100 - fillPct}%"></i>
+        <i class="ap-wave w2" style="top:${102 - fillPct}%"></i>
+      </div>
+      <div class="ap-wall ${sea.cls}" aria-hidden="true"></div>
+      <div class="ap-core">
+        <span class="ap-glyph cjk" style="color:${rarityColor(c.rarity)}">${charGlyph(c) || '蛊'}</span>
+        <b class="cjk">${esc(c.name)}</b>
+        <i>气海 · ${sea.name.toUpperCase()} · ${grade.grade}-GRADE · ◇${Math.round(pool)}</i>
+        <em>sustains ${lit} / ${equipped}</em>
+        <em class="ap-net ${net < 0 ? 'dn' : 'up'}">regen +${regen.toFixed(1)} · upkeep −${Math.round(upkeep)} · ${net < 0 ? '▼' : '▲'}${Math.abs(net)} / turn</em>
+      </div>
+      ${slotHtml}
+    </div>
+    ${(!isImmortalRealm(c.realm) && c.realm < MORTAL_PEAK) ? csBreakDock(c) : ''}
+  </div>`;
+}
+
+// Breakthrough dock — sits under the mandala circle; Attempt runs the 10s rite (main.js G.riteAttempt).
+export function csBreakDock(c) {
+  const pct = Math.round(breakthroughChance(c) * 100);
+  const sea = seaOf(c);
+  const nextSea = APERTURE_SEA[Math.min(5, rankOf(c.realm) + 2)];
+  const ascends = nextSea && nextSea.cls !== sea.cls; // realm-up within a rank doesn't change the sea
+  return `<div class="ap-btdock" id="ap-btdock">
+    <span class="ap-btlbl">破境 · BREAKTHROUGH</span>
+    <span class="ch2-bar" style="flex:1"><i style="width:${pct}%"></i></span>
+    <span class="ap-btv">${pct}% · ${realmName(c.realm)} ▸ next</span>
+    <button class="primary" id="ap-btbtn" onclick="G.riteAttempt('${c.id}')">⤴ Attempt</button>
+    <span class="ap-btnext">${ascends ? `on ascension · sea turns <b>${nextSea.name}</b> · capacity &amp; regen grow` : 'realm-up · same essence grade, larger sea'}</span>
+  </div>`;
+}
+
+// ---- the 10s breakthrough rite (called by G.riteAttempt AFTER attemptBreakthrough resolves) ----
+// 0–5s alternating gold/dull suspense · 5–8s transition to verdict · 8–10s linger.
+// On success the sea class + labels swap at the 8s reveal via the re-render.
+let riteTimers = [];
+export function riteRun(success, onReveal, onDone) {
+  const box = document.getElementById('ap-box');
+  const btn = document.getElementById('ap-btbtn');
+  if (!box) { onReveal(); onDone(); return; } // tab changed — apply instantly
+  riteTimers.forEach(clearTimeout); riteTimers = [];
+  box.classList.add('g-sus');
+  if (btn) { btn.disabled = true; btn.textContent = '破境中…'; }
+  riteTimers = [
+    setTimeout(() => { box.classList.remove('g-sus'); box.classList.add(success ? 'g-fin-gold' : 'g-fin-dull'); if (btn) btn.textContent = '…'; }, 5000),
+    setTimeout(() => { onReveal(); // re-render swaps sea color/labels mid-glow; re-tag the new box
+      const nb = document.getElementById('ap-box'); if (nb) nb.classList.add(success ? 'g-fin-gold' : 'g-fin-dull');
+      const nbtn = document.getElementById('ap-btbtn'); if (nbtn) { nbtn.disabled = true; nbtn.textContent = success ? '成' : '败'; }
+      const dock = document.getElementById('ap-btdock');
+      if (dock) dock.insertAdjacentHTML('beforeend', `<span class="ap-btres ${success ? 'gold' : 'dull'}">${success ? '成 · the sea ascends' : '败 · the sea holds its grade'}</span>`);
+    }, 8000),
+    setTimeout(() => { const nb = document.getElementById('ap-box'); if (nb) nb.classList.remove('g-fin-gold', 'g-fin-dull'); onDone(); }, 10000),
+  ];
+}
+
+// ---------- killer move editor ----------
 function csKiller(c) {
   // PROGRESSION GATE: show a locked panel until the cultivator is rank 3+ AND the player has cleared
   // Floor 100. battle.js attachKiller enforces the same rule, so this is UX only.
@@ -1483,14 +1720,9 @@ function csCultivation(c) {
     action = `<div style="margin-top:14px"><button class="primary" onclick="G.ascend('${c.id}')">Attempt Ascension · ${ASCEND_COST} ✦</button>
       <div class="muted small" style="margin-top:6px">A solo trial to become a Gu Immortal. Failure costs the essence but is not fatal.</div></div>`;
   } else if (!immortal) {
-    const cost = breakthroughCost(c.realm), chance = Math.round(breakthroughChance(c) * 100);
-    const gate = breakthroughFloorReq(c.realm), gated = gate && S().frontier <= gate;
-    const afford = S().stones >= cost, disabled = gated || !afford;
-    const note = gated ? `Locked — clear Floor ${gate} to cross into ${realmName(c.realm + 1)}.`
-      : !afford ? `Need ${fmt(cost)}石 (you have ${fmt(S().stones)}石).`
-      : `Advance to ${realmName(c.realm + 1)}. ${chance}% success (70% aptitude + 30% comprehension). On failure the stones are spent, but the cultivator is unharmed — attempt again freely.`;
-    action = `<div style="margin-top:14px"><button class="primary"${disabled ? ' disabled' : ''} onclick="G.attemptBreakthrough('${c.id}')">Attempt Breakthrough · ${fmt(cost)}石 · ${chance}%</button>
-      <div class="muted small" style="margin-top:6px">${note}</div></div>`;
+    // Mortal breakthrough now lives in the aperture mandala's breakthrough dock (csBreakDock → the
+    // 10-second rite via G.riteAttempt). Cultivation section keeps the informational spec rows only.
+    action = '';
   } else if (immortal && c.realm >= 22) {
     const chk = canBecomeVenerable(c);
     action = chk.ok
@@ -1577,6 +1809,82 @@ function initTooltips() {
 }
 initTooltips();
 
+// ---- CH5 character-sheet hero panels: Marrow (attributes) · Tempered Flesh (combat) · Soul Imprint ----
+// Left column of the 3-column hero layout: compact vertical attribute-allocation form (reuses the same
+// stage/commit/clear/respec handlers as the old csAttrBoard).
+function csMarrow(c) {
+  const unspent = unspentPoints(c);
+  const draft = (S().allocDraft && S().allocDraft.id === c.id) ? S().allocDraft : null;
+  const staged = (k) => (draft && (draft[k] | 0)) || 0;
+  const totalStaged = ATTR_KEYS.reduce((sum, k) => sum + staged(k), 0);
+  const remaining = unspent - totalStaged;
+  const rows = ATTR_KEYS.map((k) => {
+    const st = staged(k);
+    return `<div class="ch5-attr${st > 0 ? ' staged' : ''}" title="${ATTR_FULL[k]}">
+      <span class="ch5-ak">${ATTR_LABEL[k]}</span>
+      <span class="ch5-av">${compact(effAttr(c, k))}${st > 0 ? `<i class="ch5-stg">+${compact(st)}</i>` : ''}</span>
+      <span class="ch5-astep">
+        <button class="mini step" ${st <= 0 ? 'disabled' : ''} onclick="G.allocStage('${c.id}','${k}',-1)">－</button>
+        <button class="mini step" ${remaining <= 0 ? 'disabled' : ''} onclick="G.allocStage('${c.id}','${k}',1)">＋</button>
+      </span>
+      <span class="ch5-ad">${ATTR_DESC[k]}</span>
+    </div>`;
+  }).join('');
+  const invested = spentPoints(c);
+  const rCost = respecCost(c), rEss = RESPEC_ESSENCE_COST;
+  const canAfford = S().stones >= rCost && S().essence >= rEss;
+  return `<div class="ch5-panel ch5-marrow">
+    <div class="ch5-h">Marrow <i>· ${compact(unspent)} unspent</i></div>
+    <div class="ch5-attrlist">${rows}</div>
+    <div class="ch5-steprow"><span class="ch5-sublbl">Per click</span><div class="viewtoggle">${allocStepBtns()}</div></div>
+    <div class="ch5-allocacts">
+      <button class="mini primary" ${totalStaged <= 0 ? 'disabled' : ''} onclick="G.allocCommit('${c.id}')">✓ Confirm ${compact(totalStaged)}</button>
+      <button class="mini" ${totalStaged <= 0 ? 'disabled' : ''} title="Reset staged" onclick="G.allocClear('${c.id}')">↺</button>
+      <button class="mini danger"${invested <= 0 ? ' disabled' : ''}${canAfford || invested <= 0 ? '' : ' style="opacity:.65"'} title="${invested <= 0 ? 'No allocated attributes to respec' : `Release all ${compact(invested)} points for ${rCost.toLocaleString()} 石 + ${rEss} ✦${canAfford ? '' : ' — not enough 石/✦'}`}" onclick="G.respecPrompt('${c.id}')">↺ Respec</button>
+    </div>
+    <div class="ch5-note">${totalStaged > 0 ? `${compact(totalStaged)} staged · ${compact(remaining)} left — Confirm to commit (permanent).` : ('Allocation is permanent unless you Respec (1,000 石/pt + ' + rEss + ' ✦). Every realm grants more points.')}</div>
+  </div>`;
+}
+// Right column top: derived combat stats in a 2-up grid (the "tempered flesh").
+function csTemperedFlesh(s) {
+  const hit = 0.85 + s.hitChance;   // mirrors csStatGrid: 85% base + bonus, uncapped
+  const cell = (k, v) => `<div class="ch5-fcell"><span class="ch5-fk">${k}</span><span class="ch5-fv">${v}</span></div>`;
+  return `<div class="ch5-panel">
+    <div class="ch5-h">Tempered Flesh</div>
+    <div class="ch5-flesh">
+      ${cell('Crit', pct(s.crit))}${cell('Crit Dmg', '×' + s.critDamage.toFixed(2))}
+      ${cell('Evasion', pct(s.dodge))}${cell('Hit', pct(hit))}
+      ${cell('Pen', pct(s.armorPen))}${cell('Potency', pct(s.potency))}
+      ${cell('Resist', pct(s.statusResist))}${cell('Crit Res', pct(s.critResist))}
+      ${cell('Lucky', pct(s.luckyHit))}${cell('Lifesteal', pct(s.lifesteal))}
+      ${cell('Thorns', pct(s.thorns))}${cell('Regen', compact(s.regen))}
+    </div>
+  </div>`;
+}
+// Right column bottom: Soul Imprint summary + action (shown for all; inert for the unique player).
+function csSoulImprint(c) {
+  const lvl = c.imprint || 0;
+  const pctv = Math.round((imprintAttrMult(c) - 1) * 100);
+  const cands = imprintCandidates(c.id);
+  const atMax = lvl >= IMPRINT_CAP;
+  const can = !atMax && cands.length > 0;
+  const note = c.isPlayer ? 'The protagonist is unique — no duplicate to imprint.'
+    : atMax ? 'Maximum Soul Imprint reached.'
+    : cands.length === 0 ? 'No benched duplicate available — recruit or bench another copy.'
+    : `${cands.length} spare cop${cands.length === 1 ? 'y' : 'ies'} ready to sacrifice.`;
+  return `<div class="ch5-panel">
+    <div class="ch5-h">Soul Imprint</div>
+    <div class="ch5-imprint">
+      <span class="cjk ch5-imp-seal">魂印</span>
+      <span class="ch5-imp-stars">${lvl > 0 ? imprintStars(lvl) : '—'}</span>
+      <span class="ch5-imp-pct">+${pctv}% attrs</span>
+      <span class="ch5-imp-copies">${cands.length} spare cop${cands.length === 1 ? 'y' : 'ies'}</span>
+    </div>
+    <button class="mini ${can ? 'primary' : ''} ch5-imp-btn"${can ? '' : ' disabled'} onclick="G.imprintPrompt('${c.id}')">Imprint a Duplicate</button>
+    <div class="ch5-note">${note}</div>
+  </div>`;
+}
+
 export function viewCharacter(id) {
   const c = id && S().roster.find((x) => x.id === id);
   if (!c) return `${pagehead('人', 'Roster', 'Not Found', 'That cultivator is no longer in your roster.')}
@@ -1608,11 +1916,9 @@ export function viewCharacter(id) {
   const posText = c.active ? `${rowOf(c) === 'back' ? 'Back' : 'Front'} · L${laneOf(c) + 1}` : 'Reserve';
   const order = charNavOrder(), pos = order.findIndex((x) => x.id === c.id) + 1, total = order.length;
 
-  return `<div class="sheet">
-    <div class="cs-metabar">
-      <span>蛊 Demon's Ascension · <span class="c">蛊月正族</span></span>
-      <span>${c.rarity} · <b>${realmClass(c.realm)}</b></span>
-    </div>
+  return `<div class="sheet ch5-sheet">
+    ${pagehead('己', 'Cultivator File · 气海', c.name,
+      'The aperture is the cultivator. Gu orbit the primeval sea in <b>channel-priority</b> order — raise or lower a Gu with ▲▼ to reprioritise; starved Gu drift dark beyond the arc.')}
     <div class="cs-back">
       <button onclick="G.setTab('team')">← Back to Roster</button>
       <div class="cs-nav">
@@ -1621,64 +1927,33 @@ export function viewCharacter(id) {
         <button onclick="G.stepChar(1)" ${total <= 1 ? 'disabled' : ''}>Next →</button>
       </div>
     </div>
-
-    <header class="cs-ident">
-      <div class="cs-seal">${glyph}</div>
-      <div class="cs-ident-main">
-        <div class="cs-name">${c.name}</div>
-        <div class="cs-realm">${realmName(c.realm)}</div>
-        <div class="cs-sub">${realmClass(c.realm)} · ${ap.grade}-grade aperture${c.isPlayer ? ' · the demon who would outlive the heavens' : ''}</div>
-        <div class="cs-tags">
-          <span class="tag" style="border-color:${rc}88;color:${rc}">${c.rarity}</span>
-          ${c.isPlayer ? '<span class="tag blood">Demonic Path · 魔道</span>' : ''}
-          ${lineTag}
-          ${affTag}
-          ${statusTag}
-          ${(c.imprint || 0) > 0 ? `<span class="tag" title="Soul Imprint Lv ${c.imprint} — +${Math.round((imprintAttrMult(c) - 1) * 100)}% attributes · +${(0.1 * c.imprint).toFixed(1)} aptitude"><span class="cjk">魂印</span> ${c.imprint} ${imprintStars(c.imprint)}</span>` : ''}
-          ${pathTags}
-        </div>
-      </div>
-      <div class="cs-aside">
-        <b>${lineDef ? lineName(lid, c.rarity) : (c.isPlayer ? 'Protagonist' : 'Recruit')}</b><span class="k">ROLE</span>
-        <b>${c.rarity}</b><span class="k">RARITY</span>
-        <b>${ap.grade}</b><span class="k">APERTURE</span>
-        <b>${posText}</b><span class="k">POSITION</span>
-      </div>
-    </header>
-
-    <div class="cs-glance">
-      <div class="cs-portrait">
-        <div class="glyph" style="color:${rc}">${glyph}</div>
-        <div class="pcap"><span>${pathName(paths[0] || '') || (c.isPlayer ? 'Demonic Path' : 'Pathless')}</span><span><b>${c.rarity}</b></span></div>
-      </div>
-      <div class="cs-vitals">
-        <div class="vital"><span class="vk">Max HP</span><span class="vv hp">${compact(s.maxHp)}</span></div>
-        <div class="vital"><span class="vk">Attack</span><span class="vv atk">${compact(s.atk)}</span></div>
-        <div class="vital"><span class="vk">Defense</span><span class="vv">${compact(s.def)}</span></div>
-        <div class="vital"><span class="vk">Speed</span><span class="vv">${s.spd}</span></div>
-      </div>
+    <div class="cs-tags">
+      <span class="tag" style="border-color:${rc}88;color:${rc}">${c.rarity}</span>
+      <span class="tag" style="border-color:var(--essence)66;color:var(--essence)" title="Aperture capacity grade — sets how full the primeval sea can fill">${ap.grade}-grade aperture</span>
+      ${c.isPlayer ? '<span class="tag blood">Demonic Path · 魔道</span>' : ''}
+      ${lineTag}
+      ${affTag}
+      ${statusTag}
+      ${(c.imprint || 0) > 0 ? `<span class="tag" title="Soul Imprint Lv ${c.imprint} — +${Math.round((imprintAttrMult(c) - 1) * 100)}% attributes · +${(0.1 * c.imprint).toFixed(1)} aptitude"><span class="cjk">魂印</span> ${c.imprint} ${imprintStars(c.imprint)}</span>` : ''}
+      ${pathTags}
     </div>
 
-    ${secHead(1, 'Attributes', 'STR · AGI · CON · INT · LCK')}
-    ${csAttrBoard(c)}
+    <div class="ch5-grid">
+      <aside class="ch5-side">${csMarrow(c)}</aside>
+      <div class="ch5-center">${csApertureMandala(c)}</div>
+      <aside class="ch5-side">${csTemperedFlesh(s)}${csSoulImprint(c)}</aside>
+    </div>
 
-    ${secHead(2, 'Combat Profile', 'derived from attributes + Gu')}
-    ${csStatGrid(s)}
+    <div class="ch5-killer">
+      <div class="sec-head" style="margin-top:6px"><span class="sec-num" style="color:var(--stone)">播</span><span class="sec-title">Killer Move</span><span class="sec-meta">Archetype → Core → Support · unlocked at Rank ${KILLER_MIN_RANK} / Floor ${KILLER_UNLOCK_FLOOR}</span></div>
+      ${csKiller(c)}
+    </div>
 
-    ${secHead(3, 'Cultivation & Ascension', realmClass(c.realm))}
+    ${secHead(1, 'Cultivation & Ascension', realmClass(c.realm))}
     ${csCultivation(c)}
 
-    ${c.isPlayer ? '' : `${secHead(4, 'Soul Imprint', `Lv ${c.imprint || 0} / ${IMPRINT_CAP} · 魂印`)}
-    ${csImprint(c)}`}
-
-    ${secHead(c.isPlayer ? 4 : 5, 'Dao Paths', 'Comprehension · Marks')}
+    ${secHead(2, 'Dao Paths', 'Comprehension · Marks')}
     ${csDao(c)}
-
-    ${secHead(c.isPlayer ? 5 : 6, 'Gu Loadout', `${c.gu.filter(Boolean).length}/${guSlotsOf(c)} slots`)}
-    ${csGuLoadout(c)}
-
-    ${secHead(c.isPlayer ? 6 : 7, 'Killer Move', '蛊技 · core + archetype')}
-    ${csKiller(c)}
 
     <div class="row" style="margin-top:30px;padding-top:20px;border-top:1px solid var(--line)">
       <button onclick="G.setTab('team')">← Back to Roster</button>
@@ -1725,231 +2000,283 @@ function viewToggle(key, mode) {
   const b = (m, label) => `<button class="${mode === m ? 'primary' : ''}" onclick="G.setView('${key}','${m}')">${label}</button>`;
   return `<div class="viewtoggle">${b('grid', '▦ Grid')}${b('list', '☰ List')}</div>`;
 }
-// Refinery filter bar: Grid/List, a tier toggle (All · T1–T10), a Dao-path dropdown, and two
-// status toggles — "Craftable now" (only Gu you can craft right now) and "Unlocked paths"
-// (hide Gu whose Dao path is locked or below your frontier floor).
-function guControls(mode, tierF, pathF, searchV) {
-  const tb = (t) => `<button class="${String(tierF) === String(t) ? 'primary' : ''}" onclick="G.setView('guTier','${t}')">${t === 'all' ? 'All' : 'T' + t}</button>`;
-  const tiers = ['all', 1, 2, 3, 4, 5, 6, 7, 8, 9].map(tb).join('');
-  const allPaths = [...new Set(guList().map((g) => g.daoPath))].sort((a, b) => pathName(a).localeCompare(pathName(b)));
-  const opts = ['all', ...allPaths].map((p) => `<option value="${p}" ${pathF === p ? 'selected' : ''}>${p === 'all' ? 'All paths' : pathName(p)}</option>`).join('');
-  const st = S().settings;
-  const craftableOn = !!st.guCraftable, unlockedOn = !!st.guUnlocked;
-  const flag = (key, on, label) => `<button class="${on ? 'primary' : ''}" onclick="G.toggleGuFlag('${key}')">${on ? '☑' : '☐'} ${label}</button>`;
-  const filtered = tierF !== 'all' || pathF !== 'all' || craftableOn || unlockedOn || !!(searchV && searchV.trim());
-  return `<div class="teamctl">
-    ${viewToggle('guView', mode)}
-    <span class="muted small">Tier</span><div class="viewtoggle wrap">${tiers}</div>
-    <span class="muted small">Path</span><select onchange="G.setView('guPath',this.value)">${opts}</select>
-    <div class="viewtoggle">${flag('guCraftable', craftableOn, 'Craftable now')}${flag('guUnlocked', unlockedOn, 'Unlocked paths')}</div>
-    <input class="searchbox" type="text" placeholder="Search Gu…" value="${esc(searchV || '')}" oninput="G.guSearch(this.value)">
-    ${filtered ? `<button class="danger" onclick="G.clearGuFilters()">✕ Clear</button>` : ''}
-  </div>`;
-}
+// ---------- gu refinery ----------
+let guSelId = null; // the Gu on the refining desk (module-level — deliberately not persisted)
+export function guSelect(id) { guSelId = id; renderGuResults(); }
 
-// A Gu's TAGS (what fodder must cover to refine it) rendered as small pills.
-function tagPillsHtml(gu) {
-  return guTags(gu).map((t) => `<span class="gu-tag">${tagLabel(t)}</span>`).join('');
-}
-// Recipe summary (stones + resources + tag-covering refinement fodder) — shared by list row + grid card.
-function recipeText(gu) {
-  const r = gu.recipe;
-  const resTxt = Object.entries(r.resources || {}).map(([id, q]) => `${q}× ${RESOURCES[id] ? RESOURCES[id].name : id}`).join(', ');
-  const rf = refineSpec(gu);
-  const refine = rf.needed
-    ? `≥${rf.min}× T${rf.tier} ${pathName(rf.path)} Gu${rf.tags.length ? ` covering ${rf.tags.map((t) => `[${t}]`).join('')}` : ''}`
-    : '';
-  return [`${r.stones}石`, resTxt, refine].filter(Boolean).join(' · ');
-}
-// Gu entry for the Refinery's LIST view — shows the recipe AND any missing ingredients inline.
-function guRow(gu, owned) {
-  const chk = canCraft(gu.id);
-  const claimed = isUnique(gu) && S().uniqueClaimed[gu.id];
-  return `<div class="gurow${chk.ok ? '' : ' locked'}">
-    <div class="gurow-main">
-      <div class="gurow-top"><b class="tierbadge" style="color:var(--t${gu.tier});border-color:var(--t${gu.tier})">T${gu.tier}</b>
-        <b>${gu.name}</b>
-        <span class="pill" style="color:${pathColor(gu.daoPath)};border-color:${pathColor(gu.daoPath)}66"><span class="cjk">${pathCjk(gu.daoPath)}</span> ${pathName(gu.daoPath)}</span>
-        ${isUnique(gu) ? '<span class="pill unique">UNIQUE</span>' : ''}
-        ${owned[gu.id] ? `<span class="pill">×${owned[gu.id]}</span>` : ''}
-        <span class="muted small">${effectText(gu)}</span>
-        <span class="gu-ess">◇ ${guEssenceCost(gu)} ess/use</span></div>
-      <div class="gurow-tags">Tags · ${tagPillsHtml(gu)}</div>
-      <div class="gurow-recipe">Recipe · ${recipeText(gu)}</div>
-      ${chk.ok ? '' : `<div class="gurow-need">${chk.reasons.join(' ')}</div>`}
-    </div>
-    <button class="primary" onclick="G.craft('${gu.id}')" ${chk.ok ? '' : 'disabled'}>${claimed ? 'Exists' : 'Craft'}</button>
-  </div>`;
-}
-function guCard(gu, owned) {
-  const chk = canCraft(gu.id);
-  const cost = recipeText(gu);
-  const claimed = isUnique(gu) && S().uniqueClaimed[gu.id];
-  const col = pathColor(gu.daoPath);
-  return `<div class="gu-card" style="border-color:var(--t${gu.tier})44">
-    <div class="gu-top"><span><b class="tierbadge" style="color:var(--t${gu.tier});border-color:var(--t${gu.tier})">T${gu.tier}</b>
-      ${isUnique(gu) ? ' <span class="pill unique">UNIQUE</span>' : ''}
-      ${owned[gu.id] ? ` <span class="pill">×${owned[gu.id]}</span>` : ''}</span>
-      <span style="color:${col}">${pathName(gu.daoPath)}</span></div>
-    <div class="gu-glyph" style="color:${col}">${pathCjk(gu.daoPath)}</div>
-    <div class="gu-name">${gu.name}</div>
-    <div class="gu-eff">${effectText(gu)}</div>
-    <div class="gu-tags">${tagPillsHtml(gu)}</div>
-    <div class="gu-ess">◇ Essence · ${guEssenceCost(gu)}/use</div>
-    <div class="gu-eff" style="color:var(--muted);margin-top:4px">Recipe · ${cost}</div>
-    ${chk.ok ? '' : `<div class="gu-eff" style="color:var(--blood-bright)">${chk.reasons.join(' ')}</div>`}
-    <div class="row" style="margin-top:12px;align-items:center">
-      <span class="gu-foot" style="color:${col};border:0;margin:0;padding:0">${pathCjk(gu.daoPath)} Path</span>
-      <button class="primary" onclick="G.craft('${gu.id}')" ${chk.ok ? '' : 'disabled'}>${claimed ? 'Exists' : 'Craft'}</button>
-    </div>
-  </div>`;
-}
-// Refinery results: the path-section list (with bar), filtered by tier / path / flags / name-search.
-// Split out so the search box repaints just this (keeping input focus). A name search auto-expands every
-// matching path section so hits are visible without manual expanding.
-function guResultsHtml() {
-  const owned = {};
-  S().guInv.forEach((g) => { owned[g.guId] = (owned[g.guId] || 0) + 1; });
+const guPathUnlocked = (pid) => !isPathLocked(pid) && S().frontier >= pathFloorReq(pid);
+
+// Gu of the selected path surviving tier filter + flags (rows the middle list shows).
+function guVisible() {
   const st = S().settings;
-  const tierF = st.guTier || 'all';
   const pathF = st.guPath || 'all';
   const q = (st.guSearch || '').trim().toLowerCase();
-  // apply tier + path filters, then group the survivors by Dao Path.
-  const openMap = st.guOpen || {};
+  // Need at least one lens — a path, a search, or the craft-queue flag — else the middle shows a hint.
+  if (pathF === 'all' && !q && !st.guCraftable) return [];
+  // COMPOSABLE filters: path, search, tier and the two flags all AND together, so "Can be refined" (and a
+  // search) NARROW the selected path + tier instead of replacing it. With "All paths" a search still
+  // crosses every path; a selected path scopes the search/craftable view to that path. Cap keeps the DOM light.
   let lib = guList();
-  if (tierF !== 'all') lib = lib.filter((gu) => gu.tier === Number(tierF));
   if (pathF !== 'all') lib = lib.filter((gu) => gu.daoPath === pathF);
   if (q) lib = lib.filter((gu) => gu.name.toLowerCase().includes(q)
     || pathName(gu.daoPath).toLowerCase().includes(q) || effectText(gu).toLowerCase().includes(q));
-  // "Unlocked paths": drop Gu on locked (Supreme) paths or paths past the current frontier floor.
-  const pathUnlocked = (pid) => !isPathLocked(pid) && S().frontier >= pathFloorReq(pid);
-  if (st.guUnlocked) lib = lib.filter((gu) => pathUnlocked(gu.daoPath));
-  // "Craftable now": keep only Gu canCraft accepts. Gate on the cheap path-unlock check first so the
-  // costly canCraft (fodder set-cover) never runs for Gu whose path isn't reachable anyway.
-  if (st.guCraftable) lib = lib.filter((gu) => pathUnlocked(gu.daoPath) && canCraft(gu.id).ok);
-  const mode = st.guView === 'list' ? 'list' : 'grid';
-  const byPath = {};
-  lib.forEach((gu) => { (byPath[gu.daoPath] = byPath[gu.daoPath] || []).push(gu); });
-  const commRank = { common: 0, uncommon: 1, rare: 2, esoteric: 3, supreme: 4 };
-  const paths = Object.keys(byPath).sort((a, b) => {
-    const d = commRank[commOf(a).key] - commRank[commOf(b).key];
-    return d || pathName(a).localeCompare(pathName(b));
-  });
-  // The library is ~5,271 Gu (45 paths × ~117). Rendering every card at once (each runs canCraft) is
-  // heavy, so path sections are COLLAPSED by default — only an open section builds its cards. A single
-  // path picked via the filter, or an active name search, auto-expands the matching sections.
-  const sections = paths.map((pid) => {
-    const p = PATH(pid), c = commOf(pid);
-    const gus = byPath[pid].sort((a, b) => a.tier - b.tier);
-    const single = pathF === pid;
-    const open = single || !!q || !!openMap[pid];
-    const body = !open ? '' : (mode === 'list'
-      ? `<div class="gulist">${gus.map((gu) => guRow(gu, owned)).join('')}</div>`
-      : `<div class="gu-cardgrid">${gus.map((gu) => guCard(gu, owned)).join('')}</div>`);
-    const caret = single ? '' : `<span class="gucaret">${open ? '▾' : '▸'}</span>`;
-    const head = (single || q)
-      ? '<div class="pathhdr">'
-      : `<div class="pathhdr clickable" role="button" tabindex="0" onclick="G.toggleGuPath('${pid}')">`;
-    return `<div class="pathsec">
-      ${head}${caret}<span class="pglyph cjk" style="color:${c.color}">${pathCjk(pid)}</span>
-        <span class="pname" style="color:${c.color}">${pathName(pid)}</span>
-        <span class="pill" style="color:${c.color};border-color:${c.color}66">${c.label}</span>
-        <span class="muted small">${CATEGORY_LABELS[p.category] || ''} · unlocks Floor ${c.floorReq} · ${gus.length} Gu</span></div>
-      ${body}</div>`;
-  }).join('') || '<div class="muted" style="margin-top:24px">No Gu match these filters.</div>';
-  const anyOpen = Object.keys(openMap).length > 0;
-  const bar = pathF === 'all' && paths.length
-    ? `<div class="teamctl"><span class="muted small">${paths.length} paths · ${lib.length.toLocaleString()} Gu${q ? ' match' : ' — click a path to expand'}.</span>
-        ${anyOpen && !q ? '<button class="danger" onclick="G.collapseGu()">✕ Collapse all</button>' : ''}</div>`
-    : '';
-  return `${bar}${sections}`;
+  if (st.guTier && st.guTier !== 'all') lib = lib.filter((gu) => gu.tier === Number(st.guTier));
+  if (st.guUnlocked) lib = lib.filter((gu) => guPathUnlocked(gu.daoPath));
+  if (st.guCraftable) lib = lib.filter((gu) => guPathUnlocked(gu.daoPath) && canCraft(gu.id).ok);
+  return lib.sort((a, b) => a.tier - b.tier || a.name.localeCompare(b.name)).slice(0, 200);
 }
-export function renderGuResults() { const h = $('guResults'); if (h) h.innerHTML = guResultsHtml(); }
-export function viewGu() {
+const guSelected = (rows) => rows.find((g) => g.id === guSelId) || rows[0] || null;
+
+// LEFT RAIL — search, the two flags, then every path grouped by commonality.
+function guRailHtml() {
   const st = S().settings;
-  const mode = st.guView === 'list' ? 'list' : 'grid';
-  return `${pagehead('蛊', 'Refinery · 炼蛊', 'Gu Refinery',
-    'Gu bundle 1-4 signed effects; power scales with tier (1-9). Tiers 6-9 are immortal &amp; unique (one per world). Every Gu belongs to a <b>Dao Path</b>; rarer paths unlock only at deeper floors. Higher-tier Gu are refined from materials <b>plus lower-tier Gu of the same path</b>.')}
-  ${guControls(mode, st.guTier || 'all', st.guPath || 'all', st.guSearch || '')}
-  <div id="guResults">${guResultsHtml()}</div>`;
+  const pathF = st.guPath || 'all';
+  const flag = (key, on, label) => `<button class="ref-flag${on ? ' on' : ''}" onclick="G.toggleGuFlag('${key}')">${on ? '☑' : '☐'} ${label}</button>`;
+  const all = [...new Set(guList().map((g) => g.daoPath))];
+  const buckets = {};
+  all.forEach((p) => { const k = commOf(p).key || 'common'; (buckets[k] = buckets[k] || []).push(p); });
+  const pBtn = (p) => {
+    const locked = !guPathUnlocked(p);
+    return `<button class="ref-pbtn${pathF === p ? ' on' : ''}${locked ? ' locked' : ''}" onclick="G.setView('guPath','${p}')"
+      title="${esc(pathName(p) + (locked ? ` — unlocks Floor ${pathFloorReq(p)}` : ''))}">
+      <span style="color:${commOf(p).color}">${pathCjk(p)}</span>${pathName(p)}<i>${locked ? 'Fl ' + pathFloorReq(p) : '×' + guList().filter((g) => g.daoPath === p).length}</i></button>`;
+  };
+  const groups = ['common', 'uncommon', 'rare', 'esoteric', 'supreme'].filter((k) => buckets[k]).map((k) =>
+    `<div class="wk-h wk-comm" style="color:${commOf(buckets[k][0]).color}">${commOf(buckets[k][0]).label}</div>
+     ${buckets[k].sort((a, b) => pathName(a).localeCompare(pathName(b))).map(pBtn).join('')}`).join('');
+  return `
+    <input class="searchbox wide" type="text" placeholder="Search ${guList().length.toLocaleString()} Gu…" value="${esc(st.guSearch || '')}" oninput="G.guSearch(this.value)">
+    <div class="ref-flags">
+      ${flag('guCraftable', !!st.guCraftable, 'Can be refined')}
+      ${flag('guUnlocked', !!st.guUnlocked, 'Unlocked Dao paths')}
+    </div>
+    <button class="ref-pbtn${pathF === 'all' ? ' on' : ''}" onclick="G.setView('guPath','all')"><span>全</span>All paths<i>×${guList().length.toLocaleString()}</i></button>
+    ${groups}`;
 }
 
-// ---------- shop ----------
-// Market filter bar, mirroring the Refinery/Almanac: a rarity TOGGLE (colored when active), a Dao-path
-// dropdown (limited to paths with unlocked resources), a name SEARCH box, and a Clear button.
-// Market BUY-AMOUNT selector (×1/×10/×100/×1000), mirroring the character sheet's per-click step buttons.
-// Sets how many units each resource's Buy button purchases (persisted in S().settings.shopQty).
-function shopQtyBtns() {
-  const q = S().settings.shopQty || 1;
-  return [1, 10, 100, 1000].map((n) =>
-    `<button class="mini${q === n ? ' primary' : ''}" onclick="G.setShopQty(${n})">×${n}</button>`).join('');
+// MIDDLE — tier chips + one row per Gu. Every row carries the ⚒ (gold = craftable, gray = not).
+function guListHtml() {
+  const st = S().settings;
+  const pathF = st.guPath || 'all';
+  const q = (st.guSearch || '').trim();
+  const rows = guVisible();
+  const tierF = st.guTier || 'all';
+  const tiers = `<div class="ref-tiers">${['all', 1, 2, 3, 4, 5, 6, 7, 8, 9].map((t) =>
+    `<button class="mini${String(tierF) === String(t) ? ' primary' : ''}" onclick="G.setView('guTier','${t}')">${t === 'all' ? 'All' : 'T' + t}</button>`).join('')}</div>`;
+  let head = '';
+  if (q) head = `<div class="sec-head" style="margin-top:0"><span class="sec-num">索</span><span class="sec-title">Search</span><span class="sec-meta">${rows.length} match${rows.length === 1 ? '' : 'es'}${pathF !== 'all' ? ' in ' + pathName(pathF) : ''}${st.guCraftable ? ' · refinable' : ''}${rows.length === 200 ? ' (first 200)' : ''}</span></div>`;
+  else if (pathF !== 'all') {
+    const c = commOf(pathF), p = PATH(pathF);
+    head = `<div class="sec-head" style="margin-top:0"><span class="sec-num" style="color:${c.color}">${pathCjk(pathF)}</span>
+      <span class="sec-title">${pathName(pathF)}</span>
+      <span class="sec-meta">${c.label} · ${CATEGORY_LABELS[p.category] || ''} · ${rows.length} shown</span></div>`;
+  } else if (st.guCraftable) {
+    head = `<div class="sec-head" style="margin-top:0"><span class="sec-num" style="color:var(--stone)">⚒</span><span class="sec-title" style="color:var(--stone)">Craft Queue</span><span class="sec-meta">${rows.length} refinable across unlocked paths</span></div>`;
+  } else {
+    return '<div class="muted" style="padding:30px 4px">Pick a Dao path on the left — or flip on <b>Can be refined</b> to see everything you can craft right now.</div>';
+  }
+  if (!rows.length) return tiers + head + '<div class="muted" style="margin-top:14px">No Gu match these filters.</div>';
+  const sel = guSelected(rows);
+  const owned = {};
+  S().guInv.forEach((g) => { owned[g.guId] = (owned[g.guId] || 0) + 1; });
+  const row = (gu) => {
+    const ok = canCraft(gu.id).ok;
+    return `<div class="ref-row${sel && gu.id === sel.id ? ' sel' : ''}" style="border-left-color:var(--t${gu.tier})" onclick="G.guSelect('${gu.id}')">
+      <b class="tierbadge" style="color:var(--t${gu.tier});border-color:var(--t${gu.tier})">T${gu.tier}</b>
+      <span class="ref-name">${gu.name}${isUnique(gu) ? '<span class="pill unique">UNIQUE</span>' : ''}${owned[gu.id] ? `<span class="pill">×${owned[gu.id]}</span>` : ''}</span>
+      <span class="ref-eff">${effectText(gu)}</span>
+      <i class="ref-can${ok ? '' : ' dim'}" title="${ok ? 'Craftable now' : 'Missing materials or fodder'}">⚒</i></div>`;
+  };
+  return tiers + head + rows.map(row).join('');
 }
-function shopControls(rarityF, pathF, searchV) {
-  const rb = (r) => `<button class="${rarityF === r ? 'primary' : ''}"${r !== 'all' && rarityF === r ? ` style="color:${rankColor(+r)};border-color:${rankColor(+r)}"` : ''} onclick="G.setView('shopRarity','${r}')">${r === 'all' ? 'All' : 'R' + r}</button>`;
-  const rars = ['all', ...RANKS.map(String)].map(rb).join('');
-  const pathsPresent = [...new Set(shopResources().filter((r) => r.daoPath).map((r) => r.daoPath))].sort((a, b) => pathName(a).localeCompare(pathName(b)));
-  const pathOpts = ['all', 'universal', ...pathsPresent].map((p) => `<option value="${p}" ${pathF === p ? 'selected' : ''}>${p === 'all' ? 'All paths' : p === 'universal' ? 'Universal only' : pathName(p)}</option>`).join('');
-  const filtered = rarityF !== 'all' || pathF !== 'all' || !!(searchV && searchV.trim());
-  return `<div class="teamctl">
-    <span class="muted small">Rank</span><div class="viewtoggle wrap">${rars}</div>
-    <span class="muted small">Path</span><select onchange="G.setView('shopPath',this.value)">${pathOpts}</select>
-    <span class="muted small">Buy</span><div class="viewtoggle">${shopQtyBtns()}</div>
-    <input class="searchbox" type="text" placeholder="Search resources…" value="${esc(searchV || '')}" oninput="G.shopSearch(this.value)">
-    ${filtered ? '<button class="danger" onclick="G.clearShopFilters()">✕ Clear</button>' : ''}
+
+// RIGHT — the Refining Desk: treasure card + ✓/✗ recipe checklist for the selected Gu.
+function guDeskHtml() {
+  const rows = guVisible();
+  const gu = guSelected(rows);
+  if (!gu) return '<div class="wk-h">Refining Desk</div><div class="muted">Select a Gu to inspect its recipe.</div>';
+  const chk = canCraft(gu.id);
+  const claimed = isUnique(gu) && S().uniqueClaimed[gu.id];
+  const col = pathColor(gu.daoPath);
+  const r = gu.recipe;
+  const ing = (ok, label, have, need) => `<div class="ref-ing${ok ? ' ok' : ' no'}"><i>${ok ? '✓' : '✗'}</i><span>${label}</span>${ok ? '' : `<em>${fmt(have)}/${fmt(need)}</em>`}</div>`;
+  let rowsHtml = ing(S().stones >= r.stones, `${fmt(r.stones)} 石`, S().stones, r.stones);
+  for (const [id, q] of Object.entries(r.resources || {})) {
+    const have = S().resources[id] || 0;
+    rowsHtml += ing(have >= q, `${q}× ${RESOURCES[id] ? RESOURCES[id].name : id}`, have, q);
+  }
+  const rf = refineSpec(gu);
+  if (rf.needed) {
+    // count owned fodder of the right path+tier; exact tag set-cover is canCraft's job (the button),
+    // so this row is an honest approximation and chk.reasons below carries the precise complaint.
+    const have = S().guInv.filter((o) => { const g = GU_LIB[o.guId]; return g && g.daoPath === rf.path && g.tier === rf.tier; }).length;
+    rowsHtml += ing(have >= rf.min,
+      `≥${rf.min}× T${rf.tier} ${pathName(rf.path)} Gu${rf.tags.length ? ` covering ${rf.tags.map((t) => `[${t}]`).join('')}` : ''}`, have, rf.min);
+  }
+  return `<div class="wk-h">Refining Desk</div>
+    <div class="ref-card${chk.ok ? ' can' : ''}" style="border-color:var(--t${gu.tier})55">
+      <div class="ref-card-top">
+        <b class="tierbadge" style="color:var(--t${gu.tier});border-color:var(--t${gu.tier})">T${gu.tier}</b>
+        ${isUnique(gu) ? '<span class="pill unique">UNIQUE</span>' : ''}
+        <span class="gu-ess" style="margin-left:auto">◇ ${guEssenceCost(gu)}/use</span>
+      </div>
+      <div class="ref-glyph"><i style="box-shadow:0 0 34px 6px var(--t${gu.tier})33;border-color:var(--t${gu.tier})44"></i><span style="color:${col}">${pathCjk(gu.daoPath)}</span></div>
+      <div class="ref-cname">${gu.name}</div>
+      <div class="ref-effs">${effectText(gu)}</div>
+      <div class="ref-ctags">${guTags(gu).map((t) => `<i>${tagLabel(t)}</i>`).join('')}</div>
+      <div class="ref-recipe">${rowsHtml}</div>
+      ${chk.ok ? '' : `<div class="ref-why">${chk.reasons.join(' ')}</div>`}
+      <button class="primary wk-wide" onclick="G.craft('${gu.id}')"${chk.ok ? '' : ' disabled'}>${claimed ? 'Exists' : '⚒ Craft'}</button>
+    </div>
+    <div class="wk-note">Click any Gu to bring it to the desk</div>`;
+}
+
+export function renderGuResults() {
+  const h = $('guResults'); if (h) h.innerHTML = guListHtml();
+  const d = $('guDesk'); if (d) d.innerHTML = guDeskHtml();
+}
+export function viewGu() {
+  return `${pagehead('蛊', 'Refinery · 炼蛊', 'Gu Refinery',
+    'Gu bundle 1-4 signed effects; power scales with tier (1-9). Tiers 6-9 are immortal &amp; unique (one per world). Every Gu belongs to a <b>Dao Path</b>; rarer paths unlock only at deeper floors. Higher-tier Gu are refined from materials <b>plus lower-tier Gu of the same path</b>.')}
+  <div class="ref-split">
+    <aside class="wk-rail" id="guRail">${guRailHtml()}</aside>
+    <div class="ref-mid" id="guResults">${guListHtml()}</div>
+    <aside class="ref-desk" id="guDesk">${guDeskHtml()}</aside>
   </div>`;
 }
 
-// The grouped, FILTERED market listing (rarity / path / search applied on top of the unlock gates).
-// Split out from viewShop so the search box can repaint just the results (preserving input focus).
-export function shopSectionsHtml() {
-  const unlocked = shopResources();
-  if (!unlocked.length) return '<div class="muted" style="margin-top:14px">Nothing in stock yet — clear more floors and raise your cultivators’ realms to unlock resources.</div>';
+
+// ---------- shop ----------
+let shopSelId = null; // the resource on the counter (module-level — deliberately not persisted)
+export function shopSelect(id) { shopSelId = id; renderShopResults(); }
+
+// settings.shopQty: 1 | 10 | 100 | 1000 | 'max' ('max' = as many as the purse affords, min 1)
+const shopQtyOf = (cost) => {
+  const q = S().settings.shopQty || 1;
+  return q === 'max' ? Math.max(1, Math.floor(S().stones / Math.max(1, cost))) : q;
+};
+const shopOwned = (r) => (S().resources[r.id] || 0);
+const shopPathTag = (r) => r.daoPath
+  ? `<span class="pill" style="color:${pathColor(r.daoPath)};border-color:${pathColor(r.daoPath)}66"><span class="cjk">${pathCjk(r.daoPath)}</span> ${pathName(r.daoPath)}</span>`
+  : '<span class="muted small">universal</span>';
+
+// Resources surviving the rail filters (rank / path / search), rank-then-name order.
+function shopFiltered() {
   const st = S().settings;
-  const rarityF = st.shopRarity || 'all';
-  const pathF = st.shopPath || 'all';
+  const rarityF = st.shopRarity || 'all', pathF = st.shopPath || 'all';
   const q = (st.shopSearch || '').trim().toLowerCase();
-  let items = unlocked;
+  let items = shopResources();
   if (rarityF !== 'all') items = items.filter((r) => String(r.rank) === rarityF);
   if (pathF === 'universal') items = items.filter((r) => !r.daoPath);
   else if (pathF !== 'all') items = items.filter((r) => r.daoPath === pathF);
   if (q) items = items.filter((r) => r.name.toLowerCase().includes(q) || (r.daoPath && pathName(r.daoPath).toLowerCase().includes(q)));
-  if (!items.length) return '<div class="muted" style="margin-top:14px">No resources match these filters.</div>';
+  return items.sort((a, b) => a.rank - b.rank || a.name.localeCompare(b.name));
+}
+const shopSelected = (items) => items.find((r) => r.id === shopSelId) || items[0] || null;
 
-  const owned = (r) => (S().resources[r.id] || 0);
-  const qty = st.shopQty || 1;            // how many units the Buy button purchases at once
+// LEFT RAIL — search + dao paths grouped by commonality (rank filter lives as chips above the list,
+// same pattern as the Refinery's tier chips — the vertical rank stack wasted rail space).
+function shopRailHtml() {
+  const st = S().settings;
+  const pathF = st.shopPath || 'all';
+  const unlocked = shopResources();
+  // stocked dao paths, bucketed by commonality (common → supreme)
+  const present = [...new Set(unlocked.filter((r) => r.daoPath).map((r) => r.daoPath))];
+  const buckets = {};
+  present.forEach((p) => { const k = commOf(p).key || 'common'; (buckets[k] = buckets[k] || []).push(p); });
+  const pBtn = (p) => `<button class="ref-pbtn${pathF === p ? ' on' : ''}" onclick="G.setView('shopPath','${p}')">
+      <span style="color:${commOf(p).color}">${pathCjk(p)}</span>${pathName(p)}<i>×${unlocked.filter((r) => r.daoPath === p).length}</i></button>`;
+  const groups = ['common', 'uncommon', 'rare', 'esoteric', 'supreme'].filter((k) => buckets[k]).map((k) =>
+    `<div class="wk-h wk-comm" style="color:${(buckets[k][0] && commOf(buckets[k][0]).color) || 'var(--muted)'}">${commOf(buckets[k][0]).label}</div>
+     ${buckets[k].sort((a, b) => pathName(a).localeCompare(pathName(b))).map(pBtn).join('')}`).join('');
+  return `
+    <input class="searchbox wide" type="text" placeholder="Search resources…" value="${esc(st.shopSearch || '')}" oninput="G.shopSearch(this.value)">
+    <div class="wk-h">Dao Path</div>
+    <button class="ref-pbtn${pathF === 'all' ? ' on' : ''}" onclick="G.setView('shopPath','all')"><span>全</span>All paths<i>×${unlocked.length}</i></button>
+    <button class="ref-pbtn${pathF === 'universal' ? ' on' : ''}" onclick="G.setView('shopPath','universal')"><span style="color:var(--bone-dim)">物</span>Universal<i>×${unlocked.filter((r) => !r.daoPath).length}</i></button>
+    ${groups}
+    <div class="wk-note">Locked paths stock nothing yet</div>`;
+}
+
+// MIDDLE — rank chips (ALL · R1…R9, zero-stock ranks disabled) + the filtered list grouped by rank.
+export function shopSectionsHtml() {
+  const items = shopFiltered();
+  const unlocked = shopResources();
+  const rarityF = S().settings.shopRarity || 'all';
+  const countRank = (rk) => unlocked.filter((r) => r.rank === rk).length;
+  const chips = `<div class="ref-tiers">
+    <button class="mini${rarityF === 'all' ? ' primary' : ''}" onclick="G.setView('shopRarity','all')">All</button>
+    ${RANKS.map((rk) => `<button class="mini${rarityF === String(rk) ? ' primary' : ''}"${countRank(rk) ? '' : ' disabled'} style="color:${countRank(rk) ? rankColor(rk) : 'var(--muted)'}" onclick="G.setView('shopRarity','${rk}')">R${rk}</button>`).join('')}
+  </div>`;
+  if (!unlocked.length) return '<div class="muted" style="margin-top:14px">Nothing in stock yet — clear more floors and raise your cultivators’ realms to unlock resources.</div>';
+  if (!items.length) return chips + '<div class="muted" style="margin-top:14px">No resources match these filters.</div>';
+  const sel = shopSelected(items);
   const byRank = {};
   items.forEach((r) => { (byRank[r.rank] = byRank[r.rank] || []).push(r); });
-  const tag = (r) => r.daoPath
-    ? `<span class="pill" style="color:${pathColor(r.daoPath)};border-color:${pathColor(r.daoPath)}66"><span class="cjk">${pathCjk(r.daoPath)}</span> ${pathName(r.daoPath)}</span>`
-    : '<span class="muted small">universal</span>';
-  const card = (r) => {
-    const total = resourceCost(r.id) * qty;
-    const afford = S().stones >= total;
-    return `<div class="card row">
-    <span><b>${r.name}</b> <span class="pill" style="color:${rankColor(r.rank)};border-color:${rankColor(r.rank)}66">Rank ${r.rank}</span> ${tag(r)} <span class="muted small">· held ×${fmt(owned(r))}</span></span>
-    <button class="primary"${afford ? '' : ' disabled'} onclick="G.buyResource('${r.id}')">${qty > 1 ? `×${qty} · ` : ''}${fmt(total)} 石</button></div>`;
+  const row = (r) => {
+    const cost = resourceCost(r.id);
+    return `<div class="mkt-row${sel && r.id === sel.id ? ' sel' : ''}${S().stones >= cost ? '' : ' poor'}" onclick="G.shopSelect('${r.id}')">
+      <span class="mkt-dot" style="background:${rankColor(r.rank)}"></span>
+      <b class="mkt-name">${r.name}</b>
+      ${shopPathTag(r)}
+      <span class="mkt-held">×${fmt(shopOwned(r))}</span>
+      <span class="mkt-cost">${fmt(cost)} 石</span></div>`;
   };
-  return RANKS.filter((rk) => byRank[rk]).map((rk, i) =>
-    `<div class="sec-head"><span class="sec-num" style="color:${rankColor(rk)}">${SEC_NUM[i + 1] || ''}</span>
-      <span class="sec-title" style="color:${rankColor(rk)}">Rank ${rk}</span><span class="sec-meta">${byRank[rk].length} kinds · ${fmt(resourceCost(byRank[rk][0].id))} 石 each</span></div>
-     <div class="grid cards">${byRank[rk].map(card).join('')}</div>`).join('');
+  return chips + RANKS.filter((rk) => byRank[rk]).map((rk) =>
+    `<div class="sec-head" style="margin-top:0"><span class="sec-num" style="color:${rankColor(rk)}">${SEC_NUM[rk] || rk}</span>
+      <span class="sec-title" style="color:${rankColor(rk)}">Rank ${rk}</span>
+      <span class="sec-meta">${byRank[rk].length} kinds · ${fmt(resourceCost(byRank[rk][0].id))} 石 each</span></div>
+     ${byRank[rk].map(row).join('')}`).join('');
 }
 
-// Repaint ONLY the results container (used by the live search so the input keeps focus).
-export function renderShopResults() { const host = $('shopResults'); if (host) host.innerHTML = shopSectionsHtml(); }
+// RIGHT — the purchase desk: purse, selected resource, amount, itemized bill, one Buy.
+function shopDeskHtml() {
+  const items = shopFiltered();
+  const sel = shopSelected(items);
+  const purse = `<div class="mkt-wallet"><span>Your Purse</span><b>${fmt(S().stones)} <i>石</i></b></div>`;
+  if (!sel) return purse + '<div class="muted" style="margin-top:14px">Nothing stocked matches these filters.</div>';
+  const cost = resourceCost(sel.id);
+  const qSet = S().settings.shopQty || 1;
+  const qty = shopQtyOf(cost);
+  const total = cost * qty;
+  const afford = S().stones >= total;
+  const qBtn = (n, lbl) => `<button class="mini${qSet === n ? ' primary' : ''}" onclick="G.setShopQty('${n}')">${lbl}</button>`;
+  return `${purse}
+    <hr class="wk-rule">
+    <div class="mkt-sel">
+      <span class="mkt-sel-glyph" style="color:${sel.daoPath ? pathColor(sel.daoPath) : 'var(--bone-dim)'}">${sel.daoPath ? pathCjk(sel.daoPath) : '物'}</span>
+      <div><b>${sel.name}</b>
+        <div class="mkt-sel-sub"><span class="pill" style="color:${rankColor(sel.rank)};border-color:${rankColor(sel.rank)}66">Rank ${sel.rank}</span> ${shopPathTag(sel)} <span class="muted">· held ×${fmt(shopOwned(sel))}</span></div></div>
+    </div>
+    <div class="wk-h" style="margin-top:16px">Amount</div>
+    <div class="mkt-qty">${[1, 10, 100, 1000].map((n) => qBtn(n, '×' + n)).join('')}${qBtn('max', 'MAX')}</div>
+    <dl class="mkt-bill">
+      <div><dt>Unit price</dt><dd>${fmt(cost)} 石</dd></div>
+      <div><dt>Quantity</dt><dd>×${fmt(qty)}</dd></div>
+      <div class="tot"><dt>Total</dt><dd>${fmt(total)} 石</dd></div>
+      <div><dt>Purse after</dt><dd>${afford ? fmt(S().stones - total) + ' 石' : '—'}</dd></div>
+    </dl>
+    <button class="primary wk-wide"${afford ? '' : ' disabled'} onclick="G.buyResource('${sel.id}')">Buy ×${fmt(qty)} ${sel.name}</button>
+    <div class="wk-note">Click any resource to bring it to the counter</div>
+    <div class="wk-note">Stock gates · Floor ${Math.max(0, S().frontier - 1)} cleared · highest rank ${highestRosterRank()}</div>`;
+}
+
+// Repaint list + desk (live search / selection / qty keep input focus; rail repaints on setView).
+export function renderShopResults() {
+  const host = $('shopResults'); if (host) host.innerHTML = shopSectionsHtml();
+  const desk = $('shopDesk'); if (desk) desk.innerHTML = shopDeskHtml();
+}
 
 export function viewShop() {
-  const st = S().settings;
   return `${pagehead('市', 'Market · 集市', 'The Market',
     'Buy crafting resources with Primeval Essence Stones. A resource is stocked only once you have <b>beaten the floor it can drop from</b> and your <b>highest cultivator’s rank</b> reaches its tier — deeper materials stay locked until you grow into them.')}
-  ${shopControls(st.shopRarity || 'all', st.shopPath || 'all', st.shopSearch || '')}
-  <div class="cs-statgrid" style="grid-template-columns:repeat(3,1fr);margin-bottom:8px">
-    <div class="cs-stat"><span class="sk">Primeval Stones</span><span class="sv" style="color:var(--stone)">${fmt(S().stones)} 石</span></div>
-    <div class="cs-stat"><span class="sk">Cleared Floors</span><span class="sv">${Math.max(0, S().frontier - 1)}</span></div>
-    <div class="cs-stat"><span class="sk">Highest Rank</span><span class="sv">${highestRosterRank()}</span></div>
-  </div>
-  <div id="shopResults">${shopSectionsHtml()}</div>`;
+  <div class="mkt-split">
+    <aside class="wk-rail" id="shopRail">${shopRailHtml()}</aside>
+    <div class="mkt-list" id="shopResults">${shopSectionsHtml()}</div>
+    <aside class="mkt-desk" id="shopDesk">${shopDeskHtml()}</aside>
+  </div>`;
 }
+
 
 // ---------- inventory ----------
 export function viewInventory() {
@@ -2184,6 +2511,27 @@ export function viewFloors() {
 // Player-facing patch notes. Add the newest release to the TOP of this list; each entry is
 // { date, title, items: [[heading, html], …] }. HTML is allowed in the item bodies.
 const WHATS_NEW = [
+  { date: 'Jun 13, 2026', title: 'Arena', items: [
+    ['Asynchronous PvP', 'A new <b>擂 Arena</b> page: register your battle team as a <b>defense</b>, then hunt down other real players’ teams. Every fight resolves <b>server-side</b> (authoritative — no cheating the result) and updates your <b>Elo rating</b>; climb the ladder by toppling stronger cultivators. The Arena opens once you <b>clear Floor 50</b>.'],
+    ['Who you can challenge', 'Matchmaking is an <b>asymmetric band</b> — you may punch <b>up to +300 Elo above</b> you but only <b>150 below</b>, so climbing is encouraged — backed by a <b>nearest-8</b> fallback, so your closest rivals are <b>always</b> challengeable even on a thin early ladder.'],
+    ['5 attempts, +1 every 15 min', 'You hold <b>5 challenge attempts</b> that recharge <b>+1 every 15 minutes</b> (offline too), spent win or lose.'],
+    ['Saved defense loadouts', 'Three <b>named loadout slots</b> snapshot a team + formation, so you can swap your defending lineup in a single click.'],
+  ] },
+  { date: 'Jun 13, 2026', title: 'Accounts', items: [
+    ['Sign in with Discord or Google', 'You can now <b>sign in</b> with a <b>Discord</b> or <b>Google</b> account from the title screen. Everyone starts as a <b>guest</b> automatically — signing in <b>secures your progress across devices</b> and carries your <b>guest Arena rating</b> with you into the account.'],
+    ['Live online count', 'The top bar now shows how many <b>cultivators are online</b> right now.'],
+  ] },
+  { date: 'Jun 13, 2026', title: 'Cloud Saves', items: [
+    ['Your saves live in the cloud', 'Progress is now stored <b>server-side</b>, not just in this browser — up to <b>2 cloud save slots</b> per account, <b>synced as you play</b> and continuable from <b>any device</b> you sign in on. (A local cache keeps a cached game playable if the cloud is briefly unreachable.)'],
+    ['Bring your old saves over', 'On your <b>first sign-in</b>, the game offers to <b>carry your existing local saves</b> up into the cloud — nothing is left behind.'],
+  ] },
+  { date: 'Jun 13, 2026', title: 'Interface', items: [
+    ['Redesigned pages', 'The <b>Character</b>, <b>Team</b>, <b>Market</b>, <b>Gu Refinery</b> and <b>Bounties</b> pages have all been <b>rebuilt</b> for a cleaner, more readable layout that better fits the game’s look.'],
+    ['Formation gets its own page', 'Arranging your <b>2×5 battle board</b> now lives on a dedicated <b>阵 Formation</b> tab, split out of Team — so building your roster and setting your formation are two focused screens instead of one crowded one.'],
+  ] },
+  { date: 'Jun 13, 2026', title: 'Resource Drops', items: [
+    ['Cleaner, capped floor drops', 'Clearing a floor now yields at most <b>5 resource types</b>: up to <b>4 path resources</b> plus <b>1 universal binder</b> that is <b>always</b> granted. Previously every eligible resource rolled on its own (no cap) and binders could whiff entirely — now a binder is <b>guaranteed every clear</b> and the path drops are trimmed to a tidy four. <b style="color:var(--jade)">Fortune</b> &amp; <b style="color:var(--jade)">Luck</b> still scale each drop’s chance and quantity.'],
+  ] },
   { date: 'Jun 11, 2026', title: 'Interface', items: [
     ['Themed hover tooltips', 'Hovering a trait, <b>archetype</b>, <b>Dao affinity</b> or <b>status</b> chip now shows a <b>styled info card</b> in the game’s theme instead of the plain browser popup — and it spells out the trait’s <b>actual effects</b> (an archetype’s per-rarity stat bonuses, a status’s effect and duration, and so on). Every hover hint in the game uses this card now, and it never gets clipped by the edge of the screen.'],
     ['Sidebar regrouped', 'Related tabs now sit together: <b>Floors</b> moved directly under <b>Battle</b>, and <b>Market</b> + <b>Inventory</b> under <b>Gu Refinery</b>.'],
@@ -2325,12 +2673,7 @@ export function viewQuests() {
   <div class="quest-list">${rows}${bonusRow}</div>`;
 }
 
-// Bounties board: the day's five lone raid-boss targets (one per rank/rarity band). Each card surfaces the
-// requested fields — boss NAME, RANK, ARCHETYPE (its trait line) and RARITY — plus the shared attempts
-// pool. Rewards are shown for context (their tuning is the next pass). The daily roster is deterministic
-// (data/bounties.js); the Challenge button runs a real fight via main.js G.attemptBounty.
-// A bounty card's action button (locked / respawning / challenge). Carries id="bc-act-N" + a state key
-// so the live ticker (tickBounties) can swap just this element when its state changes — no full re-render.
+// ---------- bounties ----------
 const bountyActionKey = (left, cd, open) => !open ? 'lock' : cd > 0 ? 'cd' + Math.ceil(cd / 1000) : 'rdy' + (left > 0 ? 1 : 0);
 function bountyActionHTML(slot, left, cd, open) {
   const k = bountyActionKey(left, cd, open);
@@ -2338,14 +2681,19 @@ function bountyActionHTML(slot, left, cd, open) {
   if (cd > 0) return `<button class="bc-go" id="bc-act-${slot}" data-k="${k}" disabled>⏳ Respawning · ${fmtCountdown(cd)}</button>`;
   return `<button class="primary bc-go" id="bc-act-${slot}" data-k="${k}" ${left > 0 ? '' : 'disabled'} onclick="G.attemptBounty(${slot})">${left > 0 ? '⚔ Challenge' : 'No attempts left'}</button>`;
 }
-// Live 1-second updater for the Bounties tab: ticks the respawn / next-attempt / roster-reset countdowns
-// and re-enables a card's Challenge button the moment its respawn cooldown expires — surgically (no full
-// re-render, so scroll & hover survive). Called from main.js's heartbeat while the Bounties tab is open.
+// Brass attempt pips (shares .ach-* styles introduced by the Arena port).
+const bountyPipsHtml = (left) =>
+  [...Array(BOUNTY_MAX_ATTEMPTS)].map((_, i) => `<i class="${i < left ? 'on' : ''}"></i>`).join('');
+
+// Live 1-second updater — same surgical strategy as before (no full re-render: scroll, hover and
+// the sticky rail survive). Now also repaints the pip meter.
 export function tickBounties() {
-  if (!document.querySelector('.bounty-grid')) return; // not on the Bounties tab
+  if (!document.querySelector('.bn2-split')) return; // not on the Bounties tab
   const left = attemptsLeft();
   const set = (id, t) => { const e = document.getElementById(id); if (e && e.textContent !== t) e.textContent = t; };
-  set('bnt-attempts', `${left} / ${BOUNTY_MAX_ATTEMPTS}`);
+  const pips = document.getElementById('bnt-pips');
+  if (pips && pips.dataset.left !== String(left)) { pips.dataset.left = String(left); pips.innerHTML = bountyPipsHtml(left); }
+  set('bnt-attempts', String(left));
   set('bnt-next', left >= BOUNTY_MAX_ATTEMPTS ? 'Full' : fmtReset(msToNextAttempt()));
   set('bnt-reset', fmtReset(msToReset()));
   document.querySelectorAll('[id^="bc-act-"]').forEach((btn) => {
@@ -2359,8 +2707,7 @@ export function viewBounties() {
   const list = dailyBounties();
   const left = attemptsLeft();
   const nextMs = msToNextAttempt();
-  // Gu-reward chance ladder, e.g. "30% R3 · 35% R2 · 35% R1", with a genuine "miss %" (only the rank-1
-  // case actually misses). The miss is taken from the EXACT chances, not the rounded display %s.
+  // Gu-reward chance ladder ("30% R3 · 35% R2 · 35% R1 [· miss]") — miss computed from exact chances.
   const guRewardDesc = (gr) => {
     const ranks = Object.keys(gr.chances).map(Number).sort((a, b) => b - a);
     const parts = ranks.map((r) => `${Math.round(gr.chances[r] * 100)}% R${r}`);
@@ -2368,44 +2715,49 @@ export function viewBounties() {
     if (miss > 1e-9) parts.push(`${Math.round(miss * 100)}% miss`);
     return parts.join(' · ');
   };
-  const cards = list.map((b) => {
+  const rows = list.map((b) => {
     const open = slotUnlocked(b.slot);
     const col = rarityColor(b.rarity);
-    const cd = open ? respawnRemaining(b.slot) : 0;   // 20-min post-kill respawn cooldown
-    const can = open && left > 0 && cd === 0;
-    return `<div class="bounty-card${open ? '' : ' locked'}" style="--rc:${col}">
-      <div class="bc-head">
-        <div class="bc-seal cjk">${lineCjk(b.line)}</div>
-        <div class="bc-id">
-          <div class="bc-tier">Rank ${b.rank} · ${b.rarity} Bounty</div>
-          <div class="bc-name">${b.name}</div>
-          <div class="bc-arch"><b>${lineName(b.line, b.rarity)}</b> <span class="muted">· ${lineRole(b.line)}</span></div>
-          <div class="bc-path">${pathCjk(b.path)} ${pathName(b.path)}</div>
-        </div>
+    const cd = open ? respawnRemaining(b.slot) : 0;
+    return `<div class="bn2-row${open ? '' : ' locked'}" style="--rc:${col}">
+      <div class="bn2-seal"><span class="cjk">${lineCjk(b.line)}</span><i>R${b.rank}</i></div>
+      <div class="bn2-id">
+        <b>${b.name}</b>
+        <span class="bn2-sub" style="color:${col}">${b.rarity} · ${lineName(b.line, b.rarity)} <span class="muted">· ${lineRole(b.line)}</span></span>
+        <span class="bn2-sub dim">${pathCjk(b.path)} ${pathName(b.path)}</span>
       </div>
-      <div class="bc-stats">
-        <div><span class="sk">HP</span><span class="sv">${fmt(b.unit.maxHp)}</span></div>
-        <div><span class="sk">ATK</span><span class="sv">${fmt(b.unit.atk)}</span></div>
-        <div><span class="sk">DEF</span><span class="sv">${fmt(b.unit.def)}</span></div>
-        <div><span class="sk">SPD</span><span class="sv">${b.unit.spd}</span></div>
+      <div class="bn2-stats">
+        <div><span class="sk">HP</span><b>${fmt(b.unit.maxHp)}</b></div>
+        <div><span class="sk">ATK</span><b>${fmt(b.unit.atk)}</b></div>
+        <div><span class="sk">DEF</span><b>${fmt(b.unit.def)}</b></div>
+        <div><span class="sk">SPD</span><b>${b.unit.spd}</b></div>
       </div>
-      <div class="bc-rewards">
-        <div class="bc-rtile"><span class="sk">Primeval Stones</span><span class="sv stone">+${fmt(b.rewards.stones)} 石</span></div>
-        <div class="bc-rtile"><span class="sk">Immortal Essence</span><span class="sv jade">+${b.rewards.essence} ✦</span></div>
-        <div class="bc-rtile bc-gu"><span class="sk">${pathName(b.path).replace(/ Path$/, '')} Gu Drop</span><span class="sv-gu">${guRewardDesc(b.rewards.guReward)}</span></div>
+      <div class="bn2-loot">
+        <span class="stone">+${fmt(b.rewards.stones)} 石</span>
+        <span class="jade">+${b.rewards.essence} ✦</span>
+        <span class="bn2-gu" title="${pathName(b.path)} Gu drop">蠱 ${guRewardDesc(b.rewards.guReward)}</span>
       </div>
-      ${bountyActionHTML(b.slot, left, cd, open)}
+      <div class="bn2-act">${bountyActionHTML(b.slot, left, cd, open)}</div>
     </div>`;
   }).join('');
   return `${pagehead('賞', 'Hunt · 悬赏', 'Bounties',
     'Hunt a daily roster of <b>lone raid-boss</b> targets. You hold <b>5 attempts</b> that recharge <b>+1 per hour</b> — spent win or lose. Higher-rank bounties unlock as you climb the tower.')}
-  <div class="cs-statgrid" style="grid-template-columns:repeat(3,1fr);margin-bottom:14px">
-    <div class="cs-stat"><span class="sk">Attempts</span><span class="sv stone" id="bnt-attempts">${left} / ${BOUNTY_MAX_ATTEMPTS}</span></div>
-    <div class="cs-stat"><span class="sk">Next Attempt</span><span class="sv" id="bnt-next">${left >= BOUNTY_MAX_ATTEMPTS ? 'Full' : fmtReset(nextMs)}</span></div>
-    <div class="cs-stat"><span class="sk">Roster Resets</span><span class="sv" id="bnt-reset">${fmtReset(msToReset())}</span></div>
-  </div>
-  <div class="bounty-grid">${cards}</div>`;
+  <div class="bn2-split">
+    <aside class="bn2-rail">
+      <div class="bn2-h">Attempts</div>
+      <div class="ach-row">
+        <span class="ach-pips" id="bnt-pips" data-left="${left}">${bountyPipsHtml(left)}</span>
+        <b class="ach-count"><span id="bnt-attempts">${left}</span><span>/${BOUNTY_MAX_ATTEMPTS}</span></b>
+      </div>
+      <div class="bn2-cell"><span class="bn2-h">Next Attempt</span><b id="bnt-next">${left >= BOUNTY_MAX_ATTEMPTS ? 'Full' : fmtReset(nextMs)}</b></div>
+      <div class="bn2-cell"><span class="bn2-h">Roster Resets</span><b id="bnt-reset">${fmtReset(msToReset())}</b></div>
+      <hr class="fm4-rule">
+      <div class="bn2-note">Attempts are spent win or lose · kills respawn after 20 min</div>
+    </aside>
+    <div>${rows}</div>
+  </div>`;
 }
+
 
 export function viewWhatsNew() {
   const entries = WHATS_NEW.map((e) => `<section class="wn-entry">
@@ -2739,6 +3091,209 @@ export function showModal(html, cls = '') {
   o.innerHTML = `<div class="modal${cls ? ' ' + cls : ''}">${html}</div>`;
 }
 export function closeModal() { const o = $('overlay'); if (o) o.remove(); }
+// ================= ARENA (async PvP) =================
+// Split layout: a sticky "Your Standing" panel (rating, register, defense preview, 3 loadout slots,
+// challenge attempts + refill timer) beside the ladder — top 3 as podium cards, the rest as rows,
+// every team showing its full defense formation. Ladder data still arrives via main.js → renderArenaList.
+const ARENA_CJK_NUM = ['壹', '貳', '參', '肆', '伍', '陸', '柒', '捌', '玖', '拾'];
+
+function viewPvp() {
+  ensureArenaMeta();
+  // PROGRESSION GATE: the Arena opens only after the player has BEATEN floor 50 (arenaMeta.js
+  // arenaUnlocked / main.js openArena enforce it too — this is the matching locked view).
+  if (!arenaUnlocked()) {
+    return pagehead('擂', 'Asynchronous PvP', 'Arena',
+      'A proving ground for cultivators who have tempered themselves against the tower.')
+      + `<div class="killer-block killer-locked" style="max-width:560px">
+        <div class="killer-row"><b>🔒 Arena locked</b></div>
+        <div class="killer-hint">The Arena is a mid-game proving ground — it opens once you have beaten the tower's first gate:</div>
+        <ul class="km-reqs">
+          <li class="km-req-no">✗ Clear <b>Floor ${ARENA_UNLOCK_FLOOR}</b> — currently at Floor ${S().frontier}</li>
+        </ul>
+      </div>`;
+  }
+  return pagehead('擂', 'Asynchronous PvP', 'Arena',
+    'Register your battle team as a defense, then challenge other cultivators. Fights resolve server-side; climb the ladder by beating stronger opponents.')
+    + `<div class="arena-pvp">
+      <aside class="apv-side">
+        <div class="apv-ghost" id="arena-myghost">擂</div>
+        <div class="apv-h">Your Standing</div>
+        <div class="apv-pts" id="arena-myrating">—</div>
+        <div class="apv-pos" id="arena-mypos">Unranked — register your defense to enter the ladder</div>
+        <div class="apv-rec" id="arena-myrecord"></div>
+        <hr class="apv-rule">
+        <label class="apv-name">Name <input id="arena-name" type="text" maxlength="40" placeholder="Anonymous"
+          onchange="G.arenaSetName(this.value)"></label>
+        <button class="primary apv-wide" onclick="G.arenaRegister(this)">Register / Update Defense</button>
+        <button class="apv-wide" onclick="G.arenaRefresh()" title="Refresh the ladder">↻ Refresh Ladder</button>
+        <hr class="apv-rule">
+        <div class="apv-h">Your Defense</div>
+        <div id="arena-mydef">${arenaFormation(arenaLocalDef())}</div>
+        <hr class="apv-rule">
+        <div class="apv-h">Loadouts</div>
+        <div class="ald-col" id="arena-loadouts">${arenaLoadoutsHtml()}</div>
+        <hr class="apv-rule">
+        <div class="apv-h">Arena Challenges</div>
+        <div id="arena-attempts">${arenaAttemptsHtml()}</div>
+      </aside>
+      <div class="apv-main" id="arena-list"><div class="muted" style="padding:20px 4px">Loading the ladder…</div></div>
+    </div>`;
+}
+
+// ---- shared formation mini-grid (side preview, podium cards, ladder rows) ----
+// Accepts members shaped like the server payload ({name,rarity,realm,row,lane,daoPath,line}).
+const arenaSealOf = (m) => m.daoPath ? pathCjk(m.daoPath) : (m.line ? lineCjk(m.line) : '蛊');
+const arenaSealColor = (m) => m.daoPath ? pathColor(m.daoPath) : 'var(--stone)';
+function arenaFormation(members) {
+  const sorted = (members || []).slice().sort((a, b) => (a.lane | 0) - (b.lane | 0));
+  const front = sorted.filter((m) => m.row !== 'back'), back = sorted.filter((m) => m.row === 'back');
+  const rows = Math.max(front.length, back.length, 1);
+  const col = (list) => `<div class="afm-col">${Array.from({ length: rows }, (_, i) => {
+    const m = list[i];
+    if (!m) return '<div class="afm-tile empty"></div>';
+    const rc = rarityColor(m.rarity) || 'var(--stone)';
+    const title = `${m.name} — ${m.rarity || ''} · ${realmName(m.realm)} · ${m.row === 'back' ? 'Back' : 'Front'} ${(m.lane | 0) + 1}`
+      + `${m.gu && m.gu.length ? '\nGu: ' + m.gu.join(', ') : ''}${m.killer ? '\nKiller: ' + m.killer : ''}`;
+    return `<div class="afm-tile" style="border-left-color:${rc}" title="${esc(title)}">
+      <span class="afm-seal" style="color:${arenaSealColor(m)}">${arenaSealOf(m)}</span>
+      <span class="afm-name" style="color:${rc}">${escTipHtml(m.name)}</span>
+      <span class="afm-realm">${realmName(m.realm).replace('Rank ', 'R')}</span></div>`;
+  }).join('')}</div>`;
+  return `<div class="afm-grid">${col(back)}${col(front)}</div>`; // back column outside, front toward the ladder
+}
+// Local active team → the same member shape (for the side-panel defense preview).
+const arenaLocalDef = () => activeTeam().map((c) => ({
+  name: c.name, rarity: c.rarity, realm: c.realm, row: rowOf(c), lane: laneOf(c),
+  daoPath: (affinityPaths(c) || [])[0], line: c.line, gu: [], killer: null }));
+
+// ---- loadout slots (3 named formation snapshots; see systems/arenaMeta.js) ----
+function arenaLoadoutsHtml() {
+  const a = ensureArenaMeta();
+  return a.loadouts.map((ld, i) => {
+    if (!ld) return `<button class="ald empty" onclick="G.arenaSaveLoadout(${i})" title="Save your current team into this slot">
+      <span class="ald-n">${ARENA_CJK_NUM[i]}</span>
+      <span class="ald-info"><b>Slot ${i + 1}</b><i>empty — save current team</i></span><em>＋</em></button>`;
+    const active = a.active === i;
+    return `<button class="ald${active ? ' active' : ''}" onclick="G.arenaApplyLoadout(${i})" title="${active ? 'This loadout is active' : 'Load this formation onto your team'}">
+      <span class="ald-n">${ARENA_CJK_NUM[i]}</span>
+      <span class="ald-info"><b>${escTipHtml(ld.name)}<u class="ald-edit" onclick="event.stopPropagation();G.arenaRenameLoadout(${i})" title="Rename loadout">✎</u><u class="ald-edit" onclick="event.stopPropagation();G.arenaSaveLoadout(${i})" title="Overwrite with current team">⤓</u></b>
+      <i>${ld.team.length} member${ld.team.length === 1 ? '' : 's'}</i></span>
+      <em>${active ? 'active' : 'load'}</em></button>`;
+  }).join('');
+}
+
+// ---- challenge attempts: 5 pips + live mm:ss refill timer (ticked by main.js tickArena) ----
+function arenaAttemptsHtml() {
+  const left = arenaAttemptsLeft(), ms = arenaMsToNextAttempt();
+  const s = Math.ceil(ms / 1000), mm = String(Math.floor(s / 60)).padStart(2, '0'), ss = String(s % 60).padStart(2, '0');
+  const pips = Array.from({ length: ARENA_MAX_ATTEMPTS }, (_, i) => `<i class="${i < left ? 'on' : ''}"></i>`).join('');
+  return `<div class="ach-row"><span class="ach-pips">${pips}</span><b class="ach-count">${left}<span>/${ARENA_MAX_ATTEMPTS}</span></b></div>
+    <div class="ach-timer${left >= ARENA_MAX_ATTEMPTS ? ' full' : ''}">${left >= ARENA_MAX_ATTEMPTS ? 'Attempts full' : `Next attempt in <b>${mm}:${ss}</b>`}</div>`;
+}
+// 1-second tick (wired in main.js next to the bounty tick) — updates the attempt meter + any live
+// defender-cooldown countdowns on challenge buttons (swapping back to a Challenge button when one expires).
+export function tickArena() {
+  const el = $('arena-attempts'); if (el) el.innerHTML = arenaAttemptsHtml();
+  const now = Date.now();
+  document.querySelectorAll('.arena-cd[data-until]').forEach((cd) => {
+    const ms = (+cd.dataset.until) - now;
+    if (ms <= 0) {
+      const mini = cd.classList.contains('mini'), noAtt = arenaAttemptsLeft() <= 0;
+      cd.outerHTML = `<button class="${mini ? 'mini ' : ''}primary" ${noAtt ? 'disabled' : ''} onclick="G.arenaChallenge('${cd.dataset.pid}')">⚔ Challenge</button>`;
+    } else {
+      const s = Math.ceil(ms / 1000), b = cd.querySelector('b');
+      if (b) b.textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+    }
+  });
+}
+// Refresh the side panel after loadout save/apply/rename (keeps the fetched ladder intact).
+export function renderArenaPanel() {
+  const lo = $('arena-loadouts'); if (lo) lo.innerHTML = arenaLoadoutsHtml();
+  const def = $('arena-mydef'); if (def) def.innerHTML = arenaFormation(arenaLocalDef());
+}
+
+// ---- ladder: podium (top 3) + rows. Same signature as before — called by main.js arenaRefresh. ----
+export function renderArenaList(teams, myId, myName, myPoints) {
+  const nameEl = $('arena-name');
+  if (nameEl && document.activeElement !== nameEl) nameEl.value = myName || '';
+  const rEl = $('arena-myrating'); if (rEl) rEl.textContent = (myPoints == null ? '—' : myPoints);
+  const myIdx = (teams || []).findIndex((t) => t.player_id === myId);
+  const posEl = $('arena-mypos');
+  if (posEl) posEl.textContent = myIdx >= 0 ? `Rank #${myIdx + 1} of ${teams.length} cultivators` : 'Unranked — register your defense to enter the ladder';
+  const recEl = $('arena-myrecord');
+  const myTeam = (teams || []).find((t) => t.player_id === myId);
+  if (recEl) recEl.innerHTML = myTeam ? 'Record ' + arenaRecordHtml(myTeam.wins, myTeam.losses, true) : '';
+  const gEl = $('arena-myghost');
+  if (gEl) gEl.textContent = myIdx >= 0 ? (ARENA_CJK_NUM[myIdx] || String(myIdx + 1)) : '擂';
+  const host = $('arena-list'); if (!host) return;
+  if (!teams || !teams.length) {
+    host.innerHTML = `<div class="muted" style="padding:20px 4px">No teams registered yet — be the first: register your defense team.</div>`;
+    return;
+  }
+  const noAtt = arenaAttemptsLeft() <= 0;
+  // MATCHMAKING: gate each Challenge by the asymmetric band / nearest-K (data/arena.js) — same rule the server enforces.
+  const myPts = myPoints == null ? 1000 : myPoints;
+  const registered = teams.some((t) => t.player_id === myId);
+  const others = teams.filter((t) => t.player_id !== myId);
+  const eligOf = (t) => {
+    if (t.player_id === myId) return false;
+    const gap = Math.abs(t.points - myPts);
+    return arenaCanChallenge(myPts, t.points, others.reduce((n, o) => n + (Math.abs(o.points - myPts) < gap ? 1 : 0), 0));
+  };
+  const pod = teams.slice(0, 3).map((t, i) => arenaPodiumCard(t, i + 1, t.player_id === myId, noAtt, eligOf(t), registered));
+  const podium = pod.length ? `<div class="apv-podium">${[pod[1] || '', pod[0] || '', pod[2] || ''].join('')}</div>` : '';
+  host.innerHTML = podium + teams.slice(3).map((t, i) => arenaRow(t, i + 4, t.player_id === myId, noAtt, eligOf(t), registered)).join('');
+}
+
+const arenaMembersOf = (t) => (t.members || []).slice()
+  .sort((a, b) => (a.row === b.row ? ((a.lane | 0) - (b.lane | 0)) : (a.row === 'front' ? -1 : 1)));
+const arenaCdRemaining = (t) => (t.cooldownUntil ? Date.parse(t.cooldownUntil) - Date.now() : 0);
+// W–L record chip — wins green, losses red; `big` adds the win-rate (for the standing panel).
+const arenaRecordHtml = (w, l, big) => {
+  w = w || 0; l = l || 0; const total = w + l, wr = total ? Math.round((w / total) * 100) : 0;
+  return `<span class="arena-rec${big ? ' big' : ''}" title="${w} win${w === 1 ? '' : 's'} · ${l} loss${l === 1 ? '' : 'es'}${total ? ` · ${wr}% win rate` : ''}"><b class="rec-w">${w}</b><span class="rec-sep">–</span><b class="rec-l">${l}</b>${big && total ? ` <span class="rec-wr">${wr}%</span>` : ''}</span>`;
+};
+const arenaChallengeBtn = (t, mine, noAtt, mini, eligible, registered) => {
+  if (mine) return `<span class="mine-mark">${mini ? '魂 yours' : 'registered'}</span>`;
+  const cdMs = arenaCdRemaining(t);
+  if (cdMs > 0) { // defender on cooldown — show a live countdown (ticked by tickArena), not a challenge button
+    const s = Math.ceil(cdMs / 1000);
+    return `<span class="arena-cd${mini ? ' mini' : ''}" data-until="${Date.parse(t.cooldownUntil)}" data-pid="${t.player_id}" title="Recently challenged — protected by a 2-minute cooldown">⏳ <b>${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}</b></span>`;
+  }
+  if (!registered) return `<span class="arena-oor${mini ? ' mini' : ''}" title="Register your defense team to enter the ladder, then you can challenge">register first</span>`;
+  if (!eligible) return `<span class="arena-oor${mini ? ' mini' : ''}" title="Outside your challenge range — ${ARENA_DOWN} below to ${ARENA_UP} above your rating (or your nearest few)">out of range</span>`;
+  return `<button class="${mini ? 'mini ' : ''}primary" ${noAtt ? 'disabled title="No arena attempts left — wait for the refill timer"' : ''} onclick="G.arenaChallenge('${t.player_id}')">⚔ Challenge</button>`;
+};
+
+function arenaPodiumCard(t, rank, mine, noAtt, eligible, registered) {
+  const members = arenaMembersOf(t);
+  return `<div class="apd apd-${rank}${mine ? ' mine' : ''}">
+    <div class="apd-ghost">${ARENA_CJK_NUM[rank - 1]}</div>
+    <div class="apd-rank">RANK ${rank}</div>
+    <div class="apd-owner">${escTipHtml(t.name || 'Anonymous')}${mine ? ' <span class="muted">· you</span>' : ''}</div>
+    <div class="apd-pts">${t.points}<span>RATING</span></div>
+    <div class="apd-rec">${arenaRecordHtml(t.wins, t.losses)}</div>
+    <div class="apd-fm">${arenaFormation(members)}</div>
+    <div class="apd-foot"><span class="apd-pwr">PWR ${compact(t.power)}</span>${arenaChallengeBtn(t, mine, noAtt, true, eligible, registered)}</div>
+  </div>`;
+}
+function arenaRow(t, rank, mine, noAtt, eligible, registered) {
+  const members = arenaMembersOf(t);
+  const killers = members.map((m) => m.killer).filter(Boolean);
+  const guN = members.reduce((s, m) => s + ((m.gu || []).length), 0);
+  return `<div class="apv-row${mine ? ' mine' : ''}">
+    <div class="apr-rank"><span class="apr-rk-n">${rank}</span><span class="apr-rk-l">RANK</span></div>
+    <div class="apr-owner">
+      <b>${escTipHtml(t.name || 'Anonymous')}</b>${mine ? '<i class="apr-you">your defense</i>' : ''}
+      <span class="apr-sub">${members.length} cultivator${members.length === 1 ? '' : 's'} · 蠱 ${guN} Gu</span>
+      ${killers.length ? `<span class="apr-killers" title="${esc('Killer moves: ' + killers.join(', '))}">擂 ${escTipHtml(killers.join(' · '))}</span>` : ''}
+    </div>
+    ${arenaFormation(members)}
+    <div class="apr-stamp"><b>${t.points}</b><span>RATING</span><i>PWR ${compact(t.power)}</i><span class="apr-rec">${arenaRecordHtml(t.wins, t.losses)}</span></div>
+    <div class="apr-act">${arenaChallengeBtn(t, mine, noAtt, false, eligible, registered)}</div>
+  </div>`;
+}
+
 export function toast(msg, ms = 2200, cls = '') {
   const host = $('toast-host'); if (!host) return;
   const t = document.createElement('div'); t.className = 'toast' + (cls ? ' ' + cls : ''); t.textContent = msg;

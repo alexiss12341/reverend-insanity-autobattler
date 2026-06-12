@@ -28,6 +28,11 @@
       <div class="stat"><span class="lbl">Unique Gu</span><span class="val" id="t-unique">0</span></div>
       <span class="spacer"></span>
       <div class="topbar-actions">
+        <div class="tb-online" id="t-online-wrap" style="display:none" title="Cultivators currently online" aria-label="Players online">
+          <span class="tb-online-dot" aria-hidden="true"></span>
+          <b class="tb-online-num" id="t-online">0</b>
+          <span class="tb-online-lbl">online</span>
+        </div>
         <a class="tb-link tb-kofi" href="https://ko-fi.com/alexiss12341" target="_blank" rel="noopener noreferrer" title="Support me on Ko-fi" aria-label="Support me on Ko-fi">
           <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
             <path d="M4 4h12v6a6 6 0 0 1-6 6 6 6 0 0 1-6-6V4z" fill="currentColor"/>
@@ -52,6 +57,7 @@
             <button data-tab="battle" class="active" onclick="G.setTab('battle')" aria-label="Battle"><span class="nav-ico" aria-hidden="true">⚔</span><span class="nav-lbl">Battle</span></button>
             <button data-tab="floors" onclick="G.setTab('floors')" aria-label="Floors"><span class="nav-ico" aria-hidden="true">塔</span><span class="nav-lbl">Floors</span></button>
             <button data-tab="bounties" onclick="G.setTab('bounties')" aria-label="Bounties"><span class="nav-ico" aria-hidden="true">賞</span><span class="nav-lbl">Bounties</span></button>
+            <button data-tab="pvp" onclick="G.openArena()" aria-label="Arena"><span class="nav-ico" aria-hidden="true">擂</span><span class="nav-lbl">Arena</span></button>
             <button data-tab="quests" onclick="G.setTab('quests')" aria-label="Quests"><span class="nav-ico" aria-hidden="true">日</span><span class="nav-lbl">Quests</span><span class="navbadges"><span class="navbadge quest" id="quest-alert" title="Daily quest rewards ready to claim"></span></span></button>
           </div>
           <div class="nav-group" data-group="roster">

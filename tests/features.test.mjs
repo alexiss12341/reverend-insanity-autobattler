@@ -469,6 +469,29 @@ section('features: universal binder drop gradient');
   ok(w(50)[2] === undefined && w(100)[3] === undefined && w(150)[4] === undefined, 'a higher-rank universal never debuts before its band start');
 }
 
+section('features: per-clear drop cap (≤5 types — up to 4 path + 1 always-on universal)');
+{
+  const isBinder = (id) => id.startsWith('bind_');
+  let maxPath = 0, maxTotal = 0, everyClearOneUniversal = true, sawUncapped = false;
+  for (const f of [10, 25, 75, 101, 150, 250, 300, 450]) {
+    for (let i = 0; i < 400; i++) {
+      const { drops } = rollFloorRewards(f, i % 10 === 0); // mix in periodic boss clears
+      const ids = Object.keys(drops);
+      const path = ids.filter((id) => !isBinder(id));
+      const uni = ids.filter(isBinder);
+      maxPath = Math.max(maxPath, path.length);
+      maxTotal = Math.max(maxTotal, ids.length);
+      if (uni.length !== 1) everyClearOneUniversal = false;
+      // sanity: rich mid-band floors should actually hit the cap sometimes (so the cap is exercised)
+      if (f <= 150 && path.length >= 4) sawUncapped = true;
+    }
+  }
+  ok(maxPath <= 4, `path-resource types per clear never exceed 4 (saw max ${maxPath})`);
+  ok(maxTotal <= 5, `total resource types per clear never exceed 5 (saw max ${maxTotal})`);
+  ok(everyClearOneUniversal, 'exactly one universal binder drops on every clear');
+  ok(sawUncapped, 'rich floors actually reach the 4-path cap (cap is exercised, not vacuous)');
+}
+
 section('features: aperture capacity (aptitude)');
 ok(apertureCapacity(2.5) === 1 && apertureCapacity(3.8) === 1, 'aptitude >= 2.5 → 100% aperture (capped)');
 ok(Math.abs(apertureCapacity(1.0) - 0.4) < 1e-9, 'aptitude 1.0 → 40% aperture capacity');

@@ -49,6 +49,24 @@ const ARMOR_PEN_MULT = 0.5;    // armour pen is UNCAPPED now → its EFFECTIVE D
 // chance at 1% (near-immunity, never literal 0/100); Lucky Hit is the one roll left unclamped.
 const clampP = (p) => Math.max(0.01, Math.min(0.99, p));
 
+// ---- SEEDED RNG (deterministic replay) -------------------------------------------------------------
+// Every random roll in a fight reads from `rng`. resolveEncounter sets it at the START of each call from
+// opts.seed: a seed → a deterministic mulberry32 stream, so the SAME encounter replays bit-identically on
+// any V8 (server Deno + browser) — this is what lets a server-authoritative fight be re-animated client-
+// side from just a seed. No seed → Math.random, so the single-player game is byte-for-byte unchanged.
+// Battles run synchronously to completion (no awaits), so a single module-level generator is safe even
+// under concurrent server requests — two encounters never interleave.
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+let rng = () => Math.random(); // default DEFERS to live Math.random each call (respects test stubs + keeps single-player identical)
+
 // Defaults for any fx field a unit's effect bundle doesn't supply, so every combatant reads the full set.
 const EMPTY_FX = { lifesteal: 0, crit: 0, dodge: 0, thorns: 0, burn: 0, regen: 0, extra_turn: 0,
   hitChance: 0, critDamage: 1.5, critResist: 0, armorPen: 0, luckyHit: 0, potency: 0, statusResist: 0,
@@ -65,10 +83,10 @@ const tierOf = (s, fillFx) => ({ cost: s.essenceCost || 0, atk: s.atk, def: s.de
 // equipped Gu are channelled (slot order = priority). k=0 is the bare-handed attribute swing; k=N the
 // full kit. effectiveStats recomputes HP/aperture/resonance/every effect for each subset, so a dropped
 // Gu vanishes wholesale (incl. its HP & aperture contribution).
-function allyTiers(ch) {
+function allyTiers(ch, ctx) {
   const equipped = (ch.gu || []).filter(Boolean); // ordered priority list (skip empty slots)
   const tiers = [];
-  for (let k = 0; k <= equipped.length; k++) tiers.push(tierOf(effectiveStats(ch, new Set(equipped.slice(0, k))), false));
+  for (let k = 0; k <= equipped.length; k++) tiers.push(tierOf(effectiveStats(ch, new Set(equipped.slice(0, k)), ctx), false));
   return tiers;
 }
 // Initialise a combatant's live combat fields from its FULL (top) tier — units start the fight at full
@@ -97,12 +115,14 @@ function applyTopTier(u) {
 // combatant. No-op (leaves u.killer undefined) when there's no valid core/archetype. `comboCost` =
 // KILLER_COST_MULT × Σ the CORE Gu's rank-adjusted channel cost (the same guEssenceCostFor the engine
 // already uses), so the cost self-scales with core size/tier and the wielder's rank.
-function attachKiller(u, ch) {
+function attachKiller(u, ch, ctx) {
   // PROGRESSION GATE: allies wield killer moves only on rank 3+ AND after the player has cleared Floor
   // 100 (combos.js KILLER_MIN_RANK / KILLER_UNLOCK_FLOOR). Gated units leave u.killer undefined, so a
   // move saved before unlocking simply never fires.
   if (rankOf(ch.realm) + 1 < KILLER_MIN_RANK) return;
-  if (!S().clearedFloors[KILLER_UNLOCK_FLOOR]) return;
+  // server ctx supplies the Floor-100 unlock + Gu lookup from provided data; else read global state.
+  if (!(ctx ? !!ctx.killerUnlocked : !!S().clearedFloors[KILLER_UNLOCK_FLOOR])) return;
+  const look = (ctx && ctx.guLookup) || guOf;
   const raw = ch && ch.killer;
   if (!raw || !raw.archetype || !raw.core || !Array.isArray(raw.support)) return;
   // Count only support Gu STILL EQUIPPED — mirrors the UI (ui.js csKiller/killerSummary), so a move the
@@ -110,9 +130,9 @@ function attachKiller(u, ch) {
   // (Without this, one stale support uid makes validateKiller reject the whole move so it never fires.)
   const cfg = { archetype: raw.archetype, core: raw.core, support: raw.support.filter((uid) => (ch.gu || []).includes(uid)) };
   if (cfg.support.length < 2) return;
-  if (!validateKiller(cfg, ch.gu, guOf)) return;
-  const coreGu = guOf(cfg.core);
-  const supportGu = cfg.support.map(guOf).filter(Boolean);
+  if (!validateKiller(cfg, ch.gu, look)) return;
+  const coreGu = look(cfg.core);
+  const supportGu = cfg.support.map(look).filter(Boolean);
   const spec = assemble(cfg.archetype, coreGu, supportGu);
   if (!spec) return;
   const rank = rankOf(ch.realm) + 1;
@@ -120,12 +140,13 @@ function attachKiller(u, ch) {
   u.killer = spec;
   u.comboCost = Math.round(KILLER_COST_MULT * sum);
 }
-function allyCombatant(ch, pos) {
+function allyCombatant(ch, pos, ctx) {
   // `ch` + `actions` let the caller bank per-action Comprehension after the encounter.
   // `side`/`idx` give the UI a stable handle; `row`/`lane` place the unit on the 2×5 board.
+  // `ctx` (optional) makes the build read NO global state — used server-side to recompute a submitted team.
   const u = initFromFull({ ch, name: ch.name, ally: true, side: 'ally', idx: pos, row: rowOf(ch), lane: laneOf(ch),
-    gauge: 0, actions: 0, tiers: allyTiers(ch) });
-  attachKiller(u, ch); // KILLER MOVE: resolve the saved config into u.killer + u.comboCost (if valid)
+    gauge: 0, actions: 0, tiers: allyTiers(ch, ctx) });
+  attachKiller(u, ch, ctx); // KILLER MOVE: resolve the saved config into u.killer + u.comboCost (if valid)
   return u;
 }
 function enemyCombatant(u, pos) {
@@ -185,7 +206,7 @@ export function applyTeamAuras(allies) {
     let best = byLine[id][0];
     for (let i = 1; i < byLine[id].length; i++) {
       const c = auraBeats(byLine[id][i], best);
-      if (c > 0 || (c === 0 && Math.random() < 0.5)) best = byLine[id][i]; // strictly better, or coin-flip a tie
+      if (c > 0 || (c === 0 && rng() < 0.5)) best = byLine[id][i]; // strictly better, or coin-flip a tie
     }
     winners.push(best);
   }
@@ -246,7 +267,7 @@ export const cleanseMaxFor = (rarity) => 1 + Math.max(0, rarityTier(rarity) - 3)
 // allies (every battle status here is a debuff). One roll; removes whole status types in order. Each ally
 // that loses ≥1 debuff is pushed into `cleansed` (so the timeline can float a "cleansed" tag). Exported.
 export function cleanseTeam(actor, allies, cleansed) {
-  if (!actor.cleanseChance || Math.random() >= actor.cleanseChance) return 0;
+  if (!actor.cleanseChance || rng() >= actor.cleanseChance) return 0;
   let removed = 0;
   for (const a of allies) {
     if (removed >= actor.cleanseMax) break;
@@ -279,7 +300,7 @@ function targetList(side) {
   return living.filter((u) => u.row === 'front' || !frontLane[u.lane]);
 }
 
-const randOf = (arr) => arr[Math.floor(Math.random() * arr.length)];
+const randOf = (arr) => arr[Math.floor(rng() * arr.length)];
 
 // Choose whom `actor` attacks among `foeSide`.
 //  - COLUMN REACH: a unit can only strike foes within ±1 of its own lane; it reaches farther only
@@ -299,7 +320,7 @@ function chooseTarget(actor, foeSide) {
   const taunters = valid.filter(taunting);
   if (taunters.length) return randOf(taunters);
   const reach = new Set(valid.map((u) => u.lane));
-  const roll = 1 + Math.floor(Math.random() * 100);
+  const roll = 1 + Math.floor(rng() * 100);
   if (roll <= 60) {
     const living = foeSide.filter((u) => u.hp > 0 && reach.has(u.lane));
     const threat = living.reduce((b, u) => (u.atk > b.atk ? u : b), living[0] || valid[0]);
@@ -308,7 +329,7 @@ function chooseTarget(actor, foeSide) {
   }
   if (roll <= 90) return valid.reduce((b, u) => (u.hp < b.hp ? u : b), valid[0]); // secure a kill
   const weights = valid.map((u) => u.atk * (1 + (1 - u.hp / u.max)));            // weighted random
-  let r = Math.random() * weights.reduce((s, w) => s + w, 0);
+  let r = rng() * weights.reduce((s, w) => s + w, 0);
   for (let i = 0; i < valid.length; i++) if ((r -= weights[i]) <= 0) return valid[i];
   return valid[valid.length - 1];
 }
@@ -403,7 +424,7 @@ function inflictStatuses(u, tgt, log, touched) {
   const applied = [];
   for (const inf of (u.fx.inflicts || [])) {
     if (tgt.hp <= 0) break;
-    if (Math.random() < clampP(inf.base + (u.fx.potency || 0) - (tgt.fx.statusResist || 0))) {
+    if (rng() < clampP(inf.base + (u.fx.potency || 0) - (tgt.fx.statusResist || 0))) {
       applyStatus(tgt, inf.type, u, inf.dur, inf.mag); touched.add(tgt); applied.push(inf.type);
       log(`${tgt.name} is afflicted with ${STATUS[inf.type].label}.`);
     }
@@ -452,21 +473,21 @@ function dealHit(u, tgt, mult, opts, log, touched, foes) {
   let dmg = 0, crit = false, dodged = false, lucky = false, applied = [];
   // (1) HIT — 85% base + attacker Hit-bonus − target Evasion, clamped to [1%,99%].
   const hitP = clampP(BASE_HIT + (u.fx.hitChance || 0) - ((tgt.fx.dodge || 0) + buffMag(tgt, 'evasion')));
-  if (Math.random() > hitP) { dodged = true; log(`${tgt.name} evades ${u.name}.`); return { tgt, dmg, crit, lucky, dodged, applied }; }
+  if (rng() > hitP) { dodged = true; log(`${tgt.name} evades ${u.name}.`); return { tgt, dmg, crit, lucky, dodged, applied }; }
   // HIT CONFIRMED → optional pre-damage hook. Anathema uses this to afflict the target FIRST (rolled vs
   // Status Resistance), so the perStatus bonus below counts the freshly-applied debuff.
   if (opts.onHit) opts.onHit(tgt);
   // base damage; Armor Penetration (+ any op bonus) ignores a % of the target's (Sunder-reduced) mitigated DEF.
   const armorPen = ((u.fx.armorPen || 0) + (opts.armorPenBonus || 0)) * ARMOR_PEN_MULT; // UNCAPPED stat, halved effect
   const def = effDef(tgt) * 0.6 * Math.max(0, 1 - armorPen);                              // ≥200% stat → DEF fully ignored
-  const variance = 1 + (Math.random() * 2 - 1) * DMG_VARIANCE; // random ±10% swing — no two hits are identical
+  const variance = 1 + (rng() * 2 - 1) * DMG_VARIANCE; // random ±10% swing — no two hits are identical
   dmg = Math.max(1, Math.round((effAtk(u) * (mult || 1) - def) * variance));
   if (opts.exec) dmg = Math.round(dmg * (1 + opts.exec * Math.max(0, 1 - tgt.hp / tgt.max))); // Execution: bonus vs missing HP
   if (opts.perStatus) dmg = Math.round(dmg * (1 + opts.perStatus * debuffCount(tgt)));        // Anathema: bonus per debuff on the target
   // (2) LUCKY HIT — forced crit that IGNORES Crit Resistance and hits for ×1.5×CritDamage (unclamped).
-  if (Math.random() < (u.fx.luckyHit || 0)) { lucky = crit = true; dmg = Math.round(dmg * 1.5 * (u.fx.critDamage || 1.5)); }
+  if (rng() < (u.fx.luckyHit || 0)) { lucky = crit = true; dmg = Math.round(dmg * 1.5 * (u.fx.critDamage || 1.5)); }
   else if ((u.fx.crit || 0) > 0) { // (3) CRIT — CritChance − target Crit Resistance, clamped → ×CritDamage.
-    if (Math.random() < clampP((u.fx.crit || 0) - (tgt.fx.critResist || 0))) { crit = true; dmg = Math.round(dmg * (u.fx.critDamage || 1.5)); }
+    if (rng() < clampP((u.fx.crit || 0) - (tgt.fx.critResist || 0))) { crit = true; dmg = Math.round(dmg * (u.fx.critDamage || 1.5)); }
   }
   if (stMag(tgt, 'frail')) dmg = Math.max(1, Math.round(dmg * frailMult(tgt))); // Frail amplifies hits
   damageUnit(tgt, dmg); touched.add(tgt); // shield soaks first, then HP
@@ -496,7 +517,7 @@ function dealHit(u, tgt, mult, opts, log, touched, foes) {
   if (opts.inflict !== false) applied = inflictStatuses(u, tgt, log, touched); // Potency vs Status Resistance per rider
   log(`${u.name} hits ${tgt.name} for ${dmg}${lucky ? ' (lucky crit!)' : crit ? ' (crit!)' : ''}.`);
   if (tgt.hp <= 0) log(`${tgt.name} is slain.`);
-  if (tgt.hp <= 0 && (u.fx.dotSpread || 0) > 0 && tgt.statuses && foes && Math.random() < u.fx.dotSpread) {
+  if (tgt.hp <= 0 && (u.fx.dotSpread || 0) > 0 && tgt.statuses && foes && rng() < u.fx.dotSpread) {
     let spread = false; // Afflictor: the dying victim's DoTs leap to its surviving allies
     for (const type of DOT_TYPES) {
       const arr = tgt.statuses[type]; if (!arr || !arr.length) continue;
@@ -627,7 +648,7 @@ function applyKillerStatus(u, tgt, statuses, op, log, touched) {
     // INFLICT vs RESIST: roll the rider's authored base chance, boosted by the caster's Potency and
     // reduced by the target's Status Resistance — the same calculus a basic attack uses (inflictStatuses).
     const base = st.base != null ? st.base : 1;
-    if (Math.random() >= clampP(base + (u.fx.potency || 0) - (tgt.fx.statusResist || 0))) continue; // resisted
+    if (rng() >= clampP(base + (u.fx.potency || 0) - (tgt.fx.statusResist || 0))) continue; // resisted
     const reps = (op.stacks && def.dot) ? op.stacks : 1;
     for (let r = 0; r < reps; r++) applyStatus(tgt, st.type, u, st.dur, st.mag);
     touched.add(tgt); applied.push(st.type);
@@ -672,6 +693,31 @@ function serializeAct(actor, ev) {
   return a;
 }
 
+// Build a STORABLE team snapshot (the enemyUnit shape) from character objects + a server ctx — the
+// authoritative defense team the register Edge Function persists, later replayed as `encounter.waves`
+// (via enemyCombatant) when someone challenges it. Runs the SAME allyCombatant + applyTeamAuras build, so
+// stat auras bake into each unit's tier ladder, then serializes that ladder + killer + display fields.
+// LIMITATION (v1): support-aura RUNTIME behaviors (Warden taunt, Mender team-heal/cleanse) are not yet
+// carried onto the foe side, so a DEFENDING team keeps its aura STAT buffs but not those triggered effects.
+export function buildSnapshot(chars, ctx) {
+  const look = (ctx && ctx.guLookup) || guOf;
+  const built = chars.map((c, i) => allyCombatant(c, i, ctx));
+  applyTeamAuras(built);
+  return built.map((u, i) => {
+    const ch = chars[i];
+    const guDefs = (ch.gu || []).map(look).filter(Boolean);
+    return {
+      name: ch.name, isBoss: false, kind: 'cultivator',
+      rarity: ch.rarity, line: ch.line || null, realm: ch.realm, imprint: ch.imprint || 0,
+      daoPath: affinityPaths(ch)[0] || (guDefs[0] && guDefs[0].daoPath) || null,
+      row: u.row, lane: u.lane,
+      gu: guDefs.map((g) => g.name),
+      guInfo: guDefs.map((g) => ({ name: g.name, eff: effectText(g) })),
+      tiers: u.tiers, killer: u.killer, comboCost: u.comboCost,
+    };
+  });
+}
+
 // Resolve one encounter. `onLog` optional callback(message). `opts.record` builds a step-by-step
 // timeline for animated playback (skip it for the silent idle loop).
 // Returns { win, rounds, allies, timeline } where `allies` (in active-team order) carry final HP,
@@ -680,7 +726,13 @@ function serializeAct(actor, ev) {
 export function resolveEncounter(encounter, onLog, opts = {}) {
   const log = onLog || (() => {});
   const rec = !!opts.record;
-  const allies = activeTeam().map((c, i) => allyCombatant(c, i));
+  rng = (opts.seed != null) ? mulberry32(opts.seed >>> 0) : () => Math.random(); // seeded → deterministic replay; else live Math.random
+  // ally side: normally the live activeTeam(); server-side an arena attacker is passed in as opts.allyChars
+  // (reconstructed character objects) + opts.ctx (state-free overrides), built through the SAME allyCombatant
+  // path so the recomputed team is authoritative. applyTeamAuras still runs (the chars carry line/rarity/realm).
+  const allies = opts.allyChars
+    ? opts.allyChars.map((c, i) => allyCombatant(c, i, opts.ctx))
+    : activeTeam().map((c, i) => allyCombatant(c, i));
   if (!allies.length) return { win: false, rounds: 0, allies, timeline: null, simTime: 0 };
   applyTeamAuras(allies); // support-line team auras (Commander ATK/SPD · Warden DEF/thorns+taunt · Mender regen)
 
@@ -762,7 +814,7 @@ export function resolveEncounter(encounter, onLog, opts = {}) {
             teamHeal(u, allies, healed, ev.heals); cleanseTeam(u, allies, ev.cleansed); ev.touched = [...healed]; } }
         actions++;
         if (rec) step.acts.push(serializeAct(u, ev));
-        if (!stunned && u.hp > 0 && Math.random() < (u.fx.extra_turn || 0) && sideAlive(enemySide)) {
+        if (!stunned && u.hp > 0 && rng() < (u.fx.extra_turn || 0) && sideAlive(enemySide)) {
           const pre2 = new Set();
           applyChannel(u, pre2);
           const ev2 = takeAction(u, enemySide, log, pre2); actions++;

@@ -11,3 +11,6 @@ fonts/_src/
 
 # Claude Code local settings (machine-specific)
 .claude/settings.local.json
+
+# Supabase CLI local cache (project ref/version cache — not source)
+supabase/.temp/

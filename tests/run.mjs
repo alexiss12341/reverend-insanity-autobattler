@@ -3,6 +3,7 @@
 import { T } from './assert.mjs';
 
 await import('./core.test.mjs');
+await import('./determinism.test.mjs');
 await import('./formation.test.mjs');
 await import('./immortal.test.mjs');
 await import('./features.test.mjs');

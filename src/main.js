@@ -1,10 +1,14 @@
 // Main orchestrator: boots the title screen, runs the idle loop, executes floor
 // encounters, distributes rewards, and exposes the global `G` event API used by the UI.
-import { state, S, newGame, load, save, deleteSave, listSaves, SLOT_KEYS, activeTeam, rowOf, laneOf, tileOccupant, rowCount, ROW_CAP, firstFreeTile, normalizeFormation } from './state.js';
+import { state, S, newGame, load, save, deleteSave, listSaves, SLOT_KEYS, migrateSave, activeTeam, rowOf, laneOf, tileOccupant, rowCount, ROW_CAP, LANES, firstFreeTile, normalizeFormation } from './state.js';
 import { effectiveStats } from './systems/cultivation.js';
 import { resolveEncounter, fightWallMs } from './systems/battle.js';
+import { arenaRegister as registerArena, arenaList as listArena, arenaChallenge as challengeArena,
+  playerId as arenaPlayerId, playerName as arenaPlayerName, setPlayerName as arenaSetPlayerName,
+  getMyPoints as arenaGetMyPoints, setMyPoints as arenaSetMyPoints, setCloudId as arenaSetCloudId } from './arenaStore.js';
+import { spendArenaAttempt, refundArenaAttempt, arenaAttemptsLeft, saveLoadout, applyLoadout, renameLoadout, arenaUnlocked, ARENA_UNLOCK_FLOOR } from './systems/arenaMeta.js';
 import { attemptBreakthrough, respecAttributes, respecCost, RESPEC_ESSENCE_COST } from './systems/cultivation.js';
-import { rollFloorRewards, firstClearEssence, rollFarmEssence, applyDrops, buyResource, rollImmortalStones, immortalGuUpkeep, addImmortalStones } from './systems/economy.js';
+import { rollFloorRewards, firstClearEssence, rollFarmEssence, applyDrops, buyResource, resourceCost, rollImmortalStones, immortalGuUpkeep, addImmortalStones } from './systems/economy.js';
 import { pull, dismiss, dismissMany, dismissRefund, imprint, imprintCandidates, IMPRINT_CAP, autoImprintAll, duplicateSpares } from './systems/gacha.js';
 import { buyBoon, reincarnate, soulsAward, canReincarnate } from './systems/prestige.js';
 import { bumpQuest, claimQuest, claimBonus, DAILY_QUESTS } from './systems/quests.js';
@@ -125,6 +129,7 @@ function endAutoChallenge(reason) {
   UI.toast(msg);
 }
 
+let pendingArena = null; // a one-shot arena challenge: { encounter, seed, server } (mirrors pendingBounty)
 async function runBattle() {
   idleTimer = null;
   if (!S() || battleBusy) return;
@@ -132,10 +137,12 @@ async function runBattle() {
   const manual = challengeRequested;                              // a one-shot "Attempt Floor"
   const bountySlot = pendingBounty;                               // a one-shot bounty hunt (slot index, or null)
   const isBounty = bountySlot != null;
-  const challenging = manual || auto;                             // frontier assault (a bounty is its own mode)
-  if (!isBounty && !challenging && !S().settings.idle) return;    // idle off and nothing queued → stop
+  const arenaJob = pendingArena;                                  // a one-shot arena challenge ({encounter,seed,server}), or null
+  const isArena = arenaJob != null;
+  const challenging = manual || auto;                             // frontier assault (a bounty/arena fight is its own mode)
+  if (!isBounty && !isArena && !challenging && !S().settings.idle) return; // idle off and nothing queued → stop
   if (!activeTeam().length) {                                     // no fighters
-    challengeRequested = false; pendingBounty = null;
+    challengeRequested = false; pendingBounty = null; pendingArena = null;
     if (auto) endAutoChallenge('stopped');
     if (S().settings.idle) idleTimer = setTimeout(runBattle, 1000);
     return;
@@ -143,8 +150,9 @@ async function runBattle() {
   battleBusy = true;
   challengeRequested = false;
   pendingBounty = null;                                           // consume the queued hunt
+  pendingArena = null;                                            // consume the queued arena challenge
   const floor = challenging ? S().frontier : S().farmFloor;       // (unused for a bounty)
-  const enc = isBounty ? bountyEncounter(bountySlot) : generateEncounter(floor);
+  const enc = isArena ? arenaJob.encounter : isBounty ? bountyEncounter(bountySlot) : generateEncounter(floor);
   const bounty = isBounty ? enc.bounty : null;
   const dispFloor = isBounty ? bounty.floor : floor;              // floor label for the arena header / audio
   const animate = activeTab === 'battle';                         // only the visible screen animates
@@ -152,12 +160,17 @@ async function runBattle() {
   // record a timeline whenever we animate; a single manual attempt + every bounty hunt get the verbose feed.
   const verbose = animate && ((manual && !auto) || isBounty);
   const log = [];
-  const res = resolveEncounter(enc, verbose ? (m) => log.push(m) : undefined, animate ? { record: true } : undefined);
+  const recOpts = animate ? { record: true } : undefined;
+  if (isArena && recOpts) recOpts.seed = arenaJob.seed;          // replay the server's exact fight from its seed
+  const res = resolveEncounter(enc, verbose ? (m) => log.push(m) : undefined, recOpts);
 
   if (animate) {
     if (isBounty) {
       if (verbose) UI.clearLog();
       UI.logLine(`— Hunting ${bounty.name} · ${bounty.rarity} Rank ${bounty.rank} ${bounty.path} —`, 'rare');
+    } else if (isArena) {
+      UI.clearLog();
+      UI.logLine(`— Arena · challenging ${arenaJob.server.defender.name} —`, 'rare');
     } else if (challenging) {
       if (verbose) UI.clearLog();                                 // a lone manual attempt starts a fresh feed
       UI.logLine(`— Assaulting Floor ${floor}${enc.isBoss ? ' BOSS' : ''} (${enc.waves.length} wave${enc.waves.length > 1 ? 's' : ''}) —`, auto ? '' : 'rare');
@@ -173,15 +186,24 @@ async function runBattle() {
   if (abortBattle) {
     abortBattle = false;
     battleBusy = false;
-    if (!isHidden() && (autoChallenge || challengeRequested || pendingBounty != null || S().settings.idle)) idleTimer = setTimeout(runBattle, 0);
+    if (!isHidden() && (autoChallenge || challengeRequested || pendingBounty != null || pendingArena != null || S().settings.idle)) idleTimer = setTimeout(runBattle, 0);
     return;
   }
-  commitComprehension(res.allies);
+  if (!isArena) commitComprehension(res.allies);                 // an arena spar doesn't train Gu (no free comprehension farming)
 
-  S().stats.battles += 1;
-  if (animate && (challenging || isBounty)) (res.win ? Audio.victory : Audio.defeat)(); // a deliberate fight gets a win/loss sting
+  if (!isArena) S().stats.battles += 1;
+  if (animate && isArena) (arenaJob.server.winner === 'attacker' ? Audio.victory : Audio.defeat)();
+  else if (animate && (challenging || isBounty)) (res.win ? Audio.victory : Audio.defeat)(); // a deliberate fight gets a win/loss sting
 
-  if (isBounty) {                                                 // BOUNTY HUNT: spend an attempt, grant bounty rewards (no floor/frontier logic)
+  if (isArena) {                                                  // ARENA: no rewards/progression — the Elo update already happened server-side; just show it
+    const sv = arenaJob.server;
+    const won = sv.winner === 'attacker';
+    const d = sv.attacker.delta, sign = d >= 0 ? '+' : '';
+    if (activeTab === 'battle') UI.logLine(won
+      ? `★ ARENA — you defeated ${sv.defender.name}!  ${sign}${d} → ${sv.attacker.points}`
+      : `ARENA — ${sv.defender.name} held the line.  ${sign}${d} → ${sv.attacker.points}`, won ? 'win' : 'lose');
+    UI.toast(`${won ? 'Victory' : 'Defeat'} vs ${sv.defender.name}  ·  rating ${sign}${d} → ${sv.attacker.points}`, 3400, won ? 'win' : 'lose');
+  } else if (isBounty) {                                          // BOUNTY HUNT: spend an attempt, grant bounty rewards (no floor/frontier logic)
     spendAttempt();                                               // the hunt resolved → consume one attempt (win or lose)
     processImmortals(res.win);
     if (res.win) {
@@ -228,7 +250,7 @@ async function runBattle() {
   // Don't reschedule while the browser tab is hidden — its timers are throttled/frozen, so a live loop
   // there just crawls. We pause instead and credit an offline-style estimate when the tab returns (see
   // the visibilitychange handler). The in-flight run that's settling now is the last one until we're back.
-  if (!isHidden() && (autoChallenge || S().settings.idle || challengeRequested || pendingBounty != null)) idleTimer = setTimeout(runBattle, animate ? 350 : 0); // loop
+  if (!isHidden() && (autoChallenge || S().settings.idle || challengeRequested || pendingBounty != null || pendingArena != null)) idleTimer = setTimeout(runBattle, animate ? 350 : 0); // loop
   else if (activeTab === 'battle') { Audio.scene(false); UI.render('battle'); } // settled on the battle tab: drop the music back to the calm arena mood + refresh
 }
 
@@ -421,28 +443,165 @@ function showOffline(off) {
   UI.refreshTop();
 }
 
-function renderTitle() {
-  const host = document.getElementById('slots'); host.innerHTML = '';
-  listSaves().forEach((sv, i) => {
+// ---------- cloud account (Supabase Auth + cloud saves; see systems/cloud.js) ----------
+let Cloud = null;        // dynamically-imported cloud module (null if the SDK/CDN is unavailable)
+let cloudAcct = null;    // the current user: an anonymous GUEST or a signed-in Discord/Google account
+let cloudState = 'connecting'; // 'connecting' | 'ready' | 'failed'
+let _claimSel = new Set();     // guest-claim picker: selected guest-save indices (capped at 2)
+const escH = (s) => String(s == null ? '' : s).replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+async function initCloudAccount() {
+  try {
+    Cloud = await import('./systems/cloud.js');
+    cloudAcct = await Cloud.initCloud((u) => { cloudAcct = u; onCloudAuthChange(); }); // auto-guest if no session
+    cloudState = 'ready';
+    onCloudAuthChange();
+    startPresence();
+  } catch (e) { console.warn('Cloud account unavailable:', e); Cloud = null; cloudState = 'failed'; renderTitle(); }
+}
+
+// Live "players online" counter (Realtime Presence) → the topbar indicator left of the Ko-fi plug.
+function startPresence() {
+  if (!Cloud || !Cloud.trackPresence) return;
+  try { Cloud.trackPresence(updateOnlineCount); } catch (e) { console.warn('presence unavailable:', e); }
+}
+function updateOnlineCount(n) {
+  const el = document.getElementById('t-online'); if (!el) return;
+  el.textContent = n;
+  const wrap = document.getElementById('t-online-wrap');
+  if (wrap) { wrap.style.display = ''; wrap.title = `${n} cultivator${n === 1 ? '' : 's'} currently online`; }
+}
+function onCloudAuthChange() {
+  if (Cloud && cloudAcct) {
+    arenaSetCloudId(Cloud.cloudUserId()); // rekey the arena identity to the current cloud user (guest or account)
+    if (Cloud.isSignedIn()) { // a guest just upgraded into a real account → carry their rating + offer save claim
+      let blob = null; try { blob = JSON.parse(localStorage.getItem('guest_claim') || 'null'); } catch {}
+      if (blob && blob.from && blob.from !== Cloud.cloudUserId()) {
+        Cloud.claimArena(blob.from).catch((e) => console.warn('arena claim failed:', e)); // auto-carry the guest's Elo
+        if (blob.saves && blob.saves.length) promptGuestClaim(); else localStorage.removeItem('guest_claim');
+      }
+    }
+  }
+  const t = document.getElementById('title');
+  if (t && !t.classList.contains('hidden')) renderTitle();
+}
+function renderAuthBar() {
+  let bar = document.getElementById('auth-bar');
+  if (!bar) {
+    const slots = document.getElementById('slots'); if (!slots) return;
+    bar = document.createElement('div'); bar.id = 'auth-bar'; bar.className = 'auth-bar';
+    slots.parentNode.insertBefore(bar, slots);
+  }
+  if (cloudState === 'failed') { bar.innerHTML = '<span class="auth-cta muted">⚠ Couldn\'t reach the cloud — reload to play.</span>'; return; }
+  if (!Cloud || !cloudAcct) { bar.innerHTML = '<span class="auth-cta muted">Connecting…</span>'; return; }
+  if (Cloud.isSignedIn()) {
+    bar.innerHTML = `<span class="auth-who">☁ Signed in as <b>${escH(Cloud.cloudName())}</b></span>
+      <button onclick="G.cloudSignOut()">Sign out</button>`;
+  } else { // anonymous guest
+    bar.innerHTML = `<span class="auth-cta">Playing as <b>guest</b> · saves are in the cloud. Sign in to secure them across devices:</span>
+      <button class="primary" onclick="G.cloudSignIn('discord')">Discord</button>
+      <button class="primary" onclick="G.cloudSignIn('google')">Google</button>`;
+  }
+}
+
+// ---- cloud SAVES: up to 2 slots per account, cached in localStorage but synced to the `saves` table ----
+const CLOUD_SLOT_KEYS = ['xianxia_cloud_0', 'xianxia_cloud_1']; // local cache keys (the 3 device slots stay untouched)
+let activeCloudSlot = null;  // which cloud slot the current game syncs to (null = a local game)
+let _migSel = new Set();     // first-sign-in migration: selected local slot indices (capped at 2)
+const migFlagKey = () => 'cloud_migrated_' + ((Cloud && Cloud.cloudUserId && Cloud.cloudUserId()) || 'x');
+
+// Push the live game to its cloud slot (fire-and-forget). No-op for a local game / signed out.
+function pushCloud() {
+  if (!Cloud || !cloudAcct || activeCloudSlot == null || !S()) return;
+  Cloud.uploadSave(activeCloudSlot, S()).catch((e) => console.warn('cloud save failed:', e));
+}
+
+// Offline fallback: read the localStorage cache of cloud slots (written by save() during play) so a
+// returning player can still continue a cached game when the cloud is unreachable.
+function readCloudCache() {
+  const out = [];
+  for (let slot = 0; slot < CLOUD_SLOT_KEYS.length; slot++) {
+    const data = load(CLOUD_SLOT_KEYS[slot]); // handles the save wrapper + migrateSave
+    if (data) out.push({ slot, data, updated_at: data.lastSave ? new Date(data.lastSave).toISOString() : null });
+  }
+  return out;
+}
+
+// Render the signed-in player's cloud saves (≤2). First sign-in with local saves → offer to carry over.
+async function renderCloudSlots() {
+  const host = document.getElementById('slots'); if (!host) return;
+  host.innerHTML = '<div class="slot"><div class="meta">Loading your saves…</div></div>';
+  let saves;
+  try { saves = await Cloud.listCloudSaves(); }
+  catch (e) {
+    saves = readCloudCache(); // offline → fall back to the local cache so a cached cloud game still plays
+    if (!saves.length) { host.innerHTML = `<div class="slot"><div class="meta">Couldn't load your saves — <span style="color:var(--stone);cursor:pointer" onclick="location.reload()">retry</span></div></div>`; return; }
+  }
+  if (!saves.length && listSaves().some(Boolean) && !localStorage.getItem(migFlagKey())) { promptCloudMigration(); return; }
+  host.innerHTML = '';
+  for (let slot = 0; slot < Cloud.CLOUD_MAX_SAVES; slot++) {
+    const rec = saves.find((s) => s.slot === slot);
     const div = document.createElement('div'); div.className = 'slot';
-    if (sv) {
-      div.innerHTML = `<div><div class="nm">Save ${i + 1} — Frontier Floor ${sv.frontier}</div>
-        <div class="meta">${sv.roster.length} cultivators · ${Math.floor(sv.stones).toLocaleString()} 石 · ${Math.floor(sv.essence)} ✦${sv.immortalStones > 0 ? ` · ${Math.floor(sv.immortalStones).toLocaleString()} 仙石` : ''} · ${Object.keys(sv.uniqueClaimed || {}).length} unique Gu</div>
-        <div class="meta">last played ${new Date(sv.lastSave).toLocaleString()}</div></div>
-        <div class="acts"><button class="primary" onclick="G.continueGame(${i})">Continue</button>
-        <button class="danger" onclick="G.deleteSlot(${i})">Delete</button></div>`;
+    if (rec && rec.data) {
+      const sv = rec.data;
+      div.innerHTML = `<div><div class="nm">☁ Cloud ${slot + 1} — Frontier Floor ${sv.frontier}</div>
+        <div class="meta">${(sv.roster || []).length} cultivators · ${Math.floor(sv.stones || 0).toLocaleString()} 石 · ${Math.floor(sv.essence || 0)} ✦ · ${Object.keys(sv.uniqueClaimed || {}).length} unique Gu</div>
+        <div class="meta">last synced ${new Date(rec.updated_at).toLocaleString()}</div></div>
+        <div class="acts"><button class="primary" onclick="G.continueCloud(${slot})">Continue</button>
+        <button class="danger" onclick="G.deleteCloudSlot(${slot})">Delete</button></div>`;
     } else {
-      div.innerHTML = `<div><div class="nm">Save ${i + 1}</div><div class="meta">empty slot</div></div>
-        <div class="acts"><button class="primary" onclick="G.startNew(${i})">New Game</button></div>`;
+      const hasLocal = listSaves().some(Boolean); // offer to move a local save into this empty cloud slot
+      div.innerHTML = `<div><div class="nm">☁ Cloud ${slot + 1}</div><div class="meta">empty slot</div></div>
+        <div class="acts">${hasLocal ? `<button onclick="G.cloudImportLocal(${slot})" title="Move one of your local saves into this cloud slot">⤓ Move local save</button>` : ''}<button class="primary" onclick="G.startNew(${slot}, true)">New Game</button></div>`;
     }
     host.appendChild(div);
-  });
+  }
+}
+
+// First sign-in: pick up to 2 local saves to upload to the account (locals are left untouched).
+function promptCloudMigration() {
+  _migSel = new Set();
+  const cards = listSaves().map((sv, i) => sv ? `<label class="mig-row">
+      <input type="checkbox" onchange="G.cloudMigrateToggle(${i}, this)">
+      <span><b>Save ${i + 1}</b> — Frontier Floor ${sv.frontier} · ${(sv.roster || []).length} cultivators · ${Math.floor(sv.stones || 0).toLocaleString()} 石</span>
+    </label>` : '').join('');
+  UI.showModal(`<h3>Welcome — move your saves to the cloud</h3>
+    <div class="body">Pick up to <b>2</b> local saves to move to your account. Chosen saves move to the cloud and <b>won't stay on this device</b>; any you don't pick stay local.
+    <div class="mig-list" style="margin-top:14px">${cards || '<div class="muted">No local saves to move.</div>'}</div></div>
+    <div class="right"><button onclick="G.cloudMigrateSkip()">Skip — start fresh</button>
+    <button class="primary" onclick="G.cloudMigrateConfirm()">Move to cloud →</button></div>`, 'wide');
+}
+
+// After a GUEST signs into a real account, offer to bring the stashed guest saves into the new account.
+function promptGuestClaim() {
+  let claim;
+  try { claim = JSON.parse(localStorage.getItem('guest_claim') || 'null'); } catch { claim = null; }
+  if (!claim || !claim.saves || !claim.saves.length || claim.from === (Cloud.cloudUserId && Cloud.cloudUserId())) { localStorage.removeItem('guest_claim'); return; }
+  _claimSel = new Set();
+  const cards = claim.saves.map((rec, idx) => {
+    const sv = (rec && rec.data) || {};
+    return `<label class="mig-row"><input type="checkbox" onchange="G.guestClaimToggle(${idx}, this)">
+      <span><b>Guest save</b> — Frontier Floor ${sv.frontier || 1} · ${(sv.roster || []).length} cultivators · ${Math.floor(sv.stones || 0).toLocaleString()} 石</span></label>`;
+  }).join('');
+  UI.showModal(`<h3>Bring your guest progress in?</h3>
+    <div class="body">You were playing as a guest. Pick up to <b>2</b> of those saves to move into your account.
+    <div class="mig-list" style="margin-top:14px">${cards}</div></div>
+    <div class="right"><button onclick="G.guestClaimSkip()">Don't import</button>
+    <button class="primary" onclick="G.guestClaimConfirm()">Bring to my account →</button></div>`, 'wide');
+}
+
+function renderTitle() {
+  renderAuthBar();
+  const host = document.getElementById('slots'); if (!host) return;
+  if (cloudState === 'failed') { host.innerHTML = `<div class="slot"><div class="meta">Couldn't reach the cloud — <span style="color:var(--stone);cursor:pointer" onclick="location.reload()">reload to play</span>.</div></div>`; return; }
+  if (!Cloud || !cloudAcct) { host.innerHTML = '<div class="slot"><div class="meta">Connecting to the cloud…</div></div>'; return; }
+  renderCloudSlots(); // guest or signed-in — everyone plays from cloud saves now
 }
 
 function toTitle() {
   stopIdle();
   autoChallenge = false; autoChallengeHighest = 0; challengeRequested = false; abortBattle = false; UI.setAutoChallenge(false);
   save();
+  pushCloud(); activeCloudSlot = null; // sync the latest state to the cloud before leaving (no-op for local games)
   document.getElementById('game').classList.add('hidden');
   document.getElementById('title').classList.remove('hidden');
   renderTitle();
@@ -593,8 +752,8 @@ function scrubKiller(c) {
 const G = {
   // New game is a four-step modal chain (name → Dao path → first Gu → archetype), carried by `pendingNew`
   // so user text never has to be escaped into inline onclick handlers.
-  startNew(i) {
-    pendingNew = { slot: i };
+  startNew(i, cloud) {
+    pendingNew = { slot: i, cloud: !!cloud };
     UI.showModal(`<h3>Begin Cultivation</h3>
       <div class="body">Name your cultivator — you walk the path of Fang Yuan:<br>
       <input id="newName" type="text" maxlength="24" value="Fang Yuan"
@@ -620,13 +779,111 @@ const G = {
   // Step 4: chosen archetype LINE finalizes creation (path affinity + starter Gu + archetype line).
   starterArchetype(lineId) {
     if (!pendingNew) return;
-    const { slot, name, path, guId } = pendingNew;
+    const { slot, name, path, guId, cloud } = pendingNew;
     pendingNew = null;
     UI.closeModal();
-    startGame(newGame(SLOT_KEYS[slot], name, { path, guId, line: lineId }), true);
+    const key = cloud ? CLOUD_SLOT_KEYS[slot] : SLOT_KEYS[slot];
+    if (cloud) activeCloudSlot = slot;
+    startGame(newGame(key, name, { path, guId, line: lineId }), true);
+    if (cloud) pushCloud();
   },
   continueGame(i) { startGame(load(SLOT_KEYS[i]), false); },
   deleteSlot(i) { deleteSave(SLOT_KEYS[i]); renderTitle(); },
+  // ---- cloud account (Supabase Auth) ----
+  cloudSignIn(provider) {
+    if (!Cloud) return UI.toast('Cloud sign-in is unavailable right now — try again in a moment.');
+    Cloud.signIn(provider).catch((e) => UI.toast('Sign-in failed: ' + (e.message || e)));
+  },
+  async cloudSignOut() {
+    if (!Cloud) return;
+    try { await Cloud.signOut(); } catch {}
+    cloudAcct = null; activeCloudSlot = null; renderTitle();
+  },
+  // ---- cloud saves (continue / new / delete / first-sign-in migration) ----
+  async continueCloud(slot) {
+    if (!Cloud || !cloudAcct) return;
+    try {
+      const rec = (await Cloud.listCloudSaves()).find((s) => s.slot === slot);
+      if (!rec || !rec.data) return UI.toast('That cloud save is empty.');
+      const data = migrateSave(rec.data);
+      data.slot = CLOUD_SLOT_KEYS[slot]; // local cache key — keeps the 3 device slots untouched
+      activeCloudSlot = slot;
+      startGame(data, false);
+      pushCloud();
+    } catch (e) { UI.toast('Could not load cloud save: ' + (e.message || e)); }
+  },
+  async deleteCloudSlot(slot) {
+    if (!Cloud || !cloudAcct) return;
+    if (!confirm('Delete this cloud save? This cannot be undone.')) return;
+    try { await Cloud.deleteCloudSave(slot); UI.toast('Cloud save deleted.'); renderTitle(); }
+    catch (e) { UI.toast('Delete failed: ' + (e.message || e)); }
+  },
+  cloudMigrateToggle(i, el) {
+    if (el.checked) {
+      if (_migSel.size >= 2) { el.checked = false; return UI.toast('You can carry over at most 2 saves.'); }
+      _migSel.add(i);
+    } else _migSel.delete(i);
+  },
+  async cloudMigrateConfirm() {
+    const sel = [..._migSel].slice(0, 2);
+    const locals = listSaves();
+    try {
+      // MOVE (not copy): upload each chosen save, then remove its local copy so it lives only in the cloud.
+      // The local delete runs only AFTER a successful upload, so a failed upload never loses your save.
+      for (let cs = 0; cs < sel.length; cs++) {
+        const localIdx = sel[cs], d = locals[localIdx];
+        if (d) { await Cloud.uploadSave(cs, d); deleteSave(SLOT_KEYS[localIdx]); }
+      }
+      localStorage.setItem(migFlagKey(), '1');
+      UI.closeModal();
+      UI.toast(sel.length ? `Moved ${sel.length} save${sel.length === 1 ? '' : 's'} to the cloud.` : 'Starting fresh.', 2600, 'win');
+      renderCloudSlots();
+    } catch (e) { UI.toast('Upload failed: ' + (e.message || e)); }
+  },
+  cloudMigrateSkip() { localStorage.setItem(migFlagKey(), '1'); UI.closeModal(); renderCloudSlots(); },
+  // ---- guest → account claim (move stashed guest saves into the real account after OAuth sign-in) ----
+  guestClaimToggle(i, el) {
+    if (el.checked) { if (_claimSel.size >= 2) { el.checked = false; return UI.toast('At most 2 saves.'); } _claimSel.add(i); } else _claimSel.delete(i);
+  },
+  async guestClaimConfirm() {
+    let claim; try { claim = JSON.parse(localStorage.getItem('guest_claim') || 'null'); } catch { claim = null; }
+    if (!claim || !claim.saves) return G.guestClaimSkip();
+    try {
+      const used = new Set((await Cloud.listCloudSaves()).map((s) => s.slot)); // fill only EMPTY account slots (never overwrite)
+      const free = [0, 1].filter((s) => !used.has(s));
+      if (!free.length) { UI.closeModal(); localStorage.removeItem('guest_claim'); return UI.toast('Your account already has 2 saves — nothing imported.'); }
+      const sel = [..._claimSel].slice(0, free.length);
+      for (let i = 0; i < sel.length; i++) { const rec = claim.saves[sel[i]]; if (rec && rec.data) await Cloud.uploadSave(free[i], rec.data); }
+      localStorage.removeItem('guest_claim');
+      UI.closeModal();
+      UI.toast(sel.length ? `Brought ${sel.length} guest save${sel.length === 1 ? '' : 's'} into your account.` : 'Starting fresh.', 2800, 'win');
+      renderCloudSlots();
+    } catch (e) { UI.toast('Import failed: ' + (e.message || e)); }
+  },
+  guestClaimSkip() { localStorage.removeItem('guest_claim'); UI.closeModal(); renderCloudSlots(); },
+  // Move a single local save into a chosen cloud slot, on demand (always available on empty cloud slots).
+  cloudImportLocal(slot) {
+    const cards = listSaves().map((sv, i) => sv ? `<div class="mig-row" style="cursor:default">
+        <span><b>Save ${i + 1}</b> — Frontier Floor ${sv.frontier} · ${(sv.roster || []).length} cultivators · ${Math.floor(sv.stones || 0).toLocaleString()} 石</span>
+        <button class="primary" style="margin-left:auto" onclick="G.cloudMoveLocal(${slot}, ${i})">Move here →</button>
+      </div>` : '').join('');
+    UI.showModal(`<h3>Move a local save → ☁ Cloud ${slot + 1}</h3>
+      <div class="body">This uploads the save to your account and removes the local copy — it'll live only in the cloud afterward.
+      <div class="mig-list" style="margin-top:14px">${cards || '<div class="muted">No local saved games on this device.</div>'}</div></div>
+      <div class="right"><button onclick="G.closeModal()">Cancel</button></div>`, 'wide');
+  },
+  async cloudMoveLocal(slot, localIdx) {
+    if (!Cloud || !cloudAcct) return;
+    const d = listSaves()[localIdx];
+    if (!d) return UI.toast('That local save is gone.');
+    try {
+      await Cloud.uploadSave(slot, d);           // upload first…
+      deleteSave(SLOT_KEYS[localIdx]);           // …then drop the local copy (data-safe ordering)
+      UI.closeModal();
+      UI.toast(`Moved Save ${localIdx + 1} to ☁ Cloud ${slot + 1}.`, 2600, 'win');
+      renderCloudSlots();
+    } catch (e) { UI.toast('Move failed: ' + (e.message || e)); }
+  },
   toTitle,
   setTab(t) { activeTab = t; document.querySelectorAll('#nav button').forEach((b) => b.classList.toggle('active', b.dataset.tab === t)); UI.render(t); },
   // Collapse/expand the sidebar between the full labeled view and a compact icon rail (persisted).
@@ -775,6 +1032,65 @@ const G = {
     if (battleBusy) { abortBattle = true; UI.abortTimeline(); return; } // cut the in-flight fight; the hunt starts next
     stopIdle();
     runBattle();
+  },
+  // ---- ARENA (async PvP) — talks to the Supabase Edge Functions via arenaStore ----
+  openArena() {
+    G.setTab('pvp');                                    // renders the locked panel itself when gated (ui.js viewPvp)
+    if (!arenaUnlocked()) { UI.toast(`The Arena opens once you beat Floor ${ARENA_UNLOCK_FLOOR}.`); return; }
+    G.arenaRefresh();
+  },
+  async arenaRefresh() {
+    try {
+      const { teams } = await listArena();
+      const mine = (teams || []).find((t) => t.player_id === arenaPlayerId());
+      if (mine) arenaSetMyPoints(mine.points);
+      UI.renderArenaList(teams || [], arenaPlayerId(), arenaPlayerName(), mine ? mine.points : arenaGetMyPoints());
+    } catch (e) {
+      UI.toast(e.message || 'Could not reach the arena.');
+      UI.renderArenaList([], arenaPlayerId(), arenaPlayerName(), arenaGetMyPoints());
+    }
+  },
+  arenaSetName(v) { arenaSetPlayerName(v); },
+  async arenaRegister(btn) {
+    if (!activeTeam().length) return UI.toast('Put at least one cultivator on your battle team first.');
+    if (btn) btn.disabled = true;
+    try { await registerArena(); UI.toast('Defense team registered.', 2200, 'win'); await G.arenaRefresh(); }
+    catch (e) { UI.toast(e.message || 'Register failed.'); }
+    finally { if (btn) btn.disabled = false; }
+  },
+  async arenaChallenge(defenderId) {
+    if (battleBusy && pendingArena) return;                       // a challenge is already queued/running
+    if (!activeTeam().length) return UI.toast('Put at least one cultivator on your battle team first.');
+    if (!spendArenaAttempt()) { UI.toast('No arena attempts left — wait for the refill timer.'); return; }
+    UI.tickArena();                                               // meter reflects the spent attempt immediately
+    let result;
+    try { result = await challengeArena(defenderId); }
+    catch (e) { refundArenaAttempt(); UI.tickArena(); return UI.toast(e.message || 'Could not reach the arena.'); }
+    arenaSetMyPoints(result.attacker.points);
+    pendingArena = {
+      encounter: { floor: 0, isBoss: false, isWaveEncounter: false, squad: 'Arena', waves: [result.defender.team] },
+      seed: result.seed, server: result,
+    };
+    if (activeTab !== 'battle') G.setTab('battle');               // watch the bout unfold in the arena
+    if (battleBusy) { abortBattle = true; UI.abortTimeline(); return; } // cut any in-flight fight; the bout starts next
+    stopIdle();
+    runBattle();
+  },
+  // Loadout slots (Arena side panel): named snapshots of the active team + formation.
+  arenaSaveLoadout(i) {
+    const name = prompt('Name this loadout:', `Loadout ${i + 1}`);
+    if (name === null) return;
+    if (saveLoadout(i, name)) { UI.toast('Loadout saved.', 2200, 'win'); UI.renderArenaPanel(); }
+    else UI.toast('Put at least one cultivator on your battle team first.');
+  },
+  arenaApplyLoadout(i) {
+    if (applyLoadout(i)) { UI.toast('Loadout applied to your team.', 2200, 'win'); UI.renderArenaPanel(); }
+    else UI.toast('That loadout is empty or its members are gone.');
+  },
+  arenaRenameLoadout(i) {
+    const name = prompt('Rename loadout:');
+    if (name === null) return;
+    if (renameLoadout(i, name)) UI.renderArenaPanel();
   },
   setFarm(f) {
     // only cleared/beaten floors (1 .. frontier-1) are farmable; floor 1 is the bootstrap target
@@ -969,9 +1285,20 @@ const G = {
     UI.toast(r.ok ? `Ascended ${r.gu.name} to Tier ${r.tier}.` : r.msg);
     UI.render(activeTab); UI.refreshTop(); save();
   },
-  // Market buy-amount selector (×1/×10/×100/×1000): sets how many units each Buy click purchases.
-  setShopQty(n) { S().settings.shopQty = Number(n) || 1; UI.render('shop'); save(); },
-  buyResource(id) { const q = S().settings.shopQty || 1; const r = buyResource(id, q); if (r.ok) bumpQuest('market'); UI.toast(r.ok ? `Purchased ×${q}.` : r.msg); if (r.ok) UI.render('shop'); UI.refreshTop(); save(); },
+  // Market buy-amount selector (×1/×10/×100/×1000/MAX): sets how many units each Buy click purchases.
+  setShopQty(n) { S().settings.shopQty = n === 'max' ? 'max' : (Number(n) || 1); UI.renderShopResults(); save(); },
+  buyResource(id) {
+    const setQ = S().settings.shopQty || 1;
+    const q = setQ === 'max' ? Math.max(1, Math.floor(S().stones / Math.max(1, resourceCost(id)))) : setQ;
+    const r = buyResource(id, q);
+    if (r.ok) bumpQuest('market');
+    UI.toast(r.ok ? `Purchased ×${q}.` : r.msg);
+    if (r.ok) UI.renderShopResults();   // keep the counter selection; repaint list + desk only
+    UI.refreshTop(); save();
+  },
+  // Bring a resource to the Market counter / a Gu to the Refining Desk (selection lives at ui.js scope).
+  shopSelect(id) { UI.shopSelect(id); },
+  guSelect(id) { UI.guSelect(id); },
   toggleActive(id) {
     const c = S().roster.find((x) => x.id === id); if (!c) return;
     if (!c.active) {
@@ -1014,6 +1341,17 @@ const G = {
     let id = ''; try { id = ev.dataTransfer.getData('text/plain'); } catch (e) {}
     if (id) G.placeAt(id, row, lane);
   },
+  // Select a unit into the Formation inspector (selection lives at ui.js module scope).
+  fmSelect(id) { UI.fmSelect(id); },
+  // One-click deploy from the reserves list: place into the first free lane of the chosen row.
+  // Reuses placeAt's rules (≤6 active, ≤5 per row, swap/move semantics) by delegating to it.
+  deployTo(id, row) {
+    row = row === 'back' ? 'back' : 'front';
+    for (let lane = 0; lane < LANES; lane++) {
+      if (!tileOccupant(row, lane)) return G.placeAt(id, row, lane);
+    }
+    UI.toast(`That row is full (max ${ROW_CAP}).`);
+  },
   ascend(id) {
     const r = ascend(id);
     if (!r.ok) return UI.toast(r.msg);
@@ -1032,6 +1370,24 @@ const G = {
     if (activeTab === 'battle') UI.logLine(r.msg, r.success ? 'win' : 'lose');
     UI.refreshTop();                                          // stones changed (and maybe realm)
     UI.render(activeTab === 'battle' ? 'team' : activeTab); save();
+  },
+  // Breakthrough RITE (character sheet's aperture mandala dock): resolve the attempt IMMEDIATELY in
+  // state, then play the 10s glow ceremony over the mandala. The 8s reveal re-renders the new sea.
+  riteAttempt(id) {
+    const c = S().roster.find((x) => x.id === id); if (!c) return;
+    const r = attemptBreakthrough(id);                 // spends 石, rolls — {ok, success, msg}
+    if (!r.ok) { UI.toast(r.msg); return; }            // can't afford / gated / capped: no ceremony
+    bumpQuest('breakthrough');
+    UI.riteRun(
+      r.success,
+      () => { UI.render(activeTab); UI.refreshTop(); },          // 8s reveal: new sea + labels
+      () => {                                                     // 10s done: toast + sounds
+        if (r.success) { Audio.breakthrough(); UI.toast(`${c.name} breaks through to ${realmName(c.realm)}!`, 3200, 'win'); }
+        else { Audio.defeat(); UI.toast(r.msg || 'The breakthrough fails — the sea holds its grade.'); }
+        UI.render(activeTab);                                     // clears glow + re-enables button
+      },
+    );
+    save();
   },
   faceTribulation(id) {
     const r = resolveTribulation(id);
@@ -1240,7 +1596,9 @@ window.G = G;
 window.addEventListener('load', () => {
   renderTitle();
   Audio.init(); // procedural music + SFX; the context starts on the first user gesture (autoplay policy)
-  setInterval(() => { if (S()) save(); }, 20000); // autosave heartbeat
+  initCloudAccount(); // resolve any signed-in session / OAuth redirect, then refresh the title's auth bar
+  setInterval(() => { if (S()) { save(); pushCloud(); } }, 20000); // autosave heartbeat (+ cloud sync for cloud games)
   setInterval(() => { if (S() && activeTab === 'bounties') UI.tickBounties(); }, 1000); // live bounty countdowns
+  setInterval(() => { if (S() && activeTab === 'pvp') UI.tickArena(); }, 1000); // live arena attempt refill countdown
   document.addEventListener('visibilitychange', onVisibilityChange); // pause + catch up across browser-tab switches
 });

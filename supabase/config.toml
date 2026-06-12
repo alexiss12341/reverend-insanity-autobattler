@@ -1,0 +1,14 @@
+# Supabase CLI project config (for function deploys). Ties this repo to the remote RIPP project.
+project_id = "msqnxvxwccqzqmvqefot"
+
+[functions.register]
+verify_jwt = false
+
+[functions.resolve-battle]
+verify_jwt = false
+
+[functions.claim-arena]
+verify_jwt = true
+
+[functions.list]
+verify_jwt = false

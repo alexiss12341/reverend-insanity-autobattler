@@ -39,8 +39,12 @@ function applyEffect(e, mB, mA, add) {
 // uids contribute effects/essCost/resonance — letting the battle engine compute the stat profile for a
 // partially-essence-starved loadout (the un-channelled Gu vanish entirely, incl. their HP/aperture). When
 // omitted, the FULL loadout applies (every other caller — UI, economy, idle preview — passes nothing).
-export function effectiveStats(ch, activeSet) {
+export function effectiveStats(ch, activeSet, ctx) {
   const guOn = (uid) => !activeSet || activeSet.has(uid); // un-channelled (essence-starved) Gu drop out
+  // SERVER-SAFE CTX (optional) — when supplied, effectiveStats reads NO global state: guLookup replaces
+  // guOf (resolve a Gu uid from PROVIDED data, not S().guInv), immFuel replaces the 仙石-pool check, and
+  // prestigeMult replaces prestigeCombatMult(). Omitted (every in-game caller) → identical global behavior.
+  const lookup = (ctx && ctx.guLookup) || guOf;
   const a = {}; for (const k of ATTR_KEYS) a[k] = effAttr(ch, k);
   const d = deriveStats(a);
   const add = { atkPct: 0, defPct: 0, hpPct: 0, spdPct: 0, essPoolPct: 0, essRcvPct: 0, regenPct: 0,
@@ -52,17 +56,17 @@ export function effectiveStats(ch, activeSet) {
   // IMMORTAL GU FUEL: an immortal-rank Gu (tier 6+) is UNUSABLE without Immortal Essence Stones (仙石) —
   // when the pool is empty it contributes nothing (no effects, no essence cost, no resonance), exactly
   // like an un-channelled Gu. The 仙石 faucet only flows once the roster is immortal (state.immortalUnlocked).
-  const immFuel = (S().immortalStones || 0) > 0;
+  const immFuel = ctx ? !!ctx.immFuel : (S().immortalStones || 0) > 0;
   const guInert = (gu) => gu.tier >= 6 && !immFuel; // skip immortal Gu while out of 仙石
 
   const pathCount = {};
-  for (const uid of ch.gu) { if (!guOn(uid)) continue; const gu = guOf(uid); if (gu && !guInert(gu)) pathCount[gu.daoPath] = (pathCount[gu.daoPath] || 0) + 1; }
+  for (const uid of ch.gu) { if (!guOn(uid)) continue; const gu = lookup(uid); if (gu && !guInert(gu)) pathCount[gu.daoPath] = (pathCount[gu.daoPath] || 0) + 1; }
   let essCost = 0;
   const guAmp = 1 + lineGuAmp(ch); // Adept line: amplifies EVERY Gu's effect (path-agnostic)
 
   for (const uid of ch.gu) {
     if (!guOn(uid)) continue;
-    const gu = guOf(uid); if (!gu) continue;
+    const gu = lookup(uid); if (!gu) continue;
     if (guInert(gu)) continue; // immortal Gu with no 仙石 to power it → contributes nothing
     const path = gu.daoPath;
     essCost += guEssenceCostFor(gu, cultRank);
@@ -91,7 +95,7 @@ export function effectiveStats(ch, activeSet) {
   const lnApBase = (lb && lb.apBase) || 0;
 
   const w = woundMult(ch) * injuryMult(ch);
-  const pm = prestigeCombatMult();
+  const pm = (ctx && ctx.prestigeMult != null) ? ctx.prestigeMult : prestigeCombatMult();
   const maxHpF = d.maxHp * (1 + add.hpPct);
   return {
     maxHp: Math.round(maxHpF * w * pm),
