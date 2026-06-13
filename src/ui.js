@@ -555,15 +555,16 @@ function imprintStars(level, cls = '') {
   if (n <= 0) return '';
   return `<span class="imp-stars${cls ? ' ' + cls : ''}" title="Soul Imprint Lv ${n} — +${n * 5}% attributes · +${(0.1 * n).toFixed(1)} aptitude">${'★'.repeat(n)}</span>`;
 }
-function unitBlock(u, side, idx) {
+function unitBlock(u, side, idx, hideGu) {
   const row = u.row || 'front';
   const cult = u.kind === 'cultivator';
   // tooltip: rarity · trait line · Gu (so the player can read a foe's gimmick); name tinted by rarity.
+  // hideGu: PvP arena — conceal the opponent's Gu loadout (mirrors renderTraitPanels' hideFoeGu).
   const bits = [];
   if (u.realm != null) bits.push(realmName(u.realm));
   if (u.rarity) bits.push(u.rarity);
   if (u.line && LINES[u.line]) bits.push(lineName(u.line, u.rarity));
-  if (u.gu && u.gu.length) bits.push(`Gu: ${u.gu.join(', ')}`);
+  if (u.gu && u.gu.length && !hideGu) bits.push(`Gu: ${u.gu.join(', ')}`);
   const title = bits.length ? ` title="${esc(u.name)} — ${esc(bits.join(' · '))}"` : '';
   const nameStyle = u.rarity ? ` style="color:${rarityColor(u.rarity)}"` : '';
   const essVal = u.ess != null ? u.ess : u.essMax;
@@ -783,7 +784,7 @@ export async function playTimeline(tl, ctx = {}) {
   const allies = tl.allies.map((u) => ({ ...u, ess: u.essMax }));
   let wave = 0, foes = (tl.waves[0] || []).map((u) => ({ ...u, ess: u.essMax }));
   a.innerHTML = allies.map((u, i) => unitBlock(u, 'ally', i)).join('');
-  b.innerHTML = foes.map((u, i) => unitBlock(u, 'foe', i)).join('');
+  b.innerHTML = foes.map((u, i) => unitBlock(u, 'foe', i, !!ctx.arena)).join('');
   clearArenaResult();                   // wipe any lingering result stamp from a previous bout
   if (ctx.arena) setArenaHeader(ctx.arena); // ranked PvP: label the opponent instead of a floor / wave
   else { setWaveIndicator(1, tl.waves.length); setArenaFloor(ctx.floor, ctx.isBoss); }
@@ -842,7 +843,7 @@ export async function playTimeline(tl, ctx = {}) {
     if (stale()) return; // interrupted by a new attempt/auto-challenge, or superseded by a tab-switch redraw — bail
     if (step.gauges && step.wave !== wave) {
       wave = step.wave; foes = (tl.waves[wave] || []).map((u) => ({ ...u, ess: u.essMax }));
-      b.innerHTML = foes.map((u, i) => unitBlock(u, 'foe', i)).join('');
+      b.innerHTML = foes.map((u, i) => unitBlock(u, 'foe', i, !!ctx.arena)).join('');
       renderTraitPanels(allies, tl.allyAuras || [], foes, (tl.waveAuras || [])[wave], { hideFoeGu: !!ctx.arena }); // new wave → its foe panel
       setWaveIndicator(wave + 1, tl.waves.length);
     }
