@@ -5,7 +5,8 @@ import { effectiveStats } from './systems/cultivation.js';
 import { resolveEncounter, fightWallMs } from './systems/battle.js';
 import { arenaRegister as registerArena, arenaList as listArena, arenaChallenge as challengeArena,
   playerId as arenaPlayerId, playerName as arenaPlayerName, setPlayerName as arenaSetPlayerName,
-  getMyPoints as arenaGetMyPoints, setMyPoints as arenaSetMyPoints, setCloudId as arenaSetCloudId } from './arenaStore.js';
+  getMyPoints as arenaGetMyPoints, setMyPoints as arenaSetMyPoints, setCloudId as arenaSetCloudId,
+  setAuthToken as arenaSetAuthToken } from './arenaStore.js';
 import { spendArenaAttempt, refundArenaAttempt, arenaAttemptsLeft, saveLoadout, applyLoadout, renameLoadout, arenaUnlocked, ARENA_UNLOCK_FLOOR } from './systems/arenaMeta.js';
 import { attemptBreakthrough, respecAttributes, respecCost, RESPEC_ESSENCE_COST } from './systems/cultivation.js';
 import { rollFloorRewards, firstClearEssence, rollFarmEssence, applyDrops, buyResource, resourceCost, rollImmortalStones, immortalGuUpkeep, addImmortalStones } from './systems/economy.js';
@@ -485,6 +486,7 @@ function updateOnlineCount(n) {
 function onCloudAuthChange() {
   if (Cloud && cloudAcct) {
     arenaSetCloudId(Cloud.cloudUserId()); // rekey the arena identity to the current cloud user (guest or account)
+    arenaSetAuthToken(Cloud.cloudToken()); // hand the arena calls the verified JWT (their server-side identity)
     if (Cloud.isSignedIn()) { // a guest just upgraded into a real account → carry their rating + offer save claim
       let blob = null; try { blob = JSON.parse(localStorage.getItem('guest_claim') || 'null'); } catch {}
       if (blob && blob.from && blob.from !== Cloud.cloudUserId()) {
@@ -553,7 +555,13 @@ async function renderCloudSlots() {
   for (let slot = 0; slot < Cloud.CLOUD_MAX_SAVES; slot++) {
     const rec = saves.find((s) => s.slot === slot);
     const div = document.createElement('div'); div.className = 'slot';
-    if (rec && rec.data) {
+    if (rec && rec.tampered) {
+      // The save failed its server-side integrity check (its signature didn't match — edited outside the
+      // game). We won't load it; the only action is to delete it and start fresh.
+      div.innerHTML = `<div><div class="nm">☁ Cloud ${slot + 1} — ⚠ integrity check failed</div>
+        <div class="meta">This save was modified outside the game and can't be loaded.</div></div>
+        <div class="acts"><button class="danger" onclick="G.deleteCloudSlot(${slot})">Delete</button></div>`;
+    } else if (rec && rec.data) {
       const sv = rec.data;
       div.innerHTML = `<div><div class="nm">☁ Cloud ${slot + 1} — Frontier Floor ${sv.frontier}</div>
         <div class="meta">${(sv.roster || []).length} cultivators · ${Math.floor(sv.stones || 0).toLocaleString()} 石 · ${Math.floor(sv.essence || 0)} ✦ · ${Object.keys(sv.uniqueClaimed || {}).length} unique Gu</div>
@@ -1116,7 +1124,7 @@ const G = {
   pull(n) { const r = pull(n); if (!r.ok) return UI.toast(r.msg);
     Audio.gacha(Math.max(...r.got.map((c) => rarityTier(c.rarity)))); // sparkle scales with the best roll
     bumpQuest('recruit', r.got.length);          // daily quest: recruited a cultivator
-    UI.render('recruit'); UI.renderPulls(r.got); save(); },
+    UI.render('recruit'); UI.renderPulls(r.got); save(); pushCloud(); }, // sync the spend + new heroes to the cloud now (don't wait for the 20s heartbeat)
   // Confirm before dismissing — releasing a cultivator is permanent, so guard against a mis-click.
   dismissPrompt(id) {
     const c = S().roster.find((x) => x.id === id); if (!c) return;

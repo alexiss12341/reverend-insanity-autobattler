@@ -720,7 +720,9 @@ export function buildSnapshot(chars, ctx) {
 
 // Resolve one encounter. `onLog` optional callback(message). `opts.record` builds a step-by-step
 // timeline for animated playback (skip it for the silent idle loop).
-// Returns { win, rounds, allies, timeline } where `allies` (in active-team order) carry final HP,
+// Returns { win, rounds, allies, timeline, timedOut } where `allies` (in active-team order) carry final HP,
+// and `timedOut` flags a fight that hit the 3000-action budget with both sides alive (no decisive clear —
+// the arena treats this as a NON-win so stall teams can't farm Elo; PvE still counts `win` as-is).
 // and `timeline` (when recording) = { allies:[snap], waves:[[snap]], steps:[...] }. Each step is
 // one simulation instant: { wave, gauges:{ally:[],foe:[]}, acts:[serializeAct] } or { wave, heal }.
 export function resolveEncounter(encounter, onLog, opts = {}) {
@@ -733,7 +735,7 @@ export function resolveEncounter(encounter, onLog, opts = {}) {
   const allies = opts.allyChars
     ? opts.allyChars.map((c, i) => allyCombatant(c, i, opts.ctx))
     : activeTeam().map((c, i) => allyCombatant(c, i));
-  if (!allies.length) return { win: false, rounds: 0, allies, timeline: null, simTime: 0 };
+  if (!allies.length) return { win: false, rounds: 0, allies, timeline: null, simTime: 0, timedOut: false };
   applyTeamAuras(allies); // support-line team auras (Commander ATK/SPD · Warden DEF/thorns+taunt · Mender regen)
 
   // line/affinity/rarity ride along so the arena can show each unit's trait seal + the per-side panel.
@@ -773,6 +775,7 @@ export function resolveEncounter(encounter, onLog, opts = {}) {
   });
 
   let actions = 0, simTime = 0; // simTime = total gauge-time the fight consumes
+  let timedOut = false;         // true if the action budget ran out with BOTH sides still standing (no decisive clear)
 
   for (let w = 0; w < encounter.waves.length; w++) {
     const foes = encounter.waves[w].map((u, i) => enemyCombatant(u, i));
@@ -825,7 +828,8 @@ export function resolveEncounter(encounter, onLog, opts = {}) {
       if (rec) { step.statuses = { ally: statusSnap(allies), foe: statusSnap(foes) }; timeline.steps.push(step); }
     }
 
-    if (!sideAlive(allies)) return { win: false, rounds: actions, allies, timeline, simTime };
+    if (actions >= 3000 && sideAlive(allies) && sideAlive(foes)) timedOut = true; // budget exhausted, no decisive kill
+    if (!sideAlive(allies)) return { win: false, rounds: actions, allies, timeline, simTime, timedOut };
     // breather heal between waves (10% of max) — survivable but tense
     if (w < encounter.waves.length - 1) {
       for (const a of allies) if (a.hp > 0) a.hp = Math.min(a.max, a.hp + Math.round(a.max * 0.1));
@@ -833,5 +837,5 @@ export function resolveEncounter(encounter, onLog, opts = {}) {
     }
   }
 
-  return { win: true, rounds: actions, allies, timeline, simTime };
+  return { win: true, rounds: actions, allies, timeline, simTime, timedOut };
 }

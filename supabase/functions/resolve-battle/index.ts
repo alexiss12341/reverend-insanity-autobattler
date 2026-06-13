@@ -5,7 +5,7 @@
 // the verdict). Then a zero-sum Elo update (K=50) adjusts BOTH players' arena points and they're persisted.
 // Returns { winner, seed, attacker:{points,delta}, defender:{points,delta,team} } — the client replays the
 // exact fight from the seed (its own team vs the defender snapshot) to ANIMATE it. Shared: _shared/team.ts.
-import { CORS, json, prepareTeam, ENGINE_VERSION } from "../_shared/team.ts";
+import { CORS, json, prepareTeam, callerId, ENGINE_VERSION } from "../_shared/team.ts";
 import { resolveEncounter } from "../../../src/systems/battle.js";
 import { arenaCanChallenge, ARENA_UP, ARENA_DOWN, ARENA_NEAREST_K } from "../../../src/data/arena.js";
 
@@ -20,9 +20,11 @@ Deno.serve(async (req) => {
   try { body = await req.json(); } catch { return json({ error: "bad JSON" }, 400); }
 
   const attacker = body.attacker || {};
-  const attackerId = String(attacker.playerId || "").trim();
+  // Attacker identity = the VERIFIED token's sub (verify_jwt=true), never body.attacker.playerId — so a
+  // player can only challenge AS THEMSELVES and can't run Elo-rigging fights on another account's behalf.
+  const attackerId = callerId(req);
   const defenderId = String(body.defenderId || "").trim();
-  if (!attackerId) return json({ error: "missing attacker.playerId" }, 400);
+  if (!attackerId) return json({ error: "sign in to challenge" }, 401);
   if (!defenderId) return json({ error: "missing defenderId" }, 400);
   if (attackerId === defenderId) return json({ error: "cannot challenge yourself" }, 400);
 
@@ -72,7 +74,9 @@ Deno.serve(async (req) => {
   catch (e) { return json({ error: "battle failed: " + ((e && e.message) || e) }, 500); }
 
   // zero-sum Elo: attacker's delta = K·(score − expected); defender moves by the exact opposite.
-  const attackerWon = !!result.win; // NOTE: a 3000-action timeout counts as an attacker win (v1 quirk)
+  // A 3000-action TIMEOUT is NOT a clear — it counts as a DEFENDER win, so an unkillable stall team can't
+  // farm Elo by forcing draws (the old v1 quirk scored a timeout as an attacker win).
+  const attackerWon = !!result.win && !result.timedOut;
   const deltaA = Math.round(K * ((attackerWon ? 1 : 0) - expectedScore(ra, rb)));
   const newA = ra + deltaA, newB = rb - deltaA;
   const aW = (aRow.wins ?? 0) + (attackerWon ? 1 : 0), aL = (aRow.losses ?? 0) + (attackerWon ? 0 : 1);

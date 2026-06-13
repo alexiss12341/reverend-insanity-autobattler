@@ -2,13 +2,20 @@
 project_id = "msqnxvxwccqzqmvqefot"
 
 [functions.register]
-verify_jwt = false
+verify_jwt = true
 
 [functions.resolve-battle]
-verify_jwt = false
+verify_jwt = true
 
 [functions.claim-arena]
 verify_jwt = true
 
 [functions.list]
 verify_jwt = false
+
+# Cloud saves are signed + verified server-side; both gate on the caller's identity.
+[functions.save-put]
+verify_jwt = true
+
+[functions.save-get]
+verify_jwt = true

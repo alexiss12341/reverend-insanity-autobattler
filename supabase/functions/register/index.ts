@@ -3,7 +3,7 @@
 // (buildSnapshot, which preserves FORMATION row/lane + KILLER-MOVE setups) and upserts it as that player's
 // defense team. Writes with the service-role key (the browser key can only read). Anti-cheat: stops
 // injected stats + impossible teams; not legal-but-unearned saves. Shared pipeline in _shared/team.ts.
-import { CORS, json, prepareTeam, ENGINE_VERSION } from "../_shared/team.ts";
+import { CORS, json, prepareTeam, callerId, ENGINE_VERSION } from "../_shared/team.ts";
 import { buildSnapshot } from "../../../src/systems/battle.js";
 
 Deno.serve(async (req) => {
@@ -13,9 +13,11 @@ Deno.serve(async (req) => {
   let body;
   try { body = await req.json(); } catch { return json({ error: "bad JSON" }, 400); }
 
-  const playerId = String(body.playerId || "").trim();
+  // Identity comes from the VERIFIED token (verify_jwt=true), never from the body — so a player can only
+  // ever write their OWN defense team. The old free-text body.playerId let anyone overwrite anyone's team.
+  const playerId = callerId(req);
   const name = String(body.name || "").trim().slice(0, 40);
-  if (!playerId) return json({ error: "missing playerId" }, 400);
+  if (!playerId) return json({ error: "sign in to register an arena team" }, 401);
 
   const prep = prepareTeam(body.team, body.ctx);
   if (prep.error) return json({ error: prep.error }, 400);

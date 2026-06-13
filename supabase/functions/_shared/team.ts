@@ -19,6 +19,17 @@ export const CORS = {
 export const json = (body, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...CORS, "content-type": "application/json" } });
 
+// Verified caller identity. register + resolve-battle run with verify_jwt=true, so the platform gateway
+// has ALREADY validated this token's signature before the function ran — we just read the `sub` claim.
+// Returns the authenticated user id (a real account OR an anonymous guest, both of which carry a sub), or
+// null when there's no user token (e.g. the bare anon key, which has no `sub`). This is the anti-cheat
+// linchpin: the player id is taken from the unforgeable token, NEVER from the request body, so a caller
+// can only ever register/challenge AS THEMSELVES.
+export function callerId(req) {
+  const token = (req.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "");
+  try { return JSON.parse(atob(token.split(".")[1])).sub || null; } catch { return null; }
+}
+
 function validateMember(m, i) {
   if (!m || typeof m !== "object") return `member ${i}: not an object`;
   if (typeof m.name !== "string" || !m.name) return `member ${i}: missing name`;

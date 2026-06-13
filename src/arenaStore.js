@@ -9,6 +9,9 @@ import { prestigeCombatMult } from './systems/prestige.js';
 
 // The Supabase project's Functions base URL (public — safe to ship in the client).
 const BASE = 'https://msqnxvxwccqzqmvqefot.supabase.co/functions/v1';
+// Public anon key (same one in systems/cloud.js) — sent as `apikey` so these raw-fetch calls carry the
+// exact header pair the Supabase SDK uses for the JWT-gated functions (apikey + Bearer user token).
+const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1zcW54dnh3Y2NxenFtdnFlZm90Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEyMDgxNjMsImV4cCI6MjA5Njc4NDE2M30.AE2fmgOXn2c1FDKOaeZq2RxiIMLxuN5yKGMHZ2ImTaI';
 
 const LS_ID = 'arena_player_id';
 const LS_NAME = 'arena_name';
@@ -18,6 +21,13 @@ const LS_NAME = 'arena_name';
 // only when the cloud is unavailable.
 let _cloudId = null;
 export function setCloudId(id) { _cloudId = id || null; }
+
+// Bearer token for the arena Edge Functions. register + resolve-battle are JWT-gated (verify_jwt=true):
+// the server derives the player id from this token's verified `sub`, so a caller can't act as anyone else.
+// Pushed by main.js on every cloud auth change (login / logout / token refresh). `list` is public and
+// ignores it. Without a token those two calls 401 server-side, which is the intended "must be signed in".
+let _authToken = null;
+export function setAuthToken(t) { _authToken = t || null; }
 export function playerId() {
   if (_cloudId) return _cloudId;
   let id = localStorage.getItem(LS_ID);
@@ -65,10 +75,12 @@ export function serializeTeam() {
 
 async function call(path, body) {
   let res;
+  const headers = { apikey: SUPABASE_ANON };
+  if (_authToken) headers.authorization = `Bearer ${_authToken}`; // verified identity for register/resolve-battle
   try {
     res = await fetch(`${BASE}/${path}`, body === undefined
-      ? { method: 'GET' }
-      : { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+      ? { method: 'GET', headers }
+      : { method: 'POST', headers: { ...headers, 'content-type': 'application/json' }, body: JSON.stringify(body) });
   } catch (e) { throw new Error('Network error — could not reach the arena.'); }
   const data = await res.json().catch(() => ({}));
   if (!res.ok || data.error) throw new Error(data.error || `Arena error (HTTP ${res.status}).`);

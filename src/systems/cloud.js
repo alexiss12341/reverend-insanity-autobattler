@@ -15,7 +15,11 @@ const supa = createClient(SUPABASE_URL, SUPABASE_ANON, {
 });
 
 let _user = null;
+let _token = null; // current session access token (JWT) — sent to the arena Edge Functions for identity
 export const cloudUser = () => _user;
+// The signed-in (or guest) session's access token. The arena's register/resolve-battle functions are
+// JWT-gated and derive the player id from this token's verified `sub`, so it must ride on those calls.
+export const cloudToken = () => _token;
 export const isGuest = () => !!(_user && _user.is_anonymous);          // anonymous (guest) session
 export const isSignedIn = () => !!(_user && !_user.is_anonymous);      // signed in with a real Discord/Google account
 export const cloudUserId = () => (_user ? _user.id : null);
@@ -31,9 +35,11 @@ export async function initCloud(onChange) {
     let { data } = await supa.auth.getSession();
     if (!data.session) { await supa.auth.signInAnonymously(); ({ data } = await supa.auth.getSession()); } // auto-guest: every player gets a cloud identity
     _user = data && data.session ? data.session.user : null;
-  } catch (e) { console.warn('cloud init failed:', e); _user = null; }
+    _token = data && data.session ? data.session.access_token : null;
+  } catch (e) { console.warn('cloud init failed:', e); _user = null; _token = null; }
   supa.auth.onAuthStateChange((_e, session) => {
     _user = session ? session.user : null;
+    _token = session ? session.access_token : null; // keep the arena token fresh across refresh/login/logout
     if (onChange) onChange(_user);
   });
   return _user;
@@ -59,18 +65,20 @@ export async function claimArena(guestId) {
 }
 export async function signOut() { try { await supa.auth.signOut(); } finally { _user = null; } }
 
-// ---- cloud saves (RLS limits every query to the signed-in user's own rows) ----
+// ---- cloud saves ----
+// Reads/writes go through the save-get / save-put Edge Functions (NOT direct table access — the client's
+// direct INSERT/UPDATE/SELECT on `saves` is revoked). save-put HMAC-signs the blob with a server-only
+// secret; save-get re-verifies it, so a row tampered with in the database refuses to load. supa.functions
+// .invoke attaches the session JWT automatically, which the functions use as the authoritative player id.
 export async function listCloudSaves() {
-  const { data, error } = await supa.from('saves').select('slot,data,updated_at').order('slot');
+  const { data, error } = await supa.functions.invoke('save-get');
   if (error) throw error;
-  return data || [];
+  // [{ slot, data, updated_at, tampered }] — a tampered row carries data:null (failed its integrity check).
+  return (data && data.saves) || [];
 }
 export async function uploadSave(slot, data) {
   if (!_user) throw new Error('not signed in');
-  const { error } = await supa.from('saves').upsert(
-    { user_id: _user.id, slot, data, updated_at: new Date().toISOString() },
-    { onConflict: 'user_id,slot' },
-  );
+  const { error } = await supa.functions.invoke('save-put', { body: { slot, data } });
   if (error) throw error;
 }
 export async function deleteCloudSave(slot) {
