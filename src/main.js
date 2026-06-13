@@ -14,7 +14,7 @@ import { pull, dismiss, dismissMany, dismissRefund, imprint, imprintCandidates, 
 import { buyBoon, reincarnate, soulsAward, canReincarnate } from './systems/prestige.js';
 import { bumpQuest, claimQuest, claimBonus, DAILY_QUESTS } from './systems/quests.js';
 import { attemptsLeft, spendAttempt, slotUnlocked, bountyEncounter, grantBountyRewards, respawnRemaining, markBountyKilled } from './systems/bounties.js';
-import { craft, upgrade } from './systems/crafting.js';
+import { craft, autoCraft, upgrade } from './systems/crafting.js';
 import { generateEncounter, isBossFloor, MAX_FLOORS } from './data/floors.js';
 import { guOf } from './systems/cultivation.js';
 import { GU_LIB, effectText, guEssenceCost, isUnique, starterGusForPath } from './data/gu.js';
@@ -1292,6 +1292,14 @@ const G = {
     if (off) setTimeout(() => showOffline(off), 250); // deferred offline summary, after the choice
   },
   craft(guId) { const r = craft(guId); if (r.ok) { Audio.forge(); bumpQuest('craft'); } UI.toast(r.ok ? `Refined ${r.gu.name}.` : r.msg); UI.render('gu'); save(); },
+  // Auto-craft: buy the missing materials from the Market + forge the missing lower-tier fodder chain, then
+  // craft the target — letting stones substitute for the T1→T(n-1) grind. Cost is shown on the desk button.
+  autoCraft(guId) {
+    const r = autoCraft(guId);
+    if (r.ok) { Audio.forge(); bumpQuest('craft'); if (r.bought > 0) bumpQuest('market'); }
+    UI.toast(r.ok ? `Auto-forged ${r.gu.name}${r.forged > 1 ? ` (+${r.forged - 1} fodder)` : ''}.` : r.msg);
+    UI.render('gu'); UI.refreshTop(); save();
+  },
   // Audio settings (gear FAB, bottom-left): independent BGM + SFX level bars (0–10) + mute overrides.
   openSettings() { UI.showModal(UI.settingsModal(), 'narrow'); },
   setBgm(v) { Audio.setBgm(v); const el = document.getElementById('set-bgm-val'); if (el) el.textContent = v; save(); },

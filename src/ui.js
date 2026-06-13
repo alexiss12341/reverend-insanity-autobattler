@@ -15,7 +15,7 @@ import { dailyBounties, attemptsLeft, msToNextAttempt, slotUnlocked, respawnRema
 import { ensureArenaMeta, arenaAttemptsLeft, arenaMsToNextAttempt, ARENA_MAX_ATTEMPTS, arenaUnlocked, ARENA_UNLOCK_FLOOR } from './systems/arenaMeta.js';
 import { arenaCanChallenge, ARENA_UP, ARENA_DOWN } from './data/arena.js';
 import { slotUnlockFloor } from './data/bounties.js';
-import { canCraft, refineSpec, canUpgrade } from './systems/crafting.js';
+import { canCraft, refineSpec, canUpgrade, planAutoCraft } from './systems/crafting.js';
 import { resourceCost, dropEstimate, shopResources, highestRosterRank, marketUnlocked } from './systems/economy.js';
 import { generateEncounter, isBossFloor, encounterSize, floorRealm, FLOORS_PER_REALM } from './data/floors.js';
 import { GAUGE_MAX, PLAYBACK_MS, cleanseChanceFor, cleanseMaxFor } from './systems/battle.js';
@@ -2139,6 +2139,21 @@ function guListHtml() {
   return tiers + head + rows.map(row).join('');
 }
 
+// Auto-Craft button: shown beneath ⚒ Craft when you can't craft directly but stones COULD cover buying the
+// missing materials + forging the missing fodder chain. Spells out what it will do and the total stone cost.
+function autoCraftHtml(gu, chk, claimed) {
+  if (chk.ok || claimed || gu.tier >= 6) return '';      // already craftable / immortal / unique-taken → no auto path
+  const plan = planAutoCraft(gu.id);
+  if (!plan.ok) return '';                                // a hard gate (floor/path/material lock) blocks it entirely
+  const bits = [];
+  if (plan.subCrafts.length) bits.push(`forge ${plan.subCrafts.length} fodder`);
+  const nBuys = Object.keys(plan.buys).length;
+  if (nBuys) bits.push(`buy ${nBuys} material${nBuys > 1 ? 's' : ''}`);
+  const note = `<div class="wk-note" style="margin:8px 0 4px">Auto-craft${bits.length ? ` will ${bits.join(' &amp; ')}` : ''} · total <span class="stone">${fmt(plan.stonesTotal)} 石</span></div>`;
+  const label = plan.affordable ? `⚒ Auto-Craft · ${fmt(plan.stonesTotal)} 石` : `Need ${fmt(plan.stonesTotal)} 石`;
+  return `${note}<button class="wk-wide" onclick="G.autoCraft('${gu.id}')"${plan.affordable ? '' : ' disabled'}>${label}</button>`;
+}
+
 // RIGHT — the Refining Desk: treasure card + ✓/✗ recipe checklist for the selected Gu.
 function guDeskHtml() {
   const rows = guVisible();
@@ -2176,6 +2191,7 @@ function guDeskHtml() {
       <div class="ref-recipe">${rowsHtml}</div>
       ${chk.ok ? '' : `<div class="ref-why">${chk.reasons.join(' ')}</div>`}
       <button class="primary wk-wide" onclick="G.craft('${gu.id}')"${chk.ok ? '' : ' disabled'}>${claimed ? 'Exists' : '⚒ Craft'}</button>
+      ${autoCraftHtml(gu, chk, claimed)}
     </div>
     <div class="wk-note">Click any Gu to bring it to the desk</div>`;
 }
@@ -2927,7 +2943,8 @@ export function viewCodex() {
   <details class="cdx-sec" id="cdx-6"><summary>${secHead(6, 'The Refinery — Crafting &amp; Refining', 'making Gu')}</summary>
   <div class="card"><div class="body">Every Gu is built from a recipe in the <b>Gu Refinery</b>: <span style="color:var(--stone)">石 Stones</span> + that path's <b>resources</b> (no essence). Resources <b>drop from tower floors</b> and can also be bought in the <b>Market</b>.
   <br><br>Higher tiers are <b>refined</b>: besides materials, the recipe consumes <b>spare Gu of the same path exactly one tier lower</b>, whose effect <b>tags</b> cover the new Gu's tags (at least two pieces of fodder, every one on-tag). To forge a Tier 3 [ATK] Gu, you feed it Tier 2 ATK Gu of that path.
-  <br><br>A path's Gu only become craftable once the tower runs deep enough — <b>common</b> paths from Floor 1, <b>uncommon</b> from 51, <b>rare</b> from 101, <b>esoteric</b> from 201.</div></div></details>
+  <br><br>A path's Gu only become craftable once the tower runs deep enough — <b>common</b> paths from Floor 1, <b>uncommon</b> from 51, <b>rare</b> from 101, <b>esoteric</b> from 201.
+  <br><br><b>Auto-Craft</b>: short on materials or the lower-tier fodder? If your stones can cover it, the desk's <b>⚒ Auto-Craft</b> button <b>buys the missing resources from the Market and forges the whole lower-tier chain</b> for you in one click — so with enough <span style="color:var(--stone)">石</span> you can jump straight to a Tier 5 Gu without hand-building T1→T4 first. It still respects the Market's own gates (you can only buy materials your cleared floors + roster rank unlock).</div></div></details>
 
   <details class="cdx-sec" id="cdx-7"><summary>${secHead(7, 'Dao Paths &amp; Comprehension', 'mastery over time')}</summary>
   <div class="card"><div class="body">Every Gu belongs to a <b>Dao Path</b>. Fighting with a path's Gu raises your <b>Comprehension</b> of it (0–10, capped by your rank), which amplifies every Gu of that path — under-comprehension weakens it, mastery rewards it, and <b>level 10</b> is a prerequisite for Venerable.
