@@ -13,8 +13,11 @@ export const ENGINE_VERSION = 1; // bump on any combat-math change so clients ca
 
 export const CORS = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, content-type, apikey",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  // x-client-info + x-supabase-api-version are sent by supabase-js `functions.invoke`; omitting them makes
+  // the browser preflight FAIL ("Failed to send a request to the Edge Function"). Keep this list in sync
+  // with whatever headers the client sends.
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-api-version",
+  "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
 };
 export const json = (body, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...CORS, "content-type": "application/json" } });
