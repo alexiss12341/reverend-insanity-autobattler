@@ -713,6 +713,7 @@ export function buildSnapshot(chars, ctx) {
       row: u.row, lane: u.lane,
       gu: guDefs.map((g) => g.name),
       guInfo: guDefs.map((g) => ({ name: g.name, eff: effectText(g) })),
+      essMax: u.essMax, essRegen: u.essRegen, // carry the aperture so the arena draws the foe's essence bar
       tiers: u.tiers, killer: u.killer, comboCost: u.comboCost,
     };
   });
@@ -745,7 +746,11 @@ export function resolveEncounter(encounter, onLog, opts = {}) {
     activeGu: u.activeGu,
     row: u.row || 'front', lane: (u.lane | 0), kind: u.kind, gu: u.gu,
     guInfo: u.ch ? guInfoFor(u.ch) : (u.guInfo || []), // equipped Gu (name + effect) for the traits panel
-    essMax: u.essMax != null ? u.essMax : (u.essencePool || 0),
+    // essence pool for the arena bar: a live combatant carries essMax; a tower foe carries essencePool; a
+    // stored arena-defender snapshot (pre-fix) carries neither, so fall back to its full tier's essMax.
+    essMax: u.essMax != null ? u.essMax
+          : u.essencePool != null ? u.essencePool
+          : (u.tiers && u.tiers.length ? (u.tiers[u.tiers.length - 1].essMax || 0) : 0),
     rarity: u.ch ? u.ch.rarity : u.rarity, line: u.ch ? u.ch.line : u.line,
     realm: u.ch ? u.ch.realm : u.realm, imprint: u.ch ? (u.ch.imprint || 0) : (u.imprint || 0),
     affinity: u.ch ? affinityPaths(u.ch) : (u.daoPath ? [u.daoPath] : []) });
