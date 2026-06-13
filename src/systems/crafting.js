@@ -12,7 +12,8 @@
 import { S, uid } from '../state.js';
 import { GU_LIB, guList, isUnique, guTags, tagLabel, resolveOwned, nextTierOf } from '../data/gu.js';
 import { pathFloorReq, isPathLocked, pathName, commOf } from '../data/daoPaths.js';
-import { resourceName } from '../data/resources.js';
+import { resourceName, RESOURCES } from '../data/resources.js';
+import { marketUnlocked, resourceCost, buyResource } from './economy.js';
 
 const REFINE_FODDER_MAX = 5; // unique Gu (tier 6+) are never consumed as fodder
 const REFINE_MIN = 2;        // minimum same-path Gu — EXACTLY one tier lower — consumed per higher-tier craft
@@ -137,6 +138,154 @@ export function craft(guId) {
   S().guInv.push(item);
   S().stats.crafts += 1;
   return { ok: true, item, gu, consumed: consumed.length };
+}
+
+// ---- AUTO-CRAFT: forge a Gu even when you lack the lower-tier fodder or some materials, by BUYING the
+// missing resources from the Market and RECURSIVELY crafting the missing same-path fodder. So with enough
+// primeval stones you can jump straight to a tier-5 Gu without hand-building the T1→T4 refinement chain.
+//
+// planAutoCraft(guId) walks the full dependency tree on a WORKING COPY of your resources + spare Gu
+// (reserving what you already own FIRST, so it only buys/forges the deficit) and returns a complete,
+// ordered plan: which resources to buy, which fodder Gu to forge (leaf→root), and the TOTAL stone cost
+// (every sub-recipe's stones + every market purchase). It bypasses NOTHING that is a hard gate — locked
+// (Supreme) paths, the path's floor requirement, immortal tier-6+ Gu, and resources you can't yet buy
+// (not Market-unlocked AND not owned) all still block it, with a precise reason. The Market's own roster-
+// rank gate therefore caps how high you can leap: buying a rank-5 material still needs a rank-5 cultivator.
+
+// Spare (unequipped) owned Gu, grouped by guId — the starting fodder pool for a plan.
+function sparePool() {
+  const equipped = new Set();
+  for (const c of S().roster) for (const u of c.gu) equipped.add(u);
+  const pool = {};
+  for (const it of S().guInv) if (!equipped.has(it.uid)) pool[it.guId] = (pool[it.guId] || 0) + 1;
+  return pool;
+}
+
+// One-level buildability heuristic — used only to ORDER/exclude fodder candidates (the recursive planGu is
+// the authority). True if this Gu's own hard gates pass and each recipe resource is owned or Market-buyable.
+function looksBuildable(gu) {
+  if (!gu || gu.tier >= 6 || isPathLocked(gu.daoPath) || S().frontier < pathFloorReq(gu.daoPath)) return false;
+  for (const id in (gu.recipe.resources || {})) {
+    const r = RESOURCES[id];
+    if ((S().resources[id] || 0) <= 0 && !(r && marketUnlocked(r))) return false;
+  }
+  return true;
+}
+
+// Reserve `gu`'s recipe resources from the working pool, queuing a Market buy for any deficit. Mutates ctx;
+// pushes a reason + returns false if a missing resource can't be bought (not unlocked).
+function reserveResources(gu, ctx) {
+  for (const [id, qty] of Object.entries(gu.recipe.resources || {})) {
+    const use = Math.min(ctx.res[id] || 0, qty);
+    ctx.res[id] = (ctx.res[id] || 0) - use;
+    const deficit = qty - use;
+    if (deficit > 0) {
+      const r = RESOURCES[id];
+      if (!r || !marketUnlocked(r)) { ctx.reasons.push(`Can't buy ${resourceName(id)} — not unlocked in the Market.`); return false; }
+      ctx.buys[id] = (ctx.buys[id] || 0) + deficit;
+      ctx.buyCost += resourceCost(id) * deficit;
+    }
+  }
+  return true;
+}
+
+// Obtain ONE copy of fodder Gu `g`: take a spare if available, else recursively plan to craft it (the
+// crafted copy is consumed by its parent, so it is NOT returned to the pool).
+function obtainFodder(g, ctx) {
+  if ((ctx.pool[g.id] || 0) > 0) { ctx.pool[g.id]--; return true; }
+  return planGu(g.id, ctx);
+}
+
+// Plan the refinement fodder for `gu`: a tag-covering set of spare-or-crafted same-path one-tier-lower Gu,
+// ≥ REFINE_MIN of them, every member on-tag, the union covering all of `gu`'s tags. Greedy set-cover that
+// prefers fodder you already own (free), then the cheapest buildable to forge. Mutates ctx; false + reason.
+function planFodder(gu, ctx) {
+  const required = guTags(gu);
+  const reqSet = new Set(required);
+  // candidate library fodder: same path, exactly one tier lower, carrying ≥1 required tag (any when the
+  // output has no positive tags). Keep only those we own a spare of OR could plausibly forge.
+  const cands = guList()
+    .filter((g) => fodderEligible(g, gu) && (!required.length || guTags(g).some((t) => reqSet.has(t))))
+    .map((g) => ({ g, tags: guTags(g) }))
+    .filter((c) => (ctx.pool[c.g.id] || 0) > 0 || looksBuildable(c.g));
+  // ranking key per candidate (recomputed each pick, since the pool drains): own-a-spare ≻ buildable ≻ cheaper.
+  const rank = (c) => [(ctx.pool[c.g.id] || 0) > 0 ? 1 : 0, looksBuildable(c.g) ? 1 : 0, -(c.g.recipe.stones || 0)];
+  const better = (a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
+  let count = 0;
+  const uncovered = new Set(required);
+  while (uncovered.size) {                          // cover every required tag, most-coverage-first
+    let best = null, bestGain = 0, bestRank = null;
+    for (const c of cands) {
+      const gain = c.tags.reduce((n, t) => n + (uncovered.has(t) ? 1 : 0), 0);
+      if (gain <= 0) continue;
+      const rk = rank(c);
+      if (gain > bestGain || (gain === bestGain && better(rk, bestRank) > 0)) { best = c; bestGain = gain; bestRank = rk; }
+    }
+    if (!best) { ctx.reasons.push(`Refine: no T${fodderTier(gu)} ${pathName(gu.daoPath)} Gu covers ${guTags(gu).map(tagLabel).join(' + ') || '—'}.`); return false; }
+    if (!obtainFodder(best.g, ctx)) return false;
+    for (const t of best.tags) uncovered.delete(t);
+    count++;
+  }
+  while (count < REFINE_MIN) {                       // pad to the minimum count with the cheapest available
+    let best = null, bestRank = null;
+    for (const c of cands) { const rk = rank(c); if (!best || better(rk, bestRank) > 0) { best = c; bestRank = rk; } }
+    if (!best) { ctx.reasons.push(`Refine: need ≥${REFINE_MIN} spare T${fodderTier(gu)} ${pathName(gu.daoPath)} Gu.`); return false; }
+    if (!obtainFodder(best.g, ctx)) return false;
+    count++;
+  }
+  return true;
+}
+
+// Recursively plan to craft ONE `guId`, accumulating resource buys, sub-crafts and the running stone total
+// into ctx. Records the craft (leaf→root) on success. False + reason on any hard block. (Recursion always
+// terminates: fodder is strictly one tier lower, bottoming out at materials-only tier-1 Gu.)
+function planGu(guId, ctx) {
+  const gu = GU_LIB[guId];
+  if (!gu) { ctx.reasons.push('Unknown Gu.'); return false; }
+  if (gu.tier >= 6) { ctx.reasons.push('Immortal Gu cannot be crafted for now.'); return false; }
+  if (isUnique(gu) && S().uniqueClaimed[guId]) { ctx.reasons.push('Already exists in the world (unique).'); return false; }
+  if (isPathLocked(gu.daoPath)) { ctx.reasons.push(`${pathName(gu.daoPath)} is not yet comprehensible.`); return false; }
+  const floorReq = pathFloorReq(gu.daoPath);
+  if (S().frontier < floorReq) { ctx.reasons.push(`Requires Floor ${floorReq} (${commOf(gu.daoPath).label} path).`); return false; }
+  if (!reserveResources(gu, ctx)) return false;
+  ctx.recipeStones += (gu.recipe.stones || 0);
+  if (refineApplies(gu) && !planFodder(gu, ctx)) return false;
+  ctx.crafts.push(guId);
+  return true;
+}
+
+// Build the auto-craft plan for `guId`. Pure (mutates only its local ctx) — safe to call on every render.
+export function planAutoCraft(guId) {
+  const ctx = { res: { ...S().resources }, pool: sparePool(), buys: {}, buyCost: 0, recipeStones: 0, crafts: [], reasons: [] };
+  const ok = planGu(guId, ctx);
+  const stonesTotal = ctx.recipeStones + ctx.buyCost;
+  return {
+    ok, reasons: ok ? [] : (ctx.reasons.length ? ctx.reasons : ['Cannot craft.']),
+    stonesTotal, buyCost: ctx.buyCost, recipeStones: ctx.recipeStones,
+    buys: ctx.buys, crafts: ctx.crafts, subCrafts: ctx.crafts.slice(0, -1), // sub-crafts = everything but the target
+    affordable: S().stones >= stonesTotal,
+    direct: ok && ctx.buyCost === 0 && ctx.crafts.length === 1, // craftable right now with no purchases/forging
+  };
+}
+
+// Execute an auto-craft: validate the plan + total affordability, buy the resources, then forge every Gu
+// leaf→root (the existing craft() consumes each step's resources/fodder). Mirrors craft()'s return shape.
+export function autoCraft(guId) {
+  const plan = planAutoCraft(guId);
+  if (!plan.ok) return { ok: false, msg: plan.reasons.join(' ') };
+  if (!plan.affordable) return { ok: false, msg: `Need ${plan.stonesTotal} 石 total — have ${S().stones}.` };
+  for (const id in plan.buys) {
+    const r = buyResource(id, plan.buys[id]);
+    if (!r.ok) return { ok: false, msg: `Market: ${r.msg}` };
+  }
+  let last = null;
+  for (const id of plan.crafts) {
+    const r = craft(id);
+    if (!r.ok) return { ok: false, msg: `Refine: ${r.msg}` };
+    last = r;
+  }
+  return last ? { ok: true, item: last.item, gu: last.gu, bought: plan.buyCost, forged: plan.crafts.length, plan }
+              : { ok: false, msg: 'Nothing to craft.' };
 }
 
 // ---- Ascension: grow an OWNED immortal Gu one rank (tier 6→7→8→9). Each step consumes stones + THAT

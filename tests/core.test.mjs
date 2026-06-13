@@ -3,7 +3,7 @@ import { ok, section } from './assert.mjs';
 import { state, newGame } from '../src/state.js';
 import { resolveEncounter } from '../src/systems/battle.js';
 import { generateEncounter, isBossFloor } from '../src/data/floors.js';
-import { canCraft, craft } from '../src/systems/crafting.js';
+import { canCraft, craft, planAutoCraft, autoCraft } from '../src/systems/crafting.js';
 import { pull } from '../src/systems/gacha.js';
 import { RESOURCES } from '../src/data/resources.js';
 
@@ -46,3 +46,20 @@ S.guInv = [{ uid: 'm1', guId: 'gu_strength_atk_t2' }, { uid: 'm2', guId: 'gu_str
 ok(!canCraft('gu_strength_sig_dbl').ok, 'multi-tag Gu NOT craftable when a tag is left uncovered');
 S.guInv = [{ uid: 'm1', guId: 'gu_strength_atk_t2' }, { uid: 'm2', guId: 'gu_strength_hp_t2' }];
 ok(canCraft('gu_strength_sig_dbl').ok, 'multi-tag Gu craftable when fodder covers every tag');
+
+section('core: auto-craft (buy materials + forge fodder chain)');
+// Fresh slot with nothing on hand but stones + a rank-5 cultivator (so the Market unlocks rank-1..5
+// materials) should be able to leap STRAIGHT to a tier-5 Gu — buying every material and forging the whole
+// T1→T4 refinement chain in one click. gu_strength_atk_t5 refines [atk] from atk Gu down to materials.
+state.current = newGame('auto'); const A = state.current;
+A.frontier = 460; A.stones = 9e9; A.roster[0].realm = 16; A.guInv = []; A.resources = {};
+ok(!canCraft('gu_strength_atk_t5').ok, 'a bare slot cannot directly craft a T5 Gu (no fodder, no materials)');
+const plan = planAutoCraft('gu_strength_atk_t5');
+ok(plan.ok && plan.affordable, 'auto-craft plan buys the materials & forges the full T1→T5 fodder chain');
+ok(plan.subCrafts.length >= 4 && plan.buyCost > 0, 'plan both forges lower-tier fodder and buys materials');
+const before = A.stones, ac = autoCraft('gu_strength_atk_t5');
+ok(ac.ok && A.guInv.some((it) => it.guId === 'gu_strength_atk_t5'), 'auto-craft runs end-to-end and yields the T5 Gu');
+ok(A.stones === before - plan.stonesTotal, 'auto-craft spends exactly the planned stone total');
+// The Market's roster-rank gate is still respected: a rank-1 roster can't buy the rank-5 materials.
+A.roster[0].realm = 0; A.guInv = []; A.resources = {};
+ok(!planAutoCraft('gu_strength_atk_t5').ok, 'auto-craft cannot buy materials a rank-1 roster has no Market access to');
