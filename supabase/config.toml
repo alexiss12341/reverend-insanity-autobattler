@@ -10,6 +10,9 @@ verify_jwt = true
 [functions.claim-arena]
 verify_jwt = true
 
+[functions.claim-saves]
+verify_jwt = true
+
 [functions.list]
 verify_jwt = false
 

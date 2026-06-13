@@ -46,12 +46,10 @@ export async function initCloud(onChange) {
 }
 
 export async function signIn(provider) { // 'discord' | 'google'
-  // a guest signing in: stash their id + cloud saves so the app can carry the arena rating + offer to bring saves in
-  if (isGuest()) {
-    let saves = [];
-    try { saves = await listCloudSaves(); } catch (e) { console.warn('guest stash failed:', e); }
-    localStorage.setItem('guest_claim', JSON.stringify({ from: _user.id, saves }));
-  }
+  // Remember the guest id across the OAuth round-trip so the new account can claim the guest's arena team +
+  // cloud saves SERVER-SIDE (claimArena / claimSaves read them by id). No fragile pre-sign-in snapshot of the
+  // saves themselves — that snapshot used to fail silently (e.g. during an outage) and lose the migration.
+  if (isGuest()) localStorage.setItem('guest_claim', JSON.stringify({ from: _user.id }));
   const redirectTo = location.href.split('#')[0].split('?')[0];
   return supa.auth.signInWithOAuth({ provider, options: { redirectTo } });
 }
@@ -60,6 +58,16 @@ export async function signIn(provider) { // 'discord' | 'google'
 // and only claims if the account has no team yet (never overwrites). Called after a guest upgrades.
 export async function claimArena(guestId) {
   const { data, error } = await supa.functions.invoke('claim-arena', { body: { guestId } });
+  if (error) throw error;
+  return data;
+}
+
+// Move a guest's cloud saves into this (signed-in) account — server-side: the function reads the guest's
+// rows by id, re-signs each under the account's id, and fills only EMPTY account slots (never overwrites).
+// Mirrors claimArena. Returns { ok, claimed }. Nothing has to be snapshotted client-side, so it can't be
+// lost to a flaky pre-sign-in read the way the old stash could.
+export async function claimSaves(guestId) {
+  const { data, error } = await supa.functions.invoke('claim-saves', { body: { guestId } });
   if (error) throw error;
   return data;
 }

@@ -494,7 +494,12 @@ function onCloudAuthChange() {
       let blob = null; try { blob = JSON.parse(localStorage.getItem('guest_claim') || 'null'); } catch {}
       if (blob && blob.from && blob.from !== Cloud.cloudUserId()) {
         Cloud.claimArena(blob.from).catch((e) => console.warn('arena claim failed:', e)); // auto-carry the guest's Elo
-        if (blob.saves && blob.saves.length) promptGuestClaim(); else localStorage.removeItem('guest_claim');
+        // server-side: re-key + re-sign the guest's cloud saves into this account (empty slots only). Replaces
+        // the old client-snapshot "promptGuestClaim" flow, which could silently lose saves if the snapshot failed.
+        Cloud.claimSaves(blob.from)
+          .then((r) => { if (r && r.claimed) { UI.toast(`Brought ${r.claimed} save${r.claimed === 1 ? '' : 's'} into your account.`, 2800, 'win'); renderCloudSlots(); } })
+          .catch((e) => console.warn('save claim failed:', e))
+          .finally(() => localStorage.removeItem('guest_claim'));
       }
     }
   }
