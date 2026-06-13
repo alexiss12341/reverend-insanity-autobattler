@@ -207,6 +207,12 @@ export function setBgm(v) { writePrefs({ bgm: clamp(+v || 0, 0, 10) }); applyLev
 export function setSfx(v) { writePrefs({ sfx: clamp(+v || 0, 0, 10) }); applyLevels(); }
 export function setBgmMuted(m) { writePrefs({ bgmMuted: !!m }); applyLevels(); refreshMusic(); }
 export function setSfxMuted(m) { writePrefs({ sfxMuted: !!m }); applyLevels(); }
+// Re-apply the CURRENT save's audio prefs onto the live buses. The AudioContext is created on the first
+// user gesture — which, when that gesture is the "Continue" click, fires BEFORE the save is loaded, so
+// ensureCtx/applyLevels then read only the title-screen defaults (unmuted). Call this right after a save
+// becomes current (startGame) so a muted save is actually silenced on load instead of only showing checked
+// boxes. Safe before the context exists (applyLevels defers to ensureCtx, which no-ops without Web Audio).
+export function syncPrefs() { applyLevels(); refreshMusic(); }
 
 // Battle context → theme. On the Battle tab a frontier assault swaps to the engaged/boss mood; idle
 // farming stays on the calm `battle` mood. (Off the Battle tab the view's own theme is left alone.)

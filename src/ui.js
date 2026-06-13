@@ -619,6 +619,7 @@ export function showArenaResult(won, opponent, delta, points) {
 }
 export function clearArenaResult() { const e = $('arena-result'); if (e) e.remove(); }
 export function renderArena() {
+  _playGen++; // supersede any in-flight playTimeline — its frames must not paint over this fresh static draw
   const a = $('side-A'), b = $('side-B'); if (!a || !b) return;
   if (liveArena) {
     a.innerHTML = liveArena.allies.map((u, i) => unitBlock(u, 'ally', i)).join('');
@@ -712,11 +713,12 @@ export function renderTraitPanels(allyUnits, allyAuras, foeUnits, foeAuras, opts
 
 // ---- animated timeline playback ----
 const _sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-// Sleep that bails out within ~100ms once abortTimeline() is raised — used for the long gauge-fill wait
-// so an interrupting attempt/auto-challenge cancels the animation near-instantly even on slow fights.
-async function _sleepAbort(ms) {
+// Sleep that bails out within ~100ms once abortTimeline() is raised (or the playback goes stale via the
+// optional `stale` predicate) — used for the long gauge-fill wait so an interrupting attempt/auto-challenge
+// OR a tab switch cancels the animation near-instantly even on slow fights.
+async function _sleepAbort(ms, stale) {
   let waited = 0;
-  while (waited < ms && !_timelineAbort) { const chunk = Math.min(100, ms - waited); await _sleep(chunk); waited += chunk; }
+  while (waited < ms && !_timelineAbort && !(stale && stale())) { const chunk = Math.min(100, ms - waited); await _sleep(chunk); waited += chunk; }
 }
 function dmgPopup(host, text, cls, dy, life) {
   if (!host) return null;
@@ -750,6 +752,11 @@ function lungeVector(ae, te) {
 // Set true to make an in-flight playTimeline stop ASAP (used when a new floor attempt / auto-challenge
 // interrupts the current fight). Reset at the start of every playback.
 let _timelineAbort = false;
+// Bumped every time the arena is (re)drawn statically (renderArena) OR a new playback begins. playTimeline
+// captures the gen it started with and stops touching the DOM the moment a newer render/playback supersedes
+// it — so a fight that was animating when the user left the Battle tab can't repaint its stale mid-frame
+// onto the fresh arena after they switch back (units stuck "dead", 0-essence bars, frozen enemies).
+let _playGen = 0;
 export function abortTimeline() { _timelineAbort = true; }
 // Plays a battle timeline produced by resolveEncounter(..., { record:true }): charge bars fill,
 // actors lunge toward their target, HP bars drop with floating damage numbers. Resolves when done
@@ -757,6 +764,8 @@ export function abortTimeline() { _timelineAbort = true; }
 export async function playTimeline(tl, ctx = {}) {
   const a = $('side-A'), b = $('side-B'); if (!a || !b || !tl) return;
   _timelineAbort = false;
+  const gen = ++_playGen;                                  // this playback's identity
+  const stale = () => _timelineAbort || gen !== _playGen;  // bail signal: explicit abort OR superseded by a newer render/playback
   const allies = tl.allies.map((u) => ({ ...u, ess: u.essMax }));
   let wave = 0, foes = (tl.waves[0] || []).map((u) => ({ ...u, ess: u.essMax }));
   a.innerHTML = allies.map((u, i) => unitBlock(u, 'ally', i)).join('');
@@ -767,7 +776,7 @@ export async function playTimeline(tl, ctx = {}) {
   // per-side Auras & Traits panel: ally auras are fixed for the fight; foe auras swap with each wave.
   renderTraitPanels(allies, tl.allyAuras || [], foes, (tl.waveAuras || [])[0], { hideFoeGu: !!ctx.arena });
 
-  const el = (side, i) => $(`ub-${side}-${i}`);
+  const el = (side, i) => (gen === _playGen ? $(`ub-${side}-${i}`) : null); // stale playback paints nothing
   const unit = (side, i) => (side === 'ally' ? allies[i] : foes[i]);
   const drawHp = (side, i) => { const u = unit(side, i), e = el(side, i); if (!u || !e) return;
     e.querySelector('.hp>i').style.width = pctHp(u.hp, u.max) + '%';
@@ -816,7 +825,7 @@ export async function playTimeline(tl, ctx = {}) {
   const LUNGE_OUT = 130, IMPACT_MS = 110, LUNGE_BACK = 110;
 
   for (const step of tl.steps) {
-    if (_timelineAbort) return; // a new attempt/auto-challenge interrupted this fight — bail immediately
+    if (stale()) return; // interrupted by a new attempt/auto-challenge, or superseded by a tab-switch redraw — bail
     if (step.gauges && step.wave !== wave) {
       wave = step.wave; foes = (tl.waves[wave] || []).map((u) => ({ ...u, ess: u.essMax }));
       b.innerHTML = foes.map((u, i) => unitBlock(u, 'foe', i)).join('');
@@ -832,8 +841,8 @@ export async function playTimeline(tl, ctx = {}) {
         step.essence.ally.forEach((v, i) => drawEss('ally', i, v, dur));
         step.essence.foe.forEach((v, i) => drawEss('foe', i, v, dur));
       }
-      await _sleepAbort(dur);
-      if (_timelineAbort) return; // interrupted during the gauge-fill wait
+      await _sleepAbort(dur, stale);
+      if (stale()) return; // interrupted/superseded during the gauge-fill wait
     }
     for (const act of step.acts || []) {
       const ae = el(act.side, act.i);
@@ -901,6 +910,7 @@ export async function playTimeline(tl, ctx = {}) {
       if (ae) { ae.classList.remove('lunging', 'atk-a', 'atk-f'); ae.style.transition = ''; }
       if (bs) bs.classList.remove('lunge-active');
     }
+    if (stale()) return; // a tab-switch redraw happened mid-step — don't repaint stale trait buffs over the fresh panel
     // refresh on-block status badges from the end-of-instant snapshot
     if (step.statuses) {
       step.statuses.ally.forEach((list, i) => { drawStatuses('ally', i, list); drawTraitBuffs('ally', i, list); });

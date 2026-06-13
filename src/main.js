@@ -430,6 +430,7 @@ function startGame(obj, isNew) {
   applyNavMode(); applyNavGroups();
   activeTab = 'battle';
   UI.render('battle');
+  Audio.syncPrefs(); // re-apply THIS save's BGM/SFX mute+levels (the context may have come up on a pre-load gesture with defaults)
   if (!isNew) {
     const off = applyOffline();
     // One-time Dao affinity/archetype re-pick (legacy saves) takes priority over the offline summary,
