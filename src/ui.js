@@ -2576,6 +2576,12 @@ export function viewFloors() {
 // Player-facing patch notes. Add the newest release to the TOP of this list; each entry is
 // { date, title, items: [[heading, html], …] }. HTML is allowed in the item bodies.
 const WHATS_NEW = [
+  { date: 'Jun 13, 2026', title: 'Gu Refinery', items: [
+    ['Auto-Craft', 'Short on materials — or the lower-tier fodder — for a Gu? The Refining Desk now has an <b>⚒ Auto-Craft</b> button: if your <b style="color:var(--stone)">石 Primeval Stones</b> can cover it, it <b>buys the missing resources from the Market</b> and <b>recursively forges the whole lower-tier fodder chain</b>, then crafts the Gu — all in <b>one click</b>. So you can leap <b>straight to a Tier 5 Gu</b> without hand-building the T1→T4 chain first. It spends what you already own first (only buying or forging the shortfall) and shows the <b>total stone cost</b> and exactly what it will do <b>before</b> you commit. Every gate still holds — locked paths, a path’s floor requirement, and the Market’s own roster-rank limit on which materials you can buy.'],
+  ] },
+  { date: 'Jun 13, 2026', title: 'Cultivation', items: [
+    ['See stat changes as you allocate', 'While distributing attribute points on a cultivator’s <b>Character</b> sheet, the <b>Combat Profile</b> now previews the outcome <b>before you commit</b>. Each affected stat — <b>ATK · HP · DEF · SPD</b>, plus Crit, Evasion, Hit, Potency and the rest — shows a <b style="color:var(--jade)">jade ± delta</b> for the points you’ve <b>staged</b>, so you can stage, compare, and only <b>Confirm</b> once the build looks right. (Allocation stays permanent unless you Respec.)'],
+  ] },
   { date: 'Jun 13, 2026', title: 'Arena', items: [
     ['Asynchronous PvP', 'A new <b>擂 Arena</b> page: register your battle team as a <b>defense</b>, then hunt down other real players’ teams. Every fight resolves <b>server-side</b> (authoritative — no cheating the result) and updates your <b>Elo rating</b>; climb the ladder by toppling stronger cultivators. The Arena opens once you <b>clear Floor 50</b>.'],
     ['Who you can challenge', 'Matchmaking is an <b>asymmetric band</b> — you may punch <b>up to +300 Elo above</b> you but only <b>150 below</b>, so climbing is encouraged — backed by a <b>nearest-8</b> fallback, so your closest rivals are <b>always</b> challengeable even on a thin early ladder.'],
