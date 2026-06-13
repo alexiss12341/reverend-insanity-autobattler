@@ -1870,23 +1870,34 @@ function csMarrow(c) {
     <div class="ch5-note">${totalStaged > 0 ? `${compact(totalStaged)} staged · ${compact(remaining)} left — Confirm to commit (permanent).` : ('Allocation is permanent unless you Respec (1,000 石/pt + ' + rEss + ' ✦). Every realm grants more points.')}</div>
   </div>`;
 }
-// Right column top: derived combat stats in a 2-up grid (the "tempered flesh").
-function csTemperedFlesh(s) {
+// Right column top: derived combat stats in a 2-up grid (the "tempered flesh"). When `pv` (a preview
+// stat block built from staged-but-uncommitted attribute points) is supplied, each changed stat gets a
+// jade delta chip so the player sees the effect BEFORE confirming the allocation.
+function csTemperedFlesh(s, pv) {
   const hit = 0.85 + s.hitChance;   // mirrors csStatGrid: 85% base + bonus, uncapped
-  const cell = (k, v) => `<div class="ch5-fcell"><span class="ch5-fk">${k}</span><span class="ch5-fv">${v}</span></div>`;
-  const core = (k, v) => `<div class="ch5-ccell"><span class="ch5-fk">${k}</span><span class="ch5-cv">${v}</span></div>`;
+  const phit = pv ? 0.85 + pv.hitChance : null;
+  const pctPts = (x) => Math.round(x * 100) + '%'; // delta shown in percentage points
+  // Jade delta chip: format the change in the stat's own display units; suppress when it rounds to nothing.
+  const dlt = (cur, next, pf) => {
+    if (next == null) return '';
+    const d = next - cur, mag = pf(Math.abs(d));
+    if (mag === pf(0)) return '';
+    return `<i class="ch5-fd${d < 0 ? ' dn' : ''}">${d > 0 ? '+' : '−'}${mag}</i>`;
+  };
+  const cell = (k, v, d) => `<div class="ch5-fcell"><span class="ch5-fk">${k}</span><span class="ch5-fv">${v}${d}</span></div>`;
+  const core = (k, v, d) => `<div class="ch5-ccell"><span class="ch5-fk">${k}</span><span class="ch5-cv">${v}${d}</span></div>`;
   return `<div class="ch5-panel">
-    <div class="ch5-h">Tempered Flesh</div>
+    <div class="ch5-h">Tempered Flesh${pv ? ' <i class="ch5-preview">staged preview</i>' : ''}</div>
     <div class="ch5-core">
-      ${core('ATK', compact(s.atk))}${core('HP', compact(s.maxHp))}${core('DEF', compact(s.def))}${core('SPD', s.spd)}
+      ${core('ATK', compact(s.atk), dlt(s.atk, pv && pv.atk, compact))}${core('HP', compact(s.maxHp), dlt(s.maxHp, pv && pv.maxHp, compact))}${core('DEF', compact(s.def), dlt(s.def, pv && pv.def, compact))}${core('SPD', s.spd, dlt(s.spd, pv && pv.spd, (x) => '' + Math.round(x)))}
     </div>
     <div class="ch5-flesh">
-      ${cell('Crit', pct(s.crit))}${cell('Crit Dmg', '×' + s.critDamage.toFixed(2))}
-      ${cell('Evasion', pct(s.dodge))}${cell('Hit', pct(hit))}
-      ${cell('Pen', pct(s.armorPen))}${cell('Potency', pct(s.potency))}
-      ${cell('Resist', pct(s.statusResist))}${cell('Crit Res', pct(s.critResist))}
-      ${cell('Lucky', pct(s.luckyHit))}${cell('Lifesteal', pct(s.lifesteal))}
-      ${cell('Thorns', pct(s.thorns))}${cell('Regen', compact(s.regen))}
+      ${cell('Crit', pct(s.crit), dlt(s.crit, pv && pv.crit, pctPts))}${cell('Crit Dmg', '×' + s.critDamage.toFixed(2), dlt(s.critDamage, pv && pv.critDamage, (x) => x.toFixed(2)))}
+      ${cell('Evasion', pct(s.dodge), dlt(s.dodge, pv && pv.dodge, pctPts))}${cell('Hit', pct(hit), dlt(hit, phit, pctPts))}
+      ${cell('Pen', pct(s.armorPen), dlt(s.armorPen, pv && pv.armorPen, pctPts))}${cell('Potency', pct(s.potency), dlt(s.potency, pv && pv.potency, pctPts))}
+      ${cell('Resist', pct(s.statusResist), dlt(s.statusResist, pv && pv.statusResist, pctPts))}${cell('Crit Res', pct(s.critResist), dlt(s.critResist, pv && pv.critResist, pctPts))}
+      ${cell('Lucky', pct(s.luckyHit), dlt(s.luckyHit, pv && pv.luckyHit, pctPts))}${cell('Lifesteal', pct(s.lifesteal), dlt(s.lifesteal, pv && pv.lifesteal, pctPts))}
+      ${cell('Thorns', pct(s.thorns), dlt(s.thorns, pv && pv.thorns, pctPts))}${cell('Regen', compact(s.regen), dlt(s.regen, pv && pv.regen, compact))}
     </div>
   </div>`;
 }
@@ -1919,6 +1930,15 @@ export function viewCharacter(id) {
   if (!c) return `${pagehead('人', 'Roster', 'Not Found', 'That cultivator is no longer in your roster.')}
     <button onclick="G.setTab('team')">← Back to Roster</button>`;
   const s = effectiveStats(c);
+  // PREVIEW: if attribute points are staged on this character, derive the stats they WOULD produce so the
+  // Combat Profile can show a jade delta beside each affected stat (before the player commits — see issue).
+  let preview = null;
+  const adraft = (S().allocDraft && S().allocDraft.id === c.id) ? S().allocDraft : null;
+  if (adraft && ATTR_KEYS.some((k) => (adraft[k] | 0) > 0)) {
+    const attrs = { ...(c.attrs || {}) };
+    for (const k of ATTR_KEYS) attrs[k] = (attrs[k] || 0) + (adraft[k] | 0);
+    preview = effectiveStats({ ...c, attrs });
+  }
   const rc = rarityColor(c.rarity);
   const glyph = charGlyph(c);
   const ap = apertureGrade(apertureCapacity(effAptitude(c))); // aperture grade for the header/aside (incl. Soul Imprint)
@@ -1970,7 +1990,7 @@ export function viewCharacter(id) {
     <div class="ch5-grid">
       <aside class="ch5-side">${csMarrow(c)}</aside>
       <div class="ch5-center">${csApertureMandala(c)}</div>
-      <aside class="ch5-side">${csTemperedFlesh(s)}${csSoulImprint(c)}</aside>
+      <aside class="ch5-side">${csTemperedFlesh(s, preview)}${csSoulImprint(c)}</aside>
     </div>
 
     <div class="ch5-killer">

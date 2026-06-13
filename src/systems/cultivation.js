@@ -106,7 +106,7 @@ export function effectiveStats(ch, activeSet, ctx) {
     lifesteal: Math.max(0, add.lifesteal),               // UNCAPPED (heal still bounded by max HP at use)
     crit: Math.max(0, d.critChance + add.crit),          // UNCAPPED — battle.js subtracts target critResist FIRST, then clamps the contested roll (like hit/evasion)
     dodge: Math.max(0, d.evasion + add.evasion),         // UNCAPPED — scales past 100% like potency (no 95% pin)
-    thorns: Math.min(1, Math.max(0, add.thorns)),
+    thorns: Math.max(0, add.thorns),                     // UNCAPPED — a heavy reflect build can return more than it takes (battle.js floors the net at 0 and only reflects when the target survives, so no thorns-loop)
     essDrain: Math.max(0, lnEssDrain),   // Reaver: fraction of target essence stolen on hit
     dotSpread: Math.max(0, lnDotSpread), // Afflictor: chance to spread the victim's DoTs on a kill
     regen: Math.round((a.con || 0) * 0.15 + add.regenPct * maxHpF),

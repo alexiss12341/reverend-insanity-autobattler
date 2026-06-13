@@ -380,7 +380,7 @@ export function enemyUnit(floor, name, { boss = false, difficulty = 0, kind = 'b
   // they're the same across tiers — aptitude (by rarity) still caps the usable fraction, like allies.
   let essencePool = Math.round((base.essencePool + apBase) * essenceQualityByRank(rank - 1) * apertureCapacity(apt) * (1 + essPoolPct));
   let essenceRegen = base.essenceRegen * apertureRegenFactor(apt) * (1 + essRcvPct);   // both may be RAISED below to sustain a killer-capable foe's kit
-  const CAP = { thorns: 1, extra_turn: 0.5 }; // lifesteal/statusResist/armorPen/dodge/crit/critResist all UNCAPPED (parity with allies); thorns capped at 100%
+  const CAP = { extra_turn: 0.5 }; // thorns/lifesteal/statusResist/armorPen/dodge/crit/critResist all UNCAPPED (parity with allies)
 
   // Aggregate the Gu-derived modifiers for a loadout PREFIX (resonance recomputed from the prefix's
   // same-path count, exactly like the ally subset path), with the prefix's cumulative channel cost.

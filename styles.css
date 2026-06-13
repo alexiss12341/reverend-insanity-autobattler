@@ -1436,6 +1436,10 @@ button.mini{font-size:10px;padding:3px 8px;min-width:0;letter-spacing:0.1em}
 .ch5-fcell{display:flex;flex-direction:column;gap:3px;background:var(--bg2);padding:9px 12px}
 .ch5-fk{font-family:var(--mono);font-size:8px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted)}
 .ch5-fv{font-family:var(--mono);font-size:15px;color:var(--bone)}
+/* Staged-allocation preview: jade delta chip beside a combat stat (red when a stat would drop) */
+.ch5-fd{font-style:normal;font-size:11px;color:var(--jade);margin-left:5px;font-weight:400}
+.ch5-fd.dn{color:var(--blood-bright)}
+.ch5-preview{font-style:normal;font-family:var(--mono);font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--jade);margin-left:7px;vertical-align:middle}
 
 /* Soul imprint */
 .ch5-imprint{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
