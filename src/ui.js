@@ -618,6 +618,20 @@ export function showArenaResult(won, opponent, delta, points) {
   arena.appendChild(el);
 }
 export function clearArenaResult() { const e = $('arena-result'); if (e) e.remove(); }
+// Floating "skip to result" control over the battlefield during a RANKED ARENA bout. The outcome is
+// already decided server-side (the local playback just replays it), so the player can cut a long
+// animation — e.g. an evasion stalemate grinding out a 1% hit — straight to the VICTORY/DEFEAT stamp.
+// runBattle adds it before the arena playback and removes it after (skip itself just aborts the timeline).
+export function showArenaSkip() {
+  const arena = document.querySelector('.arena'); if (!arena) return;
+  clearArenaSkip();
+  const b = document.createElement('button');
+  b.id = 'arena-skip'; b.className = 'arena-skip'; b.type = 'button';
+  b.textContent = '▶▶ Skip to Result';
+  b.setAttribute('onclick', 'G.skipArena()');
+  arena.appendChild(b);
+}
+export function clearArenaSkip() { const e = $('arena-skip'); if (e) e.remove(); }
 export function renderArena() {
   _playGen++; // supersede any in-flight playTimeline — its frames must not paint over this fresh static draw
   const a = $('side-A'), b = $('side-B'); if (!a || !b) return;

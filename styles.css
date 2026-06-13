@@ -261,6 +261,12 @@ button.mini{font-size:10px;padding:3px 8px;min-width:0;letter-spacing:0.1em}
 .arena-result.win .ar-verdict,.arena-result.win .ar-title{color:var(--jade)}
 .arena-result.lose .ar-verdict,.arena-result.lose .ar-title{color:var(--blood-bright)}
 @keyframes arResult{from{opacity:0;transform:scale(1.14)}to{opacity:1;transform:scale(1)}}
+/* floating "skip to result" for ranked arena bouts (added/removed by runBattle around the bout playback) */
+.arena-skip{position:absolute;top:14px;left:50%;transform:translateX(-50%);z-index:6;pointer-events:auto;
+  font-family:var(--mono);font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--stone);
+  background:rgba(8,6,5,0.82);border:1px solid rgba(199,154,69,0.5);padding:7px 16px;cursor:pointer;border-radius:2px;
+  transition:background .15s,color .15s,border-color .15s}
+.arena-skip:hover{background:rgba(199,154,69,0.16);color:var(--bone);border-color:var(--stone)}
 .side-lbl{font-family:var(--mono);font-size:10px;letter-spacing:.24em;color:var(--muted);text-transform:uppercase}
 /* per-side "Auras & Traits" panels, side by side below the meta bar */
 .arena-panels{display:flex;gap:30px;width:100%;position:relative;z-index:1}

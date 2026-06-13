@@ -177,9 +177,11 @@ async function runBattle() {
       if (verbose) UI.clearLog();                                 // a lone manual attempt starts a fresh feed
       UI.logLine(`— Assaulting Floor ${floor}${enc.isBoss ? ' BOSS' : ''} (${enc.waves.length} wave${enc.waves.length > 1 ? 's' : ''}) —`, auto ? '' : 'rare');
     }
+    if (isArena) UI.showArenaSkip();                                                  // offer "skip to result" — the bout is already decided server-side
     await UI.playTimeline(res.timeline, isArena                                       // animated arena: charge bars, clashes, damage popups
       ? { arena: { opponent: arenaJob.server.defender.name } }                        // ranked PvP: header shows the opponent, not a floor
       : { floor: dispFloor, isBoss: enc.isBoss });
+    if (isArena) UI.clearArenaSkip();
     if (verbose && !abortBattle) log.forEach((m) => UI.logLine(m)); // dump the full feed after a single manual attempt / hunt
   } else {
     await sleepAbortable(fightWallMs(res.simTime));   // background: pace by the fight's real duration (interruptible)
@@ -1097,6 +1099,10 @@ const G = {
     stopIdle();
     runBattle();
   },
+  // Cut a ranked-bout animation straight to its result. The outcome is already decided server-side, so we
+  // only stop the playback (NOT abortBattle, which would discard it) — runBattle then falls through to the
+  // VICTORY/DEFEAT stamp + Elo readout. Harmless if no bout is animating (the skip button only shows then).
+  skipArena() { UI.abortTimeline(); },
   // Loadout slots (Arena side panel): named snapshots of the active team + formation.
   arenaSaveLoadout(i) {
     const name = prompt('Name this loadout:', `Loadout ${i + 1}`);
