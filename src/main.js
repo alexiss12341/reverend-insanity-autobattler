@@ -4,9 +4,9 @@ import { state, S, newGame, load, save, deleteSave, listSaves, SLOT_KEYS, migrat
 import { effectiveStats } from './systems/cultivation.js';
 import { resolveEncounter, fightWallMs } from './systems/battle.js';
 import { arenaRegister as registerArena, arenaList as listArena, arenaChallenge as challengeArena,
-  playerId as arenaPlayerId, playerName as arenaPlayerName, setPlayerName as arenaSetPlayerName,
-  getMyPoints as arenaGetMyPoints, setMyPoints as arenaSetMyPoints, setCloudId as arenaSetCloudId,
-  setAuthToken as arenaSetAuthToken } from './arenaStore.js';
+  arenaReset as resetArena, playerId as arenaPlayerId, playerName as arenaPlayerName, setPlayerName as arenaSetPlayerName,
+  getMyPoints as arenaGetMyPoints, setMyPoints as arenaSetMyPoints, clearMyPoints as arenaClearMyPoints,
+  setCloudId as arenaSetCloudId, setAuthToken as arenaSetAuthToken } from './arenaStore.js';
 import { spendArenaAttempt, refundArenaAttempt, arenaAttemptsLeft, saveLoadout, applyLoadout, renameLoadout, arenaUnlocked, ARENA_UNLOCK_FLOOR } from './systems/arenaMeta.js';
 import { attemptBreakthrough, respecAttributes, respecCost, RESPEC_ESSENCE_COST } from './systems/cultivation.js';
 import { rollFloorRewards, firstClearEssence, rollFarmEssence, applyDrops, buyResource, resourceCost, rollImmortalStones, immortalGuUpkeep, addImmortalStones } from './systems/economy.js';
@@ -776,6 +776,15 @@ function scrubKiller(c) {
   if (Array.isArray(k.support)) k.support = k.support.filter((uid) => eq.includes(uid));
 }
 
+// On reincarnation a cultivator enters the Arena with a clean slate: clear the locally-cached rating so the
+// tab shows "unranked" at once, then ask the server to delete the registered defense team (which also zeroes
+// the Elo rating + win/loss record). The server call is best-effort — JWT-gated, so it no-ops for guests or
+// offline; the next register starts a fresh row at the default rating, exactly like a brand-new player.
+function resetArenaStanding() {
+  arenaClearMyPoints();
+  resetArena().catch(() => {}); // non-fatal: local cache is already cleared even if the server call fails
+}
+
 // ---------- global event API ----------
 const G = {
   // New game is a four-step modal chain (name → Dao path → first Gu → archetype), carried by `pendingNew`
@@ -1282,6 +1291,7 @@ const G = {
     const r = reincarnate(choice);
     UI.closeModal();
     if (!r.ok) return UI.toast(r.msg);
+    resetArenaStanding(); // a new life enters the Arena unranked: wipe rating + record + the registered team
     UI.toast(`Reincarnated — +${r.award} Sovereign Souls (${r.souls} total).`);
     G.setTab('battle'); UI.refreshTop(); save();
   },

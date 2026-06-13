@@ -48,6 +48,9 @@ export function setPlayerName(n) { localStorage.setItem(LS_NAME, String(n || '')
 const LS_POINTS = 'arena_points';
 export function getMyPoints() { const v = localStorage.getItem(LS_POINTS); return v == null ? null : (parseInt(v, 10) || 0); }
 export function setMyPoints(n) { if (n != null) localStorage.setItem(LS_POINTS, String(n | 0)); }
+// Drop the cached rating (on reincarnation) so the tab shows "unranked" until the server confirms a fresh
+// standing. getMyPoints() then returns null, which the UI renders as the default rating.
+export function clearMyPoints() { localStorage.removeItem(LS_POINTS); }
 
 // Serialize the LOCAL active team into the raw-input contract the Edge Functions validate + recompute.
 // Only raw inputs (attrs/realm/gu ids/killer/formation) — never computed stats, which the server derives.
@@ -93,6 +96,10 @@ export function arenaRegister() {
   return call('register', { playerId: playerId(), name: playerName(), team, ctx });
 }
 export function arenaList() { return call('list'); }
+// REINCARNATION reset: delete this player's registered defense team server-side, wiping their Elo rating +
+// win/loss record. JWT-gated, so it no-ops (401) for guests/offline — the caller swallows that and relies on
+// clearMyPoints() for the local display reset.
+export function arenaReset() { return call('arena-reset', {}); }
 export function arenaChallenge(defenderId) {
   const { team, ctx } = serializeTeam();
   if (!team.length) return Promise.reject(new Error('Put at least one cultivator on your battle team first.'));
