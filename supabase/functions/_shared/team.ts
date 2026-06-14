@@ -7,6 +7,7 @@ import { resolveOwned, GU_LIB } from "../../../src/data/gu.js";
 import { realmPointsTotal, rarityBonus, ATTR_KEYS } from "../../../src/data/attributes.js";
 import { guSlots } from "../../../src/data/realms.js";
 import { RARITY_ORDER } from "../../../src/data/rarities.js";
+import { validateMyriad } from "../../../src/data/myriadValidate.js";
 
 export const MAX_TEAM = 6;
 export const ENGINE_VERSION = 1; // bump on any combat-math change so clients can detect replay-skew
@@ -67,9 +68,18 @@ export function prepareTeam(team, ctxIn) {
 
   const invMap = new Map();
   for (const m of team) for (const it of (m.guInv || [])) {
-    if (!it || typeof it.uid !== "string" || typeof it.guId !== "string") return { error: "bad guInv entry" };
-    if (!GU_LIB[it.guId]) return { error: `unknown Gu ${it.guId}` };
-    invMap.set(it.uid, it);
+    if (!it || typeof it.uid !== "string") return { error: "bad guInv entry" };
+    if (it.myriad) {
+      // Player-forged myriad Gu: no GU_LIB entry — its def is inline + client-supplied, so VALIDATE it
+      // against the legal fusion budget and store the cleaned copy (guLookup → resolveOwned reads .myriad).
+      const v = validateMyriad(it.myriad);
+      if (v.error) return { error: v.error };
+      invMap.set(it.uid, { uid: it.uid, myriad: v.def });
+    } else {
+      if (typeof it.guId !== "string") return { error: "bad guInv entry" };
+      if (!GU_LIB[it.guId]) return { error: `unknown Gu ${it.guId}` };
+      invMap.set(it.uid, it);
+    }
   }
   for (const m of team) for (const uid of (m.gu || [])) if (!invMap.has(uid)) return { error: `equipped Gu ${uid} not in guInv` };
 

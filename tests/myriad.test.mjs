@@ -13,6 +13,7 @@ import {
   myriadProfLevel, profPointsForLevel, PROF_INCR, PROF_MAX_LEVEL, PROF_BONUS_PER_LEVEL, PROF_CAP,
 } from '../src/data/myriad.js';
 import { canFuse, fuse, canRankUp, rankUp, autoRankUp, planAutoRankUp, salvageMyriad } from '../src/systems/myriad.js';
+import { validateMyriad } from '../src/data/myriadValidate.js';
 import { arenaRankBracket, arenaRankReward, arenaShopStock, arenaShopBuy, buyCatalyst, CATALYST_MARKET_PRICE } from '../src/systems/economy.js';
 
 const S = () => state.current;
@@ -249,3 +250,34 @@ const plan = planAutoRankUp(myr.uid);
 ok(plan.ok && plan.forge.length >= 1 && plan.totalStones > 0, 'auto-rank plan forges the missing T1 tag-cover fodder');
 const ar = withRandom(0, () => autoRankUp(myr.uid));  // forge fodder via the Market, then rank up
 ok(ar.ok && ar.success && resolveOwned(myr).tier === 2, 'auto-rank forges fodder + ranks the myriad Gu to T2');
+
+section('myriad: ARENA validation — legit defs pass, tampered defs rejected (data/myriadValidate.js)');
+// Mirrors the server-side guard in supabase/functions/_shared/team.ts (which can't be imported headlessly).
+{
+  let legit = 0, rejects = 0;
+  for (const path of ['fire', 'metal', 'sword', 'poison']) {
+    for (let tier = 1; tier <= 3; tier++) {
+      const pool = Object.values(GU_LIB).filter((g) => g.daoPath === path && g.tier === tier && (g.effects || []).some((e) => e.kind === 'status' || e.value > 0));
+      if (pool.length < 1) continue;
+      const def = rollFusedDef(pool[0], pool[pool.length - 1], tier, {});
+      if (!validateMyriad(def).error) legit++;
+      const up = rerollDef(def, tier + 1, {});            // rank-up never-worse floor must also pass
+      if (!validateMyriad(up).error) legit++;
+    }
+  }
+  ok(legit >= 8, `legitimately-forged + ranked-up myriad defs validate (${legit} passed)`);
+
+  // build one real def to tamper with
+  const fireT3 = rollFusedDef(GU_LIB['gu_fire_atk_t3'], GU_LIB['gu_fire_def_t3'], 3, {});
+  const tamper = (mut) => { const d = JSON.parse(JSON.stringify(fireT3)); mut(d); return !!validateMyriad(d).error && ++rejects; };
+  ok(tamper((d) => d.effects.forEach((e) => { if (e.kind !== 'status') e.value *= 3; })), 'rejects ×3 inflated effect values');
+  ok(tamper((d) => { d.tier = 9; }), 'rejects tier above the cap');
+  ok(tamper((d) => d.effects.push({ kind: 'atk', value: 0.9 }, { kind: 'def', value: 0.9 }, { kind: 'hp', value: 0.9 }, { kind: 'spd', value: 0.9 })), 'rejects stuffed extra effects');
+  ok(tamper((d) => { d.daoPath = 'heaven'; }), 'rejects a LOCKED (supreme) path');
+  ok(tamper((d) => { d.daoPath = 'nonsense'; }), 'rejects a nonexistent path');
+  ok(!!validateMyriad(null).error, 'rejects a null def');
+
+  // cleaned def recomputes essence/bp + clamps junk
+  const clean = validateMyriad({ daoPath: 'metal', tier: 3, name: 'X'.repeat(200), effects: [{ kind: 'atk', value: 0.2 }], essence: 0, bp: 999999, junk: 1 }).def;
+  ok(clean && clean.essence > 0 && clean.bp < 999999 && clean.name.length <= 60 && clean.junk === undefined, 'cleaned def recomputes essence/bp + drops junk');
+}

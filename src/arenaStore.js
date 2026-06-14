@@ -92,7 +92,10 @@ export function flushArenaReset() {
 export function serializeTeam() {
   const team = activeTeam().map((c) => {
     const gu = (c.gu || []).filter(Boolean);
-    const guInv = (S().guInv || []).filter((o) => gu.includes(o.uid)).map((o) => ({ uid: o.uid, guId: o.guId }));
+    // Myriad-forged Gu have no guId — their definition lives inline on the item; ship it so the server can
+    // validate + equip it (the arena rejects a guInv entry lacking BOTH guId and a myriad def).
+    const guInv = (S().guInv || []).filter((o) => gu.includes(o.uid))
+      .map((o) => (o.myriad ? { uid: o.uid, myriad: o.myriad } : { uid: o.uid, guId: o.guId }));
     return {
       name: c.name, rarity: c.rarity, realm: c.realm | 0, aptitude: c.aptitude || 1, imprint: c.imprint || 0,
       attrs: { str: c.attrs.str | 0, agi: c.attrs.agi | 0, con: c.attrs.con | 0, int: c.attrs.int | 0, luck: c.attrs.luck | 0 },
