@@ -3,9 +3,10 @@
 import { state, S, newGame, load, save, deleteSave, listSaves, SLOT_KEYS, migrateSave, activeTeam, rowOf, laneOf, tileOccupant, rowCount, ROW_CAP, LANES, firstFreeTile, normalizeFormation } from './state.js';
 import { effectiveStats } from './systems/cultivation.js';
 import { resolveEncounter, fightWallMs } from './systems/battle.js';
-import { arenaRegister as registerArena, arenaList as listArena, arenaChallenge as challengeArena,
-  arenaReset as resetArena, playerId as arenaPlayerId, playerName as arenaPlayerName, setPlayerName as arenaSetPlayerName,
+import { arenaRegister as registerArena, arenaList as listArena, arenaChallenge as challengeArena, arenaMyTeam,
+  playerId as arenaPlayerId, playerName as arenaPlayerName, setPlayerName as arenaSetPlayerName,
   getMyPoints as arenaGetMyPoints, setMyPoints as arenaSetMyPoints, clearMyPoints as arenaClearMyPoints,
+  markArenaResetPending as arenaMarkResetPending, flushArenaReset as arenaFlushReset, arenaResetPendingFor,
   setCloudId as arenaSetCloudId, setAuthToken as arenaSetAuthToken } from './arenaStore.js';
 import { spendArenaAttempt, refundArenaAttempt, arenaAttemptsLeft, saveLoadout, applyLoadout, renameLoadout, arenaUnlocked, ARENA_UNLOCK_FLOOR } from './systems/arenaMeta.js';
 import { attemptBreakthrough, respecAttributes, respecCost, RESPEC_ESSENCE_COST } from './systems/cultivation.js';
@@ -510,6 +511,7 @@ function startGame(obj, isNew) {
     else if (off) setTimeout(() => showOffline(off), 200);
   }
   startIdle();
+  maybeResyncArenaDefense(); // one-time: overwrite any stale arena defense team left from a past reincarnation
   save();
 }
 function showOffline(off) {
@@ -557,12 +559,22 @@ function updateOnlineCount(n) {
 }
 function onCloudAuthChange() {
   if (Cloud && cloudAcct) {
-    arenaSetCloudId(Cloud.cloudUserId()); // rekey the arena identity to the current cloud user (guest or account)
+    const cid = Cloud.cloudUserId();
+    arenaSetCloudId(cid);                  // rekey the arena identity to the current cloud user (guest or account)
     arenaSetAuthToken(Cloud.cloudToken()); // hand the arena calls the verified JWT (their server-side identity)
+    let claiming = false;
     if (Cloud.isSignedIn()) { // a guest just upgraded into a real account → carry their rating + offer save claim
       let blob = null; try { blob = JSON.parse(localStorage.getItem('guest_claim') || 'null'); } catch {}
-      if (blob && blob.from && blob.from !== Cloud.cloudUserId()) {
-        Cloud.claimArena(blob.from).catch((e) => console.warn('arena claim failed:', e)); // auto-carry the guest's Elo
+      if (blob && blob.from && blob.from !== cid) {
+        claiming = true;
+        // Carry the guest's arena standing into the account. If that guest owed a reincarnation reset, the team
+        // we just carried is STALE — re-point the owed reset at the account, then flush AFTER the claim lands
+        // (never before: flushing first would clear the marker before the stale team even arrives), so the
+        // carried team is DELETED instead of silently inherited.
+        Cloud.claimArena(blob.from)
+          .then(() => { if (arenaResetPendingFor() === blob.from) arenaMarkResetPending(cid); }) // re-key guest→account
+          .catch((e) => console.warn('arena claim failed:', e))
+          .finally(() => { arenaFlushReset().catch(() => {}); });
         // server-side: re-key + re-sign the guest's cloud saves into this account (empty slots only). Replaces
         // the old client-snapshot "promptGuestClaim" flow, which could silently lose saves if the snapshot failed.
         Cloud.claimSaves(blob.from)
@@ -571,6 +583,8 @@ function onCloudAuthChange() {
           .finally(() => localStorage.removeItem('guest_claim'));
       }
     }
+    if (!claiming) arenaFlushReset().catch(() => {}); // no guest carry-over → just retry any owed reset for this identity
+    maybeResyncArenaDefense(); // a game loaded before the token arrived? run the one-time defense resync now
   }
   const t = document.getElementById('title');
   if (t && !t.classList.contains('hidden')) renderTitle();
@@ -880,7 +894,34 @@ function scrubKiller(c) {
 // offline; the next register starts a fresh row at the default rating, exactly like a brand-new player.
 function resetArenaStanding() {
   arenaClearMyPoints();
-  resetArena().catch(() => {}); // non-fatal: local cache is already cleared even if the server call fails
+  arenaMarkResetPending();            // persist the owed delete (tagged to the CURRENT cloud identity) for retry
+  arenaFlushReset().catch(() => {});  // best-effort immediate attempt; the marker survives if it can't land
+}
+
+// ONE-TIME arena-defense RESYNC migration. A pre-existing save may still carry a STALE defense team on the
+// server from a PAST reincarnation (registered before the reset-on-rebirth flow, or when that best-effort
+// delete failed) — its team reflects cultivators/Gu the player no longer owns. This re-registers the player's
+// CURRENT active formation once, overwriting whatever stale snapshot is there with present reality. Guarded by
+// S().arenaTeamResynced (migrateSave sets it false for existing saves; newGame born-true so fresh lives skip
+// it and rely on the reincarnation reset). Best-effort + DURABLE: the flag is set only on a CONFIRMED register,
+// so an offline/unauthed/locked attempt simply retries on the next load or cloud-auth change. Idempotent — safe
+// to call from multiple triggers; register() threads the same queue as the reset, so they never race the row.
+let _resyncingArena = false;
+function markArenaResynced() { const cur = S(); if (cur) { cur.arenaTeamResynced = true; save(); } } // never re-run
+function maybeResyncArenaDefense() {
+  const s = S();
+  if (!s || s.arenaTeamResynced || _resyncingArena) return;
+  if (!Cloud || !cloudAcct) return;                 // lookup/register are JWT-gated — wait for a verified token
+  if (!arenaUnlocked() || !activeTeam().length) return; // nothing to do until the Arena's open + a team exists
+  _resyncingArena = true;
+  // Only re-register players who ALREADY have a registered defense team (a possibly-stale one from a past
+  // reincarnation) — never auto-enroll someone who deliberately never registered. The "my-team" lookup is
+  // authoritative (the capped `list` can't be trusted to contain the caller). No team → mark done so we stop
+  // checking; has a team → overwrite it with the current formation, then mark done.
+  arenaMyTeam()
+    .then((r) => (r && r.exists) ? registerArena().then(markArenaResynced) : markArenaResynced())
+    .catch(() => {})                                 // lookup/register failed → leave flag unset, retry next load / auth
+    .finally(() => { _resyncingArena = false; });
 }
 
 // ---------- global event API ----------
@@ -1183,6 +1224,7 @@ const G = {
     UI.setArenaSub('ladder');                           // opening from the nav lands on the ladder sub-view
     G.setTab('pvp');                                    // renders the locked panel itself when gated (ui.js viewPvp)
     if (!arenaUnlocked()) { UI.toast(`The Arena opens once you beat Floor ${ARENA_UNLOCK_FLOOR}.`); return; }
+    maybeResyncArenaDefense(); // entering the Arena: ensure any stale team from a past reincarnation is overwritten
     G.arenaRefresh();
   },
   async arenaRefresh() {

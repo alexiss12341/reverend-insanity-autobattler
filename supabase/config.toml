@@ -18,6 +18,11 @@ verify_jwt = true
 [functions.claim-saves]
 verify_jwt = true
 
+# "Does the caller have a registered defense team?" — JWT-gated so it only reads the caller's own row. Gates
+# the client's one-time defense-resync migration (only re-sync players who already have a team).
+[functions.my-team]
+verify_jwt = true
+
 [functions.list]
 verify_jwt = false
 

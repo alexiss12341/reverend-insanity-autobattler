@@ -86,6 +86,11 @@ export function newGame(slotKey, playerName = 'Fang Yuan', starter = null) {
     arenaDailyClaimedAt: 0,
     arenaWeeklyClaimedAt: 0,
     arenaShopBought: {},
+    // Born-true so a fresh life skips the one-time arena-defense RESYNC migration: a new cultivator has no
+    // stale server-side team to overwrite, and any future reincarnation is cleaned by the reset-on-rebirth
+    // flow instead. migrateSave flips PRE-EXISTING saves to false so they re-register once (main.js
+    // maybeResyncArenaDefense), scrubbing any defense team left over from a past reincarnation.
+    arenaTeamResynced: true,
     // Born-true so a fresh game is never swept by migrateSave's one-time legacy immortal-Gu purge (a new
     // cultivator opens with only a rank-1 starter Gu — nothing immortal to wipe). See migrateSave.
     immGuPurged: true,
@@ -196,6 +201,11 @@ export function migrateSave(o) {
   if (o.arenaDailyClaimedAt == null) o.arenaDailyClaimedAt = 0;
   if (o.arenaWeeklyClaimedAt == null) o.arenaWeeklyClaimedAt = 0;
   if (o.arenaShopBought == null || typeof o.arenaShopBought !== 'object') o.arenaShopBought = {};
+  // One-time arena-defense RESYNC: pre-existing saves may still have a stale defense team on the server from
+  // a PAST reincarnation (registered before the reset-on-rebirth flow, or when that best-effort delete failed).
+  // undefined → false so the game re-registers the CURRENT formation once on load (main.js
+  // maybeResyncArenaDefense), overwriting it. A fresh game already carries `true` (nothing stale to fix).
+  if (o.arenaTeamResynced === undefined) o.arenaTeamResynced = false;
   if (o.stats && o.stats.myriadRefines == null) o.stats.myriadRefines = 0;
   // One-time Dao affinity + archetype re-pick: saves that predate the starter-choice flow never let the
   // player choose (their affinity/line are canon defaults backfilled below). Flag them so the game asks

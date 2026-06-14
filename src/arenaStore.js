@@ -52,6 +52,41 @@ export function setMyPoints(n) { if (n != null) localStorage.setItem(LS_POINTS, 
 // standing. getMyPoints() then returns null, which the UI renders as the default rating.
 export function clearMyPoints() { localStorage.removeItem(LS_POINTS); }
 
+// The REINCARNATION arena reset is DURABLE + identity-safe. The server delete (arena-reset) can fail at the
+// moment of rebirth (offline, cloud not yet ready, an expired/un-refreshed JWT). A fire-and-forget call would
+// then silently leave the player's OLD — now nonexistent — defense team on the ladder forever, still holding
+// their Elo and still challengeable. So we persist WHICH identity owes the delete and RETRY it whenever that
+// SAME verified identity becomes available (boot / cloud auth change). Storing the player_id (not a bare flag)
+// is the safeguard: arena-reset only ever deletes the CALLER's own row, so flushing under any OTHER identity
+// (e.g. after a sign-out flips us back to a guest) would clear the marker without deleting the right team.
+// A fresh register() also clears it (a deliberate new defense team supersedes any owed reset).
+const LS_RESET_PENDING = 'arena_reset_pending';
+export function markArenaResetPending(pid) {
+  const id = pid || playerId(); // playerId() already prefers the cloud id (the server-side arena identity)
+  try { localStorage.setItem(LS_RESET_PENDING, String(id || '')); } catch (e) {}
+}
+export function arenaResetPendingFor() { return localStorage.getItem(LS_RESET_PENDING) || null; }
+function clearArenaResetPending() { try { localStorage.removeItem(LS_RESET_PENDING); } catch (e) {} }
+
+// Serialize the two writers of the player's OWN `teams` row — the reset DELETE and the register POST — so they
+// can never race (an in-flight reset deleting a team the player just registered, or two auth-change flushes
+// firing the same delete). Every flush/register threads through this one-at-a-time queue.
+let _arenaOp = Promise.resolve();
+function enqueue(fn) { const run = _arenaOp.then(fn, fn); _arenaOp = run.then(() => {}, () => {}); return run; }
+
+// Attempt the owed reset, but ONLY while authenticated AS the identity that owes it (else we'd 401, or clear
+// the marker under the wrong identity). No-op otherwise — the marker survives for the next auth-ready moment.
+// The in-queue re-check lets a fresh register() (which clears the marker) supersede a still-queued reset.
+// Resolves true only when the server confirms the deletion; never throws.
+export function flushArenaReset() {
+  const owed = arenaResetPendingFor();
+  if (!owed || !_authToken || _cloudId !== owed) return Promise.resolve(false);
+  return enqueue(() => {
+    if (arenaResetPendingFor() !== owed || _cloudId !== owed) return false; // superseded / identity changed
+    return arenaReset().then(() => { clearArenaResetPending(); return true; }).catch(() => false);
+  });
+}
+
 // Serialize the LOCAL active team into the raw-input contract the Edge Functions validate + recompute.
 // Only raw inputs (attrs/realm/gu ids/killer/formation) — never computed stats, which the server derives.
 export function serializeTeam() {
@@ -93,9 +128,17 @@ async function call(path, body) {
 export function arenaRegister() {
   const { team, ctx } = serializeTeam();
   if (!team.length) return Promise.reject(new Error('Put at least one cultivator on your battle team first.'));
-  return call('register', { playerId: playerId(), name: playerName(), team, ctx });
+  // A deliberate registration is the player's current defense team — it supersedes any owed reincarnation
+  // reset, so clear the marker on success (else a later flush would delete the team they just registered).
+  // Threaded through the same queue as flush so the DELETE and this POST can never cross on the wire.
+  return enqueue(() => call('register', { playerId: playerId(), name: playerName(), team, ctx })
+    .then((r) => { clearArenaResetPending(); return r; }));
 }
 export function arenaList() { return call('list'); }
+// Does THIS identity already have a registered defense team? JWT-gated server lookup (resolves { ok, exists,
+// points }) — used by the one-time resync migration so it only ever touches players who ALREADY registered,
+// never auto-enrolling a newcomer. Authoritative where the capped `list` can't be (top-100 only).
+export function arenaMyTeam() { return call('my-team', {}); }
 // REINCARNATION reset: delete this player's registered defense team server-side, wiping their Elo rating +
 // win/loss record. JWT-gated, so it no-ops (401) for guests/offline — the caller swallows that and relies on
 // clearMyPoints() for the local display reset.
