@@ -30,7 +30,7 @@ const ROMAN = ['', 'I', 'II', 'III', 'IV', 'V'];
 // via the commonality multiplier (×1 common → ×3.5 esoteric) + the Gu's budget ratio. RI bands:
 // R1 500–1k · R2 1k–2.5k · R3 2.5k–10k · R4 25k–100k · R5 250k–1M+ → midpoints below. Immortal ranks 6-9
 // are effectively priceless — they keep the ~×10 per-rank acceleration into the billions.
-const TIER_STONES = {
+export const TIER_STONES = {
   1: 750, 2: 1750, 3: 6250, 4: 62500, 5: 625000,
   6: 2500000, 7: 25000000, 8: 250000000, 9: 2500000000,
 };
@@ -257,6 +257,10 @@ export const pathStatuses = (path) => (PATH_STATUSES[path] || []).slice();
 // (instance `tier` 7-9, set by crafting.upgrade) surfaces that rank's precomputed effects/essence/bp so
 // effectiveStats sees the bumped value. Non-immortal or un-ascended items return the library Gu as-is.
 export function resolveOwned(item) {
+  // Myriad Gu (data/myriad.js): a player-forged, multi-effect Gu whose full definition lives INLINE on the
+  // inventory item (no GU_LIB entry). Surface it as a synthetic Gu so the whole engine — effectiveStats,
+  // battle, equip, the sheet — treats it like any Gu. Per-instance id = the item uid; never unique.
+  if (item && item.myriad) return { id: item.uid, ...item.myriad, unique: false, myriad: true };
   const gu = item && GU_LIB[item.guId]; if (!gu) return null;
   const t = item.tier;
   if (!t || t === gu.tier || !gu.byTier || !gu.byTier[t]) return gu;
@@ -294,6 +298,7 @@ const STAT_LABEL = {
 export const tagLabel = (t) => STAT_LABEL[t] || t;
 export function guTags(gu) {
   const tags = new Set();
+  if (gu && gu.myriad) tags.add('myriad');   // player-forged myriad Gu carry the [myriad] tag
   for (const e of (gu && gu.effects) || []) {
     if (e.kind === 'status') tags.add('status');
     else if (e.value > 0) tags.add(e.kind);

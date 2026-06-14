@@ -19,6 +19,8 @@ export function prestige() {
 // Global multipliers consumed by cultivation (combat) and economy (gains).
 export const prestigeCombatMult = () => 1 + (prestige().boons.might || 0) * 0.04;
 export const prestigeGainMult = () => 1 + (prestige().boons.fortune || 0) * 0.08;
+// Small additive success bonus to IMMORTAL myriad refining (data/myriad mastery term): +1% per Insight level.
+export const prestigeInsightBonus = () => (prestige().boons.insight || 0) * 0.01;
 
 export const BOONS = {
   might:   { name: 'Sovereign Might',   base: 15, max: 5, blurb: '+4% ATK & Max HP to all allies (per level, max 5).' },
@@ -109,6 +111,9 @@ export function reincarnate(choice = null) {
     : null;
   const fresh = newGame(slot, playerName || 'Fang Yuan', starter);
   fresh.prestige = p;
+  // Reincarnation wipes myriad Gu + all four Arena resources (newGame already zeroes them), but refining
+  // PROFICIENCY is the one persistent mastery — carry it across lives.
+  fresh.myriadProficiency = S().myriadProficiency || 0;
   // Sovereign Insight: the new life inherits the permanent +1 Gu slot/level and a fresh resource head-start.
   const insight = p.boons.insight || 0;
   if (insight) {

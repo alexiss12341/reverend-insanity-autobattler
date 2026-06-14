@@ -8,7 +8,7 @@
 // just LABELS/GATES (e.g. the Venerable requirement); the combat scalar comes from markAmp.
 import { S } from '../state.js';
 import { isImmortalRealm, rankOf } from '../data/realms.js';
-import { GU_LIB } from '../data/gu.js';
+import { GU_LIB, resolveOwned } from '../data/gu.js';
 import { pathName } from '../data/daoPaths.js';
 
 // Aperture space (max total Dao Marks) grows with immortal rank (wiki "peak" anchors). Mortals
@@ -114,7 +114,7 @@ export function dominantPath(ch) {
   const counts = {};
   for (const uid of ch.gu || []) {
     const owned = S().guInv.find((g) => g.uid === uid);
-    const gu = owned && GU_LIB[owned.guId];
+    const gu = owned && resolveOwned(owned); // resolveOwned also surfaces myriad Gu (no GU_LIB entry)
     if (gu) counts[gu.daoPath] = (counts[gu.daoPath] || 0) + 1;
   }
   let best = null, n = 0;

@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark-crimson" data-paper="rice" data-glow="off">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -7,6 +7,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="theme.css">
+<link rel="stylesheet" href="redesign.css">
 </head>
 <body>
   <!-- Title / save-slot screen -->
@@ -75,6 +77,7 @@
           <div class="nav-group" data-group="workshop">
             <button class="nav-grp-head" onclick="G.toggleNavGroup('workshop')" aria-label="Toggle Workshop group"><span class="nav-grp-ico" aria-hidden="true">匠</span><span class="nav-grp-lbl">Workshop</span><span class="nav-grp-chev" aria-hidden="true">▾</span></button>
             <button data-tab="gu" onclick="G.setTab('gu')" aria-label="Gu Refinery"><span class="nav-ico" aria-hidden="true">蛊</span><span class="nav-lbl">Gu Refinery</span></button>
+            <button data-tab="myriad" onclick="G.setTab('myriad')" aria-label="Myriad Refining"><span class="nav-ico" aria-hidden="true">衍</span><span class="nav-lbl">Myriad Refining</span></button>
             <button data-tab="shop" onclick="G.setTab('shop')" aria-label="Market"><span class="nav-ico" aria-hidden="true">市</span><span class="nav-lbl">Market</span></button>
             <button data-tab="inv" onclick="G.setTab('inv')" aria-label="Inventory"><span class="nav-ico" aria-hidden="true">囊</span><span class="nav-lbl">Inventory</span></button>
           </div>

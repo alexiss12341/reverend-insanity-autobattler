@@ -69,6 +69,22 @@ export function newGame(slotKey, playerName = 'Fang Yuan', starter = null) {
     // grant any — and an immortal Gu goes INERT whenever this pool is empty (systems/cultivation.js
     // effectiveStats). Each clear also burns a little to keep the team's immortal Gu channelling.
     immortalStones: 0,
+    // Myriad Gu Refining (data/myriad.js, systems/myriad.js): all Arena-faucet. Fragments = the refine
+    // reagent; Merits = Arena Shop scrip. Two parallel material/catalyst families: DERIVATION (fusion) —
+    // myriadMats[path] Derivation Cores + derivationCatalysts (success boost); REFINEMENT (rank-up) —
+    // refineMats[path] Refinement Cores + refinementCatalysts (shatter-on-fail reducer). myriadProficiency =
+    // points (the one asset that PERSISTS across reincarnation, see prestige.reincarnate). arenaShopBought =
+    // weekly purchase-cap counters; arena{Daily,Weekly}ClaimedAt = ranking-payout claim timestamps.
+    derivationFragments: 0,
+    arenaMerits: 0,
+    myriadMats: {},          // Derivation Cores per path (fusion material)
+    refineMats: {},          // Refinement Cores per path (rank-up material)
+    derivationCatalysts: 0,  // fusion SUCCESS boost
+    refinementCatalysts: 0,  // rank-up SHATTER-on-fail reducer
+    myriadProficiency: 0,
+    arenaDailyClaimedAt: 0,
+    arenaWeeklyClaimedAt: 0,
+    arenaShopBought: {},
     // Born-true so a fresh game is never swept by migrateSave's one-time legacy immortal-Gu purge (a new
     // cultivator opens with only a rank-1 starter Gu — nothing immortal to wipe). See migrateSave.
     immGuPurged: true,
@@ -84,7 +100,7 @@ export function newGame(slotKey, playerName = 'Fang Yuan', starter = null) {
     uniqueClaimed: {},       // guId -> true (enforces world-uniqueness of tier 6+)
     resources: { bind_relic_r1: 4, bind_stone_r1: 4 }, // a few rank-1 universal binders to start crafting
     equipment: [],           // owned equipment items [{ uid, name, rarity, slot, stats }]
-    stats: { battles: 0, wins: 0, pulls: 0, crafts: 0, floorsCleared: 0 },
+    stats: { battles: 0, wins: 0, pulls: 0, crafts: 0, floorsCleared: 0, myriadRefines: 0 },
     gachaPity: 0,            // pulls since last Epic+ (gacha pity)
     // mfRebalanced: born-true so a new game's Might/Fortune (bought at the current 5×-higher price) is
     // never re-priced by migrateSave's one-shot legacy recalibration. See migrateSave.
@@ -101,7 +117,7 @@ export function newGame(slotKey, playerName = 'Fang Yuan', starter = null) {
     // is the stamp the offline-aware refill counts from; `respawn` maps slot→{day,until} for the 20-min
     // post-kill cooldown. The daily ROSTER itself is derived from the calendar day (data/bounties.js).
     bounties: { attempts: 5, lastRefill: Date.now(), respawn: {} },
-    settings: { idle: true, guView: 'grid', invView: 'grid', teamSort: 'power', teamFilter: 'all', teamRarity: 'all', teamPath: 'all', fmSort: 'power', fmRarity: 'all', fmPath: 'all', guTier: 'all', guPath: 'all', guOpen: {}, killerOpen: {}, shopRarity: 'all', shopPath: 'all', shopSearch: '', shopQty: 1, allocStep: 10, audio: { bgm: 7, sfx: 7, bgmMuted: false, sfxMuted: false } },
+    settings: { idle: true, theme: 'dark-crimson', paper: 'rice', glow: 'off', myrSearch: '', myrTier: 'all', myrPath: 'all', myrView: 'grid', ashSearch: '', ashComm: 'all', ashPath: 'all', ashView: 'grid', guView: 'grid', invView: 'grid', teamSort: 'power', teamFilter: 'all', teamRarity: 'all', teamPath: 'all', fmSort: 'power', fmRarity: 'all', fmPath: 'all', guTier: 'all', guPath: 'all', guOpen: {}, killerOpen: {}, shopRarity: 'all', shopPath: 'all', shopSearch: '', shopView: 'grid', shopQty: 1, allocStep: 10, audio: { bgm: 7, sfx: 7, bgmMuted: false, sfxMuted: false } },
   };
 }
 
@@ -162,6 +178,21 @@ export function migrateSave(o) {
   // Immortal Essence Stones (仙石) — a new currency. Pre-existing saves start with none; they unlock
   // organically once the save's roster reaches a Gu Immortal (immortalUnlocked).
   if (o.immortalStones == null) o.immortalStones = 0;
+  // Myriad Gu Refining currencies/materials — default on pre-feature saves (all start empty).
+  if (o.derivationFragments == null) o.derivationFragments = 0;
+  if (o.arenaMerits == null) o.arenaMerits = 0;
+  if (o.myriadMats == null || typeof o.myriadMats !== 'object') o.myriadMats = {};
+  if (o.refineMats == null || typeof o.refineMats !== 'object') o.refineMats = {};
+  // The old single catalyst (the success-boost "Stabilizing Catalyst", held in refinementCatalysts) is now
+  // split into two: it BECOMES the fusion Derivation Catalyst (derivationCatalysts), and refinementCatalysts
+  // is repurposed as the NEW rank-up Refinement Catalyst (shatter reducer), starting empty. One-shot, guarded
+  // by derivationCatalysts being unset (newGame sets both → never re-runs).
+  if (o.derivationCatalysts == null) { o.derivationCatalysts = o.refinementCatalysts || 0; o.refinementCatalysts = 0; }
+  if (o.myriadProficiency == null) o.myriadProficiency = 0;
+  if (o.arenaDailyClaimedAt == null) o.arenaDailyClaimedAt = 0;
+  if (o.arenaWeeklyClaimedAt == null) o.arenaWeeklyClaimedAt = 0;
+  if (o.arenaShopBought == null || typeof o.arenaShopBought !== 'object') o.arenaShopBought = {};
+  if (o.stats && o.stats.myriadRefines == null) o.stats.myriadRefines = 0;
   // One-time Dao affinity + archetype re-pick: saves that predate the starter-choice flow never let the
   // player choose (their affinity/line are canon defaults backfilled below). Flag them so the game asks
   // once on load (main.js repickStart). undefined → false (prompt); a chosen game already carries `true`.
@@ -239,6 +270,9 @@ export function migrateSave(o) {
       const v = typeof a.volume === 'number' ? Math.round(a.volume * 10) : 7;
       o.settings.audio = { bgm: v, sfx: v, bgmMuted: !!a.muted, sfxMuted: !!a.muted };
     }
+    if (o.settings.theme == null) o.settings.theme = 'dark-crimson';
+    if (o.settings.paper == null) o.settings.paper = 'rice';
+    if (o.settings.glow == null) o.settings.glow = 'off';
   }
   // Sovereign Insight is now CAPPED at level 5 (and costs 4× more). A legacy save that bought past the
   // cap is rolled back to 5 and refunded the souls it spent on the excess, priced at the OLD rate

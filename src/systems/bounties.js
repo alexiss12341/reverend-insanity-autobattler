@@ -5,15 +5,14 @@ import { S, uid } from '../state.js';
 import { addStones, addEssence } from './economy.js';
 import { buildBounty, buildBountyEncounter, slotUnlockFloor, BOUNTY_SLOTS, rollBountyGu } from '../data/bounties.js';
 import { GU_LIB } from '../data/gu.js';
+import { dayKey } from './reset.js';
 
 export const BOUNTY_MAX_ATTEMPTS = 5;
 export const BOUNTY_REFILL_MS = 60 * 60 * 1000; // one attempt recharges per hour
 
-// Local calendar-day key (mirrors quests.js today()) — the daily bounty-roster boundary.
-export function bountyDayKey() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
+// The daily bounty-roster boundary = the shared local calendar-day key (systems/reset.js); rolls over at
+// the player's local midnight, together with daily quests + arena ranking rewards.
+export const bountyDayKey = () => dayKey();
 
 // Lazily ensure the persisted attempts block exists (backfills legacy / fresh saves).
 function ensureBounties() {

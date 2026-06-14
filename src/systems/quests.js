@@ -5,13 +5,11 @@
 // derived helpers below and the player CLAIMS each completed quest manually. Battle stays a pure
 // consumer — this module owns the daily state shape and mutates state.daily via these functions only.
 import { S } from '../state.js';
+import { dayKey, msToNextDay } from './reset.js';
 
-// Local calendar-day key (YYYY-MM-DD) — the daily reset boundary. Uses the player's local date so the
-// board turns over at their midnight (there is no server; "daily" is client-local by design).
-function today() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
+// Local calendar-day key (YYYY-MM-DD) — the shared daily reset boundary (systems/reset.js). The board
+// turns over at the player's local midnight, in lockstep with bounties + arena ranking rewards.
+const today = () => dayKey();
 
 // The daily quest roster. Each: id (also the counter key bumped via bumpQuest), label, goal (count to
 // reach), reward (✦ on claim), hint. Goals are chosen to be reachable in a normal play session.
@@ -103,8 +101,4 @@ export function claimableCount() {
 }
 
 // Milliseconds until the next local-midnight reset — for the "resets in …" countdown label.
-export function msToReset() {
-  const d = new Date();
-  const next = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1, 0, 0, 0, 0);
-  return next - d;
-}
+export const msToReset = () => msToNextDay();

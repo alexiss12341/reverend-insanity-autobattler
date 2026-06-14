@@ -9,10 +9,13 @@ import { arenaRegister as registerArena, arenaList as listArena, arenaChallenge 
   setCloudId as arenaSetCloudId, setAuthToken as arenaSetAuthToken } from './arenaStore.js';
 import { spendArenaAttempt, refundArenaAttempt, arenaAttemptsLeft, saveLoadout, applyLoadout, renameLoadout, arenaUnlocked, ARENA_UNLOCK_FLOOR } from './systems/arenaMeta.js';
 import { attemptBreakthrough, respecAttributes, respecCost, RESPEC_ESSENCE_COST } from './systems/cultivation.js';
-import { rollFloorRewards, firstClearEssence, rollFarmEssence, applyDrops, buyResource, resourceCost, rollImmortalStones, immortalGuUpkeep, addImmortalStones } from './systems/economy.js';
+import { rollFloorRewards, firstClearEssence, rollFarmEssence, applyDrops, buyResource, resourceCost, rollImmortalStones, immortalGuUpkeep, addImmortalStones, arenaShopBuy, arenaRankReward, buyCatalyst } from './systems/economy.js';
+import { canFuse, fuse, canRankUp, rankUp, autoRankUp, salvageMyriad } from './systems/myriad.js';
+import { myriadMatName, MYRIAD_MATS, CATALYST_MAX_STEPS, WARD_MAX } from './data/myriad.js';
 import { pull, dismiss, dismissMany, dismissRefund, imprint, imprintCandidates, IMPRINT_CAP, autoImprintAll, duplicateSpares } from './systems/gacha.js';
 import { buyBoon, reincarnate, soulsAward, canReincarnate } from './systems/prestige.js';
 import { bumpQuest, claimQuest, claimBonus, DAILY_QUESTS } from './systems/quests.js';
+import { sameLocalDay, sameLocalWeek } from './systems/reset.js';
 import { attemptsLeft, spendAttempt, slotUnlocked, bountyEncounter, grantBountyRewards, respawnRemaining, markBountyKilled } from './systems/bounties.js';
 import { craft, autoCraft, upgrade } from './systems/crafting.js';
 import { generateEncounter, isBossFloor, MAX_FLOORS } from './data/floors.js';
@@ -52,6 +55,7 @@ async function sleepAbortable(ms) {
 
 // ---------- rewards / clearing ----------
 function distributeRewards(floor, isBoss, fromLog) {
+  const firstClear = !S().clearedFloors[floor]; // capture BEFORE firstClearEssence flips the flag
   const { stones, drops } = rollFloorRewards(floor, isBoss);
   S().stones += stones;
   applyDrops(drops);
@@ -67,7 +71,49 @@ function distributeRewards(floor, isBoss, fromLog) {
   // advance frontier if we just cleared the frontier floor
   let advanced = false;
   if (floor === S().frontier && S().frontier < MAX_FLOORS) { S().frontier += 1; advanced = true; }
-  return { stones, drops, essence, immStones, advanced };
+  // Myriad refining: the FIRST clear of a boss floor grants 1 Derivation Catalyst (fusion success boost;
+  // first-clear-only, so idle re-clears can't flood them). Refinement Catalysts come from the Arena Shop.
+  let catalyst = 0;
+  if (isBoss && firstClear) { S().derivationCatalysts = (S().derivationCatalysts || 0) + 1; catalyst = 1; }
+  return { stones, drops, essence, immStones, advanced, catalyst };
+}
+
+// ---- Arena spoils for Myriad Refining (granted client-side on a bout result; the Elo update is server-side) ----
+const FRAG_WIN_BASE = 10, FRAG_WIN_CAP = 20, MERIT_WIN_BASE = 5, MERIT_WIN_VAR = 11; // 5..15 merits
+const CATALYST_ARENA_CHANCE = 0.08, MAT_DROP_CHANCE = 0.20;
+// The defeated team's MC (leader) Dao-path affinity → which path material can drop. Falls back to the
+// team's most common affinity; returns null when none is known (no drop, never a crash).
+function defenderMcPath(team) {
+  if (!Array.isArray(team) || !team.length) return null;
+  const lead = team[0];
+  const la = lead && Array.isArray(lead.affinity) ? lead.affinity.filter((p) => MYRIAD_MATS[p]) : [];
+  if (la.length) return la[Math.floor(Math.random() * la.length)];
+  const counts = {};
+  for (const u of team) for (const p of (u.affinity || [])) if (MYRIAD_MATS[p]) counts[p] = (counts[p] || 0) + 1;
+  let best = null, n = 0; for (const p in counts) if (counts[p] > n) { n = counts[p]; best = p; }
+  return best;
+}
+function grantArenaRewards(won, sv, team) {
+  const s = S(); if (!s) return;
+  const msgs = [];
+  if (won) {
+    const elo = (sv.attacker && sv.attacker.points) || 0;
+    const frags = Math.min(FRAG_WIN_CAP, FRAG_WIN_BASE + Math.floor(elo / 100));
+    const merits = MERIT_WIN_BASE + Math.floor(Math.random() * MERIT_WIN_VAR);
+    s.derivationFragments = (s.derivationFragments || 0) + frags;
+    s.arenaMerits = (s.arenaMerits || 0) + merits;
+    msgs.push(`+${frags} Fragments`, `+${merits} Merits`);
+    if (Math.random() < CATALYST_ARENA_CHANCE) { s.derivationCatalysts = (s.derivationCatalysts || 0) + 1; msgs.push('+1 Derivation Catalyst'); }
+    if (Math.random() < MAT_DROP_CHANCE) {
+      const path = defenderMcPath(team);
+      if (path) { s.myriadMats[path] = (s.myriadMats[path] || 0) + 1; msgs.push(`+1 ${myriadMatName(path)}`); }
+    }
+  } else {
+    const frags = 3 + Math.floor(Math.random() * 3); // 3..5 consolation
+    s.derivationFragments = (s.derivationFragments || 0) + frags;
+    msgs.push(`+${frags} Fragments`);
+  }
+  if (msgs.length && activeTab === 'battle') UI.logLine(`Arena spoils: ${msgs.join(', ')}`, 'loot');
 }
 
 function dropSummary(drops) {
@@ -210,6 +256,7 @@ async function runBattle() {
       ? `★ ARENA — you defeated ${sv.defender.name}!  ${sign}${d} → ${sv.attacker.points}`
       : `ARENA — ${sv.defender.name} held the line.  ${sign}${d} → ${sv.attacker.points}`, won ? 'win' : 'lose');
     UI.toast(`${won ? 'Victory' : 'Defeat'} vs ${sv.defender.name}  ·  rating ${sign}${d} → ${sv.attacker.points}`, 3400, won ? 'win' : 'lose');
+    grantArenaRewards(won, sv, (arenaJob.encounter.waves && arenaJob.encounter.waves[0]) || []); // myriad-refining spoils
   } else if (isBounty) {                                          // BOUNTY HUNT: spend an attempt, grant bounty rewards (no floor/frontier logic)
     spendAttempt();                                               // the hunt resolved → consume one attempt (win or lose)
     processImmortals(res.win);
@@ -232,8 +279,8 @@ async function runBattle() {
     processImmortals(true);
     if (activeTab === 'battle') {
       UI.logLine(challenging
-        ? `★ FLOOR ${floor} CLEARED! +${r.stones}石${r.essence ? `, +${r.essence}✦ Immortal Essence` : ''}${r.immStones ? `, +${r.immStones} 仙石` : ''}${dropSummary(r.drops)}`
-        : `Cleared F${floor} (+${r.stones}石${r.essence ? `, +${r.essence}✦` : ''}${r.immStones ? `, +${r.immStones} 仙石` : ''})${dropSummary(r.drops)}`, challenging ? 'win' : 'loot');
+        ? `★ FLOOR ${floor} CLEARED! +${r.stones}石${r.essence ? `, +${r.essence}✦ Immortal Essence` : ''}${r.immStones ? `, +${r.immStones} 仙石` : ''}${r.catalyst ? ', +1 Derivation Catalyst' : ''}${dropSummary(r.drops)}`
+        : `Cleared F${floor} (+${r.stones}石${r.essence ? `, +${r.essence}✦` : ''}${r.immStones ? `, +${r.immStones} 仙石` : ''}${r.catalyst ? ', +1 Derivation Catalyst' : ''})${dropSummary(r.drops)}`, challenging ? 'win' : 'loot');
       if (r.advanced) UI.logLine(`Floor ${S().frontier} is now open.`, 'win');
     }
     if (auto) {                                                  // THIS run was an auto-challenge rung
@@ -419,6 +466,27 @@ function applyNavGroups() {
   const g = (S() && S().settings && S().settings.navGroups) || {};
   document.querySelectorAll('#nav .nav-group').forEach((el) => el.classList.toggle('collapsed', !!g[el.dataset.group]));
 }
+// ---- interface theme (persisted in S().settings; mirrored to localStorage for the title screen) ----
+const THEME_LS = 'gu-ui-theme';
+function themePrefs() {
+  const s = S();
+  if (s && s.settings && s.settings.theme) return { theme: s.settings.theme, paper: s.settings.paper || 'rice', glow: s.settings.glow || 'off' };
+  try { const r = JSON.parse(localStorage.getItem(THEME_LS)); if (r && r.theme) return { paper: 'rice', glow: 'off', ...r }; } catch (e) {}
+  return { theme: 'dark-crimson', paper: 'rice', glow: 'off' };
+}
+function applyTheme(fade) {
+  const p = themePrefs(), el = document.documentElement;
+  const doIt = () => { el.setAttribute('data-theme', p.theme); el.setAttribute('data-paper', p.paper); el.setAttribute('data-glow', p.glow); };
+  if (fade) { el.classList.add('theme-fade'); doIt(); setTimeout(() => el.classList.remove('theme-fade'), 360); } else doIt();
+}
+function setThemePref(patch) {
+  const next = { ...themePrefs(), ...patch }, s = S();
+  if (s) { s.settings.theme = next.theme; s.settings.paper = next.paper; s.settings.glow = next.glow; }
+  try { localStorage.setItem(THEME_LS, JSON.stringify(next)); } catch (e) {}
+  applyTheme(true);
+  if (s) save();
+  UI.refreshSettingsTheme();
+}
 function startGame(obj, isNew) {
   state.current = obj;
   autoChallenge = false; autoChallengeHighest = 0; challengeRequested = false; abortBattle = false; UI.setAutoChallenge(false);
@@ -430,6 +498,7 @@ function startGame(obj, isNew) {
   // group layout resets on open just like the active tab does; in-session toggles still work).
   S().settings.navGroups = { roster: true, cultivation: true, workshop: true, records: true };
   applyNavMode(); applyNavGroups();
+  applyTheme(false); // a loaded save carries its own interface theme
   activeTab = 'battle';
   UI.render('battle');
   Audio.syncPrefs(); // re-apply THIS save's BGM/SFX mute+levels (the context may have come up on a pre-load gesture with defaults)
@@ -643,11 +712,40 @@ function guPickerAvail(c) {
 }
 // Live filter state for the equip modal: which char/slot, plus the path filter + name search.
 let guPick = null;
+// Myriad Refining tab selection: the chosen dominant/support Gu uids + how many catalysts to burn.
+let myriadSel = { dom: null, sup: null, catalysts: 0 };
+export const myriadSelection = () => myriadSel; // read by ui.js viewMyriad
+// Per-myriad-Gu Refinement-Catalyst (ward) selection for rank-ups: uid → count to burn (reduces shatter).
+let myriadWards = {};
+
+// Claim the daily/weekly ranking-bracket payout: read live ladder rank, grant the bracket reward, stamp it.
+// Reset boundaries come from systems/reset.js so the arena claims turn over with daily quests + bounties:
+// the daily reward becomes claimable again at the next local midnight, the weekly at the start of the next
+// local week (Monday 00:00) — which is itself a daily-reset instant, so the two never drift apart.
+function alreadyClaimed(last, cadence) {
+  return cadence === 'weekly' ? sameLocalWeek(last) : sameLocalDay(last);
+}
+async function claimArenaRanking(cadence) {
+  const s = S(); if (!s) return;
+  const key = cadence === 'weekly' ? 'arenaWeeklyClaimedAt' : 'arenaDailyClaimedAt';
+  if (alreadyClaimed(s[key], cadence)) return UI.toast(`Already claimed this ${cadence === 'weekly' ? 'week' : 'day'}.`);
+  let teams;
+  try { ({ teams } = await listArena()); } catch (e) { return UI.toast(e.message || 'Could not reach the arena to read your rank.'); }
+  const sorted = (teams || []).slice().sort((a, b) => (b.points || 0) - (a.points || 0));
+  const idx = sorted.findIndex((t) => t.player_id === arenaPlayerId());
+  if (idx < 0) return UI.toast('Register a defense team first to earn ranking rewards.');
+  const reward = arenaRankReward(idx + 1, sorted.length, cadence);
+  s.derivationFragments = (s.derivationFragments || 0) + reward.fragments;
+  s.arenaMerits = (s.arenaMerits || 0) + reward.merits;
+  s[key] = Date.now();
+  UI.toast(`${cadence === 'weekly' ? 'Weekly' : 'Daily'} rank #${idx + 1} (${reward.bracket}): +${reward.merits} Merits, +${reward.fragments} Fragments.`, 3400, 'win');
+  if (activeTab === 'pvp') UI.render('pvp');   // claims happen on the shop sub-view; re-render in place
+  UI.refreshTop(); save();
+}
 // The filtered + sorted spare-Gu rows for the equip picker (repainted live as the user filters/types).
 function guPickerListHtml() {
   if (!guPick) return '';
   const c = S().roster.find((x) => x.id === guPick.charId); if (!c) return '';
-  const tierOf = (g) => g.tier || GU_LIB[g.guId].tier; // ascended immortals carry an instance tier
   let avail = guPickerAvail(c).map((g) => ({ g, gu: guOf(g.uid) })).filter((x) => x.gu);
   const total = avail.length;
   if (guPick.path !== 'all') avail = avail.filter((x) => x.gu.daoPath === guPick.path);
@@ -657,7 +755,7 @@ function guPickerListHtml() {
   if (!total) return '<div class="muted small">No spare Gu. Craft some in the Refinery.</div>';
   if (!avail.length) return '<div class="muted small">No spare Gu match this filter.</div>';
   const immInertNow = (S().immortalStones || 0) <= 0;
-  return avail.sort((a, b) => tierOf(b.g) - tierOf(a.g)).map(({ g, gu }) => {
+  return avail.sort((a, b) => b.gu.tier - a.gu.tier).map(({ g, gu }) => {
     const t = gu.tier;
     // Immortal Gu (tier 6+) are inert without Immortal Essence Stones (仙石) — warn before equipping one.
     const immNote = t >= 6 && immInertNow
@@ -925,6 +1023,16 @@ const G = {
   setTab(t) { activeTab = t; document.querySelectorAll('#nav button').forEach((b) => b.classList.toggle('active', b.dataset.tab === t)); UI.render(t); },
   // Collapse/expand the sidebar between the full labeled view and a compact icon rail (persisted).
   toggleNav() { const s = S().settings; s.navCollapsed = !s.navCollapsed; applyNavMode(); save(); },
+  // ----- interface theme picker (gear → Settings) -----
+  setTheme(id) { setThemePref({ theme: id }); },
+  setPaper(p) { setThemePref({ paper: p }); },
+  setGlow(g) { setThemePref({ glow: g }); },
+  // ----- Myriad input filters (mirror the Gu Refinery lenses) -----
+  myrSearch(v) { S().settings.myrSearch = v; UI.renderMyriadInputs(); save(); },
+  clearMyrFilters() { const s = S().settings; s.myrSearch = ''; s.myrTier = 'all'; s.myrPath = 'all'; UI.render(activeTab); save(); },
+  // ----- Arena Shop core filters (mirror the Market) -----
+  ashSearch(v) { S().settings.ashSearch = v; UI.renderArenaShopCores(); save(); },
+  clearAshFilters() { const s = S().settings; s.ashSearch = ''; s.ashComm = 'all'; s.ashPath = 'all'; UI.render(activeTab); save(); },
   // Collapse/expand a single sidebar group (Combat/Roster/…) to fold away tabs you're not using (persisted).
   toggleNavGroup(id) { const s = S().settings; const g = s.navGroups || (s.navGroups = {}); g[id] = !g[id]; applyNavGroups(); save(); },
   // Open a single character's full design sheet (pseudo-tab; no nav button is highlighted).
@@ -1072,6 +1180,7 @@ const G = {
   },
   // ---- ARENA (async PvP) — talks to the Supabase Edge Functions via arenaStore ----
   openArena() {
+    UI.setArenaSub('ladder');                           // opening from the nav lands on the ladder sub-view
     G.setTab('pvp');                                    // renders the locked panel itself when gated (ui.js viewPvp)
     if (!arenaUnlocked()) { UI.toast(`The Arena opens once you beat Floor ${ARENA_UNLOCK_FLOOR}.`); return; }
     G.arenaRefresh();
@@ -1322,8 +1431,67 @@ const G = {
     UI.toast(r.ok ? `Auto-forged ${r.gu.name}${r.forged > 1 ? ` (+${r.forged - 1} fodder)` : ''}.` : r.msg);
     UI.render('gu'); UI.refreshTop(); save();
   },
+  // ---- Myriad Gu Refining (systems/myriad.js) ----
+  myriadSelGet() { return myriadSel; }, // ui.js viewMyriad reads the live dominant/support/catalyst selection
+  myriadWardsGet(uid) { return myriadWards[uid] || 0; }, // per-Gu Refinement-Catalyst burn count (rank-up shatter ↓)
+  myriadSetWards(uid, n) { myriadWards[uid] = Math.max(0, Math.min(WARD_MAX, n | 0)); UI.render('myriad'); },
+  myriadPickDominant(uid) { myriadSel.dom = myriadSel.dom === uid ? null : uid; if (myriadSel.sup === uid) myriadSel.sup = null; UI.render('myriad'); },
+  myriadPickSupport(uid) { myriadSel.sup = myriadSel.sup === uid ? null : uid; if (myriadSel.dom === uid) myriadSel.dom = null; UI.render('myriad'); },
+  myriadCatalysts(n) { myriadSel.catalysts = Math.max(0, Math.min(CATALYST_MAX_STEPS, n | 0)); UI.render('myriad'); },
+  myriadFuse() {
+    if (!myriadSel.dom || !myriadSel.sup) return UI.toast('Pick a dominant and a support Gu.');
+    const r = fuse(myriadSel.dom, myriadSel.sup, myriadSel.catalysts);
+    if (!r.ok) return UI.toast(r.msg);
+    if (r.success) { Audio.forge(); UI.toast(r.msg, 3200, 'win'); myriadSel = { dom: null, sup: null, catalysts: 0 }; }
+    else { UI.toast(r.msg, 3200, 'lose'); myriadSel.dom = null; myriadSel.sup = null; myriadSel.catalysts = 0; }
+    UI.render('myriad'); UI.refreshTop(); save();
+  },
+  myriadRankUp(uid, wards) {
+    const r = rankUp(uid, wards || 0);
+    if (!r.ok) return UI.toast(r.msg);
+    if (r.success) Audio.forge();
+    delete myriadWards[uid];                 // reset the ward selection after the attempt
+    UI.toast(r.msg, 3200, r.success ? 'win' : 'lose');
+    UI.render('myriad'); UI.refreshTop(); save();
+  },
+  // Auto-rank: forge the missing tag-cover fodder (buy materials + build the lower-tier chain) then rank up.
+  myriadAutoRankUp(uid, wards) {
+    const r = autoRankUp(uid, wards || 0);
+    if (!r.ok) return UI.toast(r.msg);
+    if (r.success) Audio.forge();
+    delete myriadWards[uid];
+    UI.toast(r.msg, 3400, r.success ? 'win' : 'lose');
+    UI.render('myriad'); UI.refreshTop(); save();
+  },
+  myriadSalvage(uid) {
+    const r = salvageMyriad(uid);
+    if (!r.ok) return UI.toast(r.msg);
+    if (myriadSel.dom === uid) myriadSel.dom = null;
+    if (myriadSel.sup === uid) myriadSel.sup = null;
+    UI.toast(`Salvaged ${r.name} (+${r.refund} Fragments).`, 2600);
+    UI.render('myriad'); UI.refreshTop(); save();
+  },
+  // ---- Arena Shop + ladder rewards ----
+  // Arena page sub-view toggle: 'ladder' (re-fetch the ladder) vs 'shop' (local, no fetch).
+  arenaSub(which) {
+    UI.setArenaSub(which);
+    if (which === 'ladder') { UI.render('pvp'); G.arenaRefresh(); }
+    else UI.render('pvp');
+  },
+  arenaShopBuy(id, qty) {
+    const r = arenaShopBuy(id, qty || 1);
+    UI.toast(r.ok ? 'Purchased.' : r.msg, 2200, r.ok ? 'win' : undefined);
+    if (r.ok) { if (activeTab === 'pvp' || activeTab === 'myriad') UI.render(activeTab); UI.refreshTop(); save(); }
+  },
+  buyCatalyst(qty) {
+    const r = buyCatalyst(qty || 1);
+    UI.toast(r.ok ? 'Bought a Stabilizing Catalyst.' : r.msg, 2200, r.ok ? 'win' : undefined);
+    if (r.ok) { UI.render(activeTab); UI.refreshTop(); save(); }
+  },
+  claimArenaDaily() { return claimArenaRanking('daily'); },
+  claimArenaWeekly() { return claimArenaRanking('weekly'); },
   // Audio settings (gear FAB, bottom-left): independent BGM + SFX level bars (0–10) + mute overrides.
-  openSettings() { UI.showModal(UI.settingsModal(), 'narrow'); },
+  openSettings() { UI.showModal(UI.settingsModal(), 'narrow settings'); },
   setBgm(v) { Audio.setBgm(v); const el = document.getElementById('set-bgm-val'); if (el) el.textContent = v; save(); },
   setSfx(v) { Audio.setSfx(v); const el = document.getElementById('set-sfx-val'); if (el) el.textContent = v; Audio.click(); save(); }, // tick lets you hear the SFX level
   setBgmMute(on) { Audio.setBgmMuted(on); const s = document.getElementById('set-bgm'); if (s) s.disabled = on; const el = document.getElementById('set-bgm-val'); if (el) el.textContent = on ? '—' : Audio.getBgm(); save(); },
@@ -1644,6 +1812,7 @@ window.G = G;
 
 // ---------- boot ----------
 window.addEventListener('load', () => {
+  applyTheme(false);
   renderTitle();
   Audio.init(); // procedural music + SFX; the context starts on the first user gesture (autoplay policy)
   initCloudAccount(); // resolve any signed-in session / OAuth redirect, then refresh the title's auth bar

@@ -12,11 +12,14 @@ import { PULL_COST, PULL_COST_10, PITY_CAP, pityCount } from './systems/gacha.js
 import { prestige, BOONS, boonCost, boonLevel, boonAtMax, canReincarnate, soulsAward, reincarnationPathChoices } from './systems/prestige.js';
 import { DAILY_QUESTS, COMPLETE_ALL_BONUS, ensureDaily, questProgress, questGoal, questComplete, questClaimed, questClaimable, allClaimed, bonusClaimable, pendingReward, claimableCount, msToReset } from './systems/quests.js';
 import { dailyBounties, attemptsLeft, msToNextAttempt, slotUnlocked, respawnRemaining, BOUNTY_MAX_ATTEMPTS } from './systems/bounties.js';
+import { sameLocalDay, sameLocalWeek, msToNextDay, msToNextWeek } from './systems/reset.js';
 import { ensureArenaMeta, arenaAttemptsLeft, arenaMsToNextAttempt, ARENA_MAX_ATTEMPTS, arenaUnlocked, ARENA_UNLOCK_FLOOR } from './systems/arenaMeta.js';
 import { arenaCanChallenge, ARENA_UP, ARENA_DOWN } from './data/arena.js';
 import { slotUnlockFloor } from './data/bounties.js';
 import { canCraft, refineSpec, canUpgrade, planAutoCraft } from './systems/crafting.js';
-import { resourceCost, dropEstimate, shopResources, highestRosterRank, marketUnlocked } from './systems/economy.js';
+import { resourceCost, dropEstimate, shopResources, highestRosterRank, marketUnlocked, arenaShopStock, CATALYST_MARKET_PRICE, ARENA_RANK_REWARDS, arenaRankBracket, arenaRankReward } from './systems/economy.js';
+import { canFuse, canRankUp, planAutoRankUp } from './systems/myriad.js';
+import { MYRIAD_MATS, myriadMatName, refineMatName, PROF_REQ, MYRIAD_TIER_CAP, CATALYST_MAX_STEPS, WARD_MAX, FRAG_COST, REFINEMENT_CATALYST, PROF_BONUS_PER_LEVEL, PROF_CAP, myriadProfLevel, profPointsForLevel, PROF_MAX_LEVEL } from './data/myriad.js';
 import { generateEncounter, isBossFloor, encounterSize, floorRealm, FLOORS_PER_REALM } from './data/floors.js';
 import { GAUGE_MAX, PLAYBACK_MS, cleanseChanceFor, cleanseMaxFor } from './systems/battle.js';
 import { PATH, pathList, pathName, pathColor, pathCjk, commOf, CATEGORY_LABELS, isPathLocked, pathFloorReq, PATH_AFFINITY } from './data/daoPaths.js';
@@ -76,6 +79,8 @@ export function refreshTop() {
     immWrap.style.display = unlocked ? '' : 'none';
     if (unlocked) $('t-imm-stones').textContent = fmt(S().immortalStones || 0);
   }
+  // Myriad-refining resources (Fragments, Cores, Catalysts) are NOT in the top bar — they're shown on the
+  // pages that use them (the Myriad Refining tab + the Arena Shop).
   $('t-frontier').textContent = 'Floor ' + S().frontier;
   $('t-roster').textContent = S().roster.length;
   $('t-unique').textContent = Object.keys(S().uniqueClaimed).length;
@@ -109,11 +114,54 @@ export function settingsModal() {
       <label class="set-mute"><input type="checkbox" ${muted ? 'checked' : ''}
         onchange="G.set${key === 'bgm' ? 'Bgm' : 'Sfx'}Mute(this.checked)">Mute</label>
     </div>`;
+  // ----- interface theme picker -----
+  const cur = document.documentElement.getAttribute('data-theme') || 'dark-crimson';
+  const paper = document.documentElement.getAttribute('data-paper') || 'rice';
+  const glow = document.documentElement.getAttribute('data-glow') || 'off';
+  const NIGHT = [
+    ['dark-crimson', 'Crimson Night', '血', ['#0a0807', '#c8313c', '#c79a45']],
+    ['dark-azure', 'Azure Night', '渊', ['#070a0d', '#4f93cd', '#c79a45']],
+    ['dark-gold', 'Gilded Night', '金', ['#0b0906', '#d2ab4a', '#3f9e74']],
+    ['dark-jade', 'Jade Night', '翠', ['#070a08', '#4ab384', '#c79a45']],
+    ['dark-ink', 'Ink Night', '墨', ['#0a0a0a', '#a39d93', '#c79a45']],
+  ];
+  const DAY = [
+    ['light-crimson', 'Vermillion Scroll', '朱', ['#ece3cf', '#9a1c26', '#8f6b1d']],
+    ['light-azure', 'Azure Scroll', '青', ['#ece3cf', '#1d558f', '#8f6b1d']],
+    ['light-gold', 'Gilded Scroll', '黄', ['#ece3cf', '#8a6716', '#1f7a52']],
+    ['light-jade', 'Jade Scroll', '碧', ['#ece3cf', '#1f6f4c', '#8f6b1d']],
+    ['light-ink', 'Ink Scroll', '宣', ['#ece3cf', '#44403a', '#8f6b1d']],
+  ];
+  const trow = (t) => `<button class="th-row${t[0] === cur ? ' active' : ''}" onclick="G.setTheme('${t[0]}')"><span class="th-sw">${t[3].map((c) => `<i style="background:${c}"></i>`).join('')}</span><span class="th-name">${t[1]}</span><span class="th-glyph">${t[2]}</span></button>`;
+  const isDay = cur.indexOf('light') === 0;
+  const themeUI = `<hr class="set-rule">
+    <div class="th-head"><span>Interface Theme</span><span class="th-cjk">界面</span></div>
+    <div class="th-cols">
+      <div class="th-col"><div class="th-colh"><span class="g">夜</span>Night</div>${NIGHT.map(trow).join('')}</div>
+      <div class="th-col"><div class="th-colh"><span class="g">昼</span>Day</div>${DAY.map(trow).join('')}</div>
+    </div>
+    <div class="th-seglbl"><span>Night Finish</span><i>${isDay ? 'pick a Night theme to use this' : 'applies to Night themes'}</i></div>
+    <div class="th-seg">
+      <button class="${glow === 'off' ? 'on' : ''}" ${isDay ? 'disabled' : ''} onclick="G.setGlow('off')">Flat</button>
+      <button class="${glow === 'neon' ? 'on' : ''}" ${isDay ? 'disabled' : ''} onclick="G.setGlow('neon')">Neon Glow</button>
+    </div>
+    <div class="th-seglbl"><span>Day Paper Tone</span><i>${isDay ? 'applies to Day themes' : 'pick a Day theme to use this'}</i></div>
+    <div class="th-seg">
+      <button class="${paper === 'rice' ? 'on' : ''}" ${isDay ? '' : 'disabled'} onclick="G.setPaper('rice')">Rice Paper</button>
+      <button class="${paper === 'porcelain' ? 'on' : ''}" ${isDay ? '' : 'disabled'} onclick="G.setPaper('porcelain')">Porcelain</button>
+    </div>
+    <div class="th-note">Saved with your game · default <b>Crimson Night</b>. Rarity &amp; element colors auto-adjust to the mode.</div>`;
   return `<h3>⚙ Settings</h3>
     <div class="body" style="margin-bottom:6px">Audio — drag a bar (0–10), or tick <b>Mute</b> to silence that channel.</div>
     ${row('bgm', 'BGM', bgm, bm)}
     ${row('sfx', 'SFX', sfx, sm)}
+    ${themeUI}
     <div class="right" style="margin-top:16px"><button class="primary" onclick="G.closeModal()">Done</button></div>`;
+}
+// Re-render the open Settings modal in place after a theme change (keeps picker active-states fresh).
+export function refreshSettingsTheme() {
+  const m = document.querySelector('#overlay .modal.settings');
+  if (m) m.innerHTML = settingsModal();
 }
 
 // ---------- tab router ----------
@@ -130,7 +178,7 @@ export function render(tab) {
   const views = {
     battle: viewBattle, team: viewTeam, formation: viewFormation, recruit: viewRecruit,
     gu: viewGu, shop: viewShop, inv: viewInventory, floors: viewFloors, codex: viewCodex, dao: viewDao,
-    quests: viewQuests, bounties: viewBounties, pvp: viewPvp,
+    quests: viewQuests, bounties: viewBounties, pvp: viewPvp, myriad: viewMyriad,
     attainment: viewAttainment, almanac: viewAlmanac, res: () => viewResource(_resId),
     whatsnew: viewWhatsNew,
     char: () => viewCharacter(_charId),
@@ -184,6 +232,7 @@ const TAB_TIPS = {
   quests: 'Daily goals that pay ✦ Immortal Essence. They reset every day at midnight — clear them all for a bonus.',
   bounties: 'Hunt a rotating roster of lone raid-boss targets. You get 5 attempts that recharge +1 per hour; higher-rank bounties unlock as you climb.',
   gu: 'Craft Gu from primeval stones + that path’s resources. Higher tiers refine from spare same-path Gu one tier lower.',
+  myriad: 'Fuse two Gu — a dominant + a support — into a custom multi-effect [myriad] Gu. Fallible; powered by Arena rewards.',
   dao: 'Comprehension grows by fighting with a path’s Gu; immortals gather Dao Marks from tribulations. Ascend here.',
   attainment: 'Your standing in each Dao path — comprehension levels and the gates they unlock.',
   shop: 'The Market sells resources you’ve unlocked (by cleared floors + your roster’s rank) for primeval stones.',
@@ -2153,15 +2202,27 @@ function guListHtml() {
   const sel = guSelected(rows);
   const owned = {};
   S().guInv.forEach((g) => { owned[g.guId] = (owned[g.guId] || 0) + 1; });
+  const badges = (gu) => `${isUnique(gu) ? '<span class="pill unique">UNIQUE</span>' : ''}${owned[gu.id] ? `<span class="pill">×${owned[gu.id]}</span>` : ''}`;
   const row = (gu) => {
     const ok = canCraft(gu.id).ok;
     return `<div class="ref-row${sel && gu.id === sel.id ? ' sel' : ''}" style="border-left-color:var(--t${gu.tier})" onclick="G.guSelect('${gu.id}')">
       <b class="tierbadge" style="color:var(--t${gu.tier});border-color:var(--t${gu.tier})">T${gu.tier}</b>
-      <span class="ref-name">${gu.name}${isUnique(gu) ? '<span class="pill unique">UNIQUE</span>' : ''}${owned[gu.id] ? `<span class="pill">×${owned[gu.id]}</span>` : ''}</span>
+      <span class="ref-name">${gu.name}${badges(gu)}</span>
       <span class="ref-eff">${effectText(gu)}</span>
       <i class="ref-can${ok ? '' : ' dim'}" title="${ok ? 'Craftable now' : 'Missing materials or fodder'}">⚒</i></div>`;
   };
-  return tiers + head + rows.map(row).join('');
+  const tile = (gu) => {
+    const ok = canCraft(gu.id).ok;
+    return `<div class="gu-tile${sel && gu.id === sel.id ? ' sel' : ''}" style="border-left-color:var(--t${gu.tier})" onclick="G.guSelect('${gu.id}')">
+      <div class="gt-top"><b class="tierbadge" style="color:var(--t${gu.tier});border-color:var(--t${gu.tier})">T${gu.tier}</b>
+        <i class="ref-can${ok ? '' : ' dim'}" title="${ok ? 'Craftable now' : 'Missing materials or fodder'}">⚒</i></div>
+      <div class="gt-name">${gu.name}${badges(gu)}</div>
+      <div class="gt-eff">${effectText(gu)}</div>
+      <div class="gt-path" style="color:${pathColor(gu.daoPath)}">${pathCjk(gu.daoPath)} ${pathName(gu.daoPath)}</div></div>`;
+  };
+  const mode = S().settings.guView === 'list' ? 'list' : 'grid';
+  const body = mode === 'list' ? rows.map(row).join('') : `<div class="gu-grid">${rows.map(tile).join('')}</div>`;
+  return tiers + head + body;
 }
 
 // Auto-Craft button: shown beneath ⚒ Craft when you can't craft directly but stones COULD cover buying the
@@ -2226,15 +2287,217 @@ export function renderGuResults() {
   const d = $('guDesk'); if (d) d.innerHTML = guDeskHtml();
 }
 export function viewGu() {
+  const mode = S().settings.guView === 'list' ? 'list' : 'grid';
   return `${pagehead('蛊', 'Refinery · 炼蛊', 'Gu Refinery',
     'Gu bundle 1-4 signed effects; power scales with tier (1-9). Tiers 6-9 are immortal &amp; unique (one per world). Every Gu belongs to a <b>Dao Path</b>; rarer paths unlock only at deeper floors. Higher-tier Gu are refined from materials <b>plus lower-tier Gu of the same path</b>.')}
   <div class="ref-split">
     <aside class="wk-rail" id="guRail">${guRailHtml()}</aside>
-    <div class="ref-mid" id="guResults">${guListHtml()}</div>
+    <div class="ref-mid">
+      <div class="myr-midbar">${viewToggle('guView', mode)}</div>
+      <div id="guResults">${guListHtml()}</div>
+    </div>
     <aside class="ref-desk" id="guDesk">${guDeskHtml()}</aside>
   </div>`;
 }
 
+// ---------- Myriad Gu Refining ----------
+// The live dominant/support/catalyst selection lives in main.js (window.G.myriadSelGet) so the onclick
+// handlers there own it; the UI just reads it to render the desk + highlight the chosen Gu.
+const myriadSel = () => (window.G && window.G.myriadSelGet && window.G.myriadSelGet()) || { dom: null, sup: null, catalysts: 0 };
+// Owned Gu usable as fusion inputs: unequipped (resolveOwned surfaces myriad Gu too).
+function myriadInputsAll() {
+  const equipped = new Set();
+  for (const c of S().roster) for (const u of (c.gu || [])) equipped.add(u);
+  return S().guInv.filter((it) => !equipped.has(it.uid)).map((it) => ({ it, gu: guOf(it.uid) }))
+    .filter((x) => x.gu).sort((a, b) => b.gu.tier - a.gu.tier || (b.gu.myriad ? 1 : 0) - (a.gu.myriad ? 1 : 0));
+}
+// Spare Gu surviving the Myriad input filters (search + tier + path) — mirrors the Gu Refinery lenses.
+function myriadInputs() {
+  const st = S().settings;
+  const q = (st.myrSearch || '').trim().toLowerCase();
+  const tierF = st.myrTier || 'all', pathF = st.myrPath || 'all';
+  let list = myriadInputsAll();
+  if (pathF !== 'all') list = list.filter((x) => x.gu.daoPath === pathF);
+  if (tierF !== 'all') list = list.filter((x) => x.gu.tier === Number(tierF));
+  if (q) list = list.filter((x) => x.gu.name.toLowerCase().includes(q) || pathName(x.gu.daoPath).toLowerCase().includes(q) || effectText(x.gu).toLowerCase().includes(q));
+  return list;
+}
+// LEFT RAIL — search + spare-Gu paths grouped by commonality (mirrors the Gu Refinery / Market rail).
+function myriadRailHtml() {
+  const st = S().settings;
+  const pathF = st.myrPath || 'all';
+  const all = myriadInputsAll();
+  const present = [...new Set(all.map((x) => x.gu.daoPath))];
+  const buckets = {};
+  present.forEach((p) => { const k = commOf(p).key || 'common'; (buckets[k] = buckets[k] || []).push(p); });
+  const pBtn = (p) => `<button class="ref-pbtn${pathF === p ? ' on' : ''}" onclick="G.setView('myrPath','${p}')">
+      <span style="color:${commOf(p).color}">${pathCjk(p)}</span>${pathName(p)}<i>×${all.filter((x) => x.gu.daoPath === p).length}</i></button>`;
+  const groups = ['common', 'uncommon', 'rare', 'esoteric', 'supreme'].filter((k) => buckets[k]).map((k) =>
+    `<div class="wk-h wk-comm" style="color:${commOf(buckets[k][0]).color}">${commOf(buckets[k][0]).label}</div>
+     ${buckets[k].sort((a, b) => pathName(a).localeCompare(pathName(b))).map(pBtn).join('')}`).join('');
+  return `
+    <input class="searchbox wide" type="text" placeholder="Search your Gu…" value="${esc(st.myrSearch || '')}" oninput="G.myrSearch(this.value)">
+    <div class="wk-h">Dao Path</div>
+    <button class="ref-pbtn${pathF === 'all' ? ' on' : ''}" onclick="G.setView('myrPath','all')"><span>全</span>All paths<i>×${all.length}</i></button>
+    ${groups}
+    ${present.length ? '' : '<div class="wk-note">No spare Gu to fuse — craft or unequip some.</div>'}`;
+}
+// MIDDLE toolbar — tier chips + grid/list toggle + Clear (mirrors the Refinery's tier chips).
+function myriadMidbar(mode) {
+  const st = S().settings;
+  const tierF = st.myrTier || 'all';
+  const tiers = [...new Set(myriadInputsAll().map((x) => x.gu.tier))].sort((a, b) => a - b);
+  const tierChips = `<div class="ref-tiers"><button class="mini${tierF === 'all' ? ' primary' : ''}" onclick="G.setView('myrTier','all')">All</button>` +
+    tiers.map((t) => `<button class="mini${String(tierF) === String(t) ? ' primary' : ''}" style="color:var(--t${t})" onclick="G.setView('myrTier','${t}')">T${t}</button>`).join('') + '</div>';
+  const showClear = (st.myrSearch || '') || tierF !== 'all' || (st.myrPath || 'all') !== 'all';
+  return `<div class="myr-midbar">
+    <div class="row gap" style="align-items:center;flex-wrap:wrap">${tierChips}${showClear ? '<button class="mini myr-fclear" onclick="G.clearMyrFilters()">Clear</button>' : ''}</div>
+    ${viewToggle('myrView', mode)}</div>`;
+}
+function myriadInputsHtml() {
+  const sel = myriadSel();
+  const inputs = myriadInputs();
+  if (!inputs.length) return '<div class="muted" style="padding:14px 2px">No spare Gu match these filters — clear them, or craft/unequip some.</div>';
+  const mode = S().settings.myrView === 'list' ? 'list' : 'grid';
+  if (mode === 'list') return inputs.map(({ it, gu }) => myriadInputCard(it, gu, sel)).join('');
+  return `<div class="gu-grid">${inputs.map(({ it, gu }) => myriadInputTile(it, gu, sel)).join('')}</div>`;
+}
+export function renderMyriadInputs() { const h = $('myrInputs'); if (h) h.innerHTML = myriadInputsHtml(); }
+const myrBadge = (gu) => gu.myriad ? '<span class="pill" style="color:var(--brass);border-color:var(--brass)66">⟡ myriad</span>' : '';
+function myriadInputCard(it, gu, sel) {
+  const isDom = sel.dom === it.uid, isSup = sel.sup === it.uid;
+  return `<div class="pickrow gu-pick${isDom || isSup ? ' sel' : ''}">
+    <div class="gp-info">
+      <div class="gp-head"><b style="color:var(--t${gu.tier})">T${gu.tier}</b> <span class="gp-name">${gu.name}</span> ${myrBadge(gu)}<span class="gp-path">${pathName(gu.daoPath)}</span></div>
+      <div class="gu-eff">${effectText(gu)}</div></div>
+    <div class="row gap" style="flex:0 0 auto">
+      <button class="${isDom ? 'primary' : ''}" onclick="G.myriadPickDominant('${it.uid}')">${isDom ? '◆ Dom' : 'Dom'}</button>
+      <button class="${isSup ? 'primary' : ''}" onclick="G.myriadPickSupport('${it.uid}')">${isSup ? '◇ Sup' : 'Sup'}</button>
+    </div></div>`;
+}
+// Grid-mode tile (mirrors the Gu Refinery tile) with inline DOM/SUP picker buttons.
+function myriadInputTile(it, gu, sel) {
+  const isDom = sel.dom === it.uid, isSup = sel.sup === it.uid;
+  return `<div class="gu-tile${isDom || isSup ? ' sel' : ''}" style="border-left-color:var(--t${gu.tier})">
+    <div class="gt-top"><b class="tierbadge" style="color:var(--t${gu.tier});border-color:var(--t${gu.tier})">T${gu.tier}</b>${myrBadge(gu)}</div>
+    <div class="gt-name">${gu.name}</div>
+    <div class="gt-eff">${effectText(gu)}</div>
+    <div class="gt-path" style="color:${pathColor(gu.daoPath)}">${pathCjk(gu.daoPath)} ${pathName(gu.daoPath)}</div>
+    <div class="gt-acts">
+      <button class="${isDom ? 'primary' : ''}" onclick="G.myriadPickDominant('${it.uid}')">${isDom ? '◆ Dom' : 'Dom'}</button>
+      <button class="${isSup ? 'primary' : ''}" onclick="G.myriadPickSupport('${it.uid}')">${isSup ? '◇ Sup' : 'Sup'}</button>
+    </div></div>`;
+}
+function myriadDeskHtml(sel) {
+  if (!sel.dom || !sel.sup) return '<div class="wk-h">Refining Altar</div><div class="muted">Choose a <b>Dominant</b> and a <b>Support</b> Gu (same rank) to preview the fusion.</div>';
+  const domGu = guOf(sel.dom), supGu = guOf(sel.sup);
+  if (!domGu || !supGu) return '<div class="wk-h">Refining Altar</div><div class="muted">Selection no longer available.</div>';
+  const chk = canFuse(sel.dom, sel.sup, sel.catalysts);
+  const c = chk.costs || {};
+  const samePath = domGu.daoPath === supGu.daoPath;
+  const ing = (ok, label, have, need) => `<div class="ref-ing${ok ? ' ok' : ' no'}"><i>${ok ? '✓' : '✗'}</i><span>${label}</span>${ok ? '' : `<em>${fmt(have || 0)}/${fmt(need)}</em>`}</div>`;
+  let rows = '';
+  if (c.stones) rows += ing((S().stones || 0) >= c.stones, `${fmt(c.stones)} 石`, S().stones, c.stones);
+  rows += ing((S().essence || 0) >= c.essence, `${c.essence} ✦`, S().essence, c.essence);
+  rows += ing((S().derivationFragments || 0) >= c.fragments, `${c.fragments} Derivation Fragments`, S().derivationFragments, c.fragments);
+  if (c.material) rows += ing(((S().myriadMats || {})[c.material.path] || 0) >= c.material.qty, `${c.material.qty}× ${myriadMatName(c.material.path)}`, (S().myriadMats || {})[c.material.path], c.material.qty);
+  const owned = S().derivationCatalysts || 0; // fusion uses Derivation Catalysts (success boost)
+  const steps = Array.from({ length: CATALYST_MAX_STEPS + 1 }, (_, i) =>
+    `<button class="${sel.catalysts === i ? 'primary' : ''}" ${i > owned ? 'disabled' : ''} onclick="G.myriadCatalysts(${i})">${i}</button>`).join('');
+  const chance = Math.round((chk.chance || 0) * 100);
+  const note = samePath ? '<span style="color:var(--t2)">harmonized (same path)</span>' : '<span style="color:var(--t6)">cross-path ×0.7</span>';
+  return `<div class="wk-h myr-altar-h">Refining Altar · 炼</div>
+    <div class="ref-card myr-altar${chk.ok ? ' can' : ''}" style="border-color:var(--brass)55">
+      <div class="myr-pair">
+        <div><div class="muted tiny">DOMINANT · sets path</div><b style="color:var(--t${domGu.tier})">T${domGu.tier}</b> ${domGu.name}<div class="gu-eff">${effectText(domGu)}</div></div>
+        <div class="myr-plus">＋</div>
+        <div><div class="muted tiny">SUPPORT</div><b style="color:var(--t${supGu.tier})">T${supGu.tier}</b> ${supGu.name}<div class="gu-eff">${effectText(supGu)}</div></div>
+      </div>
+      <div class="myr-dial"><span class="myr-pct" style="color:${chance >= 60 ? 'var(--t2)' : chance >= 35 ? 'var(--brass)' : 'var(--t6)'}">${chance}<i>%</i></span>
+        <span class="myr-dialmeta"><span class="myr-note">${note}</span>
+          <span class="muted tiny">Power budget · dominant 65 / support 35</span>
+          <span class="myr-budget"><i class="d" style="width:65%"></i><i class="s" style="width:35%"></i></span></span></div>
+      <div class="ref-recipe">${rows}</div>
+      <div class="myr-cat"><span class="muted small">Burn Derivation Catalysts (+10% success each, ${owned} owned):</span> <span class="row gap">${steps}</span></div>
+      ${chk.ok ? '' : `<div class="ref-why">${chk.reasons.join(' ')}</div>`}
+      <button class="primary wk-wide" onclick="G.myriadFuse()"${chk.ok ? '' : ' disabled'}>⟡ Refine</button>
+    </div>`;
+}
+// Owned myriad Gu — rank-up + salvage.
+function myriadOwnedHtml() {
+  const equipped = new Set();
+  for (const c of S().roster) for (const u of (c.gu || [])) equipped.add(u);
+  const mine = S().guInv.filter((it) => it.myriad).map((it) => ({ it, gu: guOf(it.uid) })).filter((x) => x.gu);
+  if (!mine.length) return '<div class="muted">No myriad Gu yet — fuse two Gu above to forge your first.</div>';
+  const ownedWards = S().refinementCatalysts || 0; // Refinement Catalysts available to burn (reduce shatter)
+  return mine.map(({ it, gu }) => {
+    const eq = equipped.has(it.uid);
+    const atCap = gu.tier >= MYRIAD_TIER_CAP;
+    const wards = Math.min((window.G && window.G.myriadWardsGet && window.G.myriadWardsGet(it.uid)) || 0, Math.min(WARD_MAX, ownedWards));
+    const ru = canRankUp(it.uid, wards);          // manual rank-up (uses fodder you already own)
+    const auto = atCap ? null : planAutoRankUp(it.uid); // auto-rank (forges the missing tag-cover fodder)
+    const ruLabel = atCap ? `Max tier (${MYRIAD_TIER_CAP})` : `⟡ Rank → T${gu.tier + 1}`;
+    const showAuto = auto && auto.ok && auto.forgeCount > 0;
+    const autoBtn = showAuto
+      ? `<button class="primary" onclick="G.myriadAutoRankUp('${it.uid}',${wards})">⚒ Auto-Rank · ${fmt(auto.totalStones)} 石</button>`
+      : '';
+    const why = atCap ? '' : (!ru.ok && !showAuto && auto && !auto.ok ? auto.reasons.join(' ') : (!ru.ok ? ru.reasons.join(' ') : ''));
+    const shatter = atCap ? 0 : Math.round((ru.destroyChance || 0) * 100); // shatter chance on a FAILED rank-up (after wards)
+    // ward stepper: burn Refinement Catalysts to LOWER the shatter chance (−10% each)
+    const wardSteps = atCap ? '' : Array.from({ length: WARD_MAX + 1 }, (_, i) =>
+      `<button class="${wards === i ? 'primary' : ''}" ${i > ownedWards ? 'disabled' : ''} onclick="G.myriadSetWards('${it.uid}',${i})">${i}</button>`).join('');
+    return `<div class="card myr-owned"><div class="body">
+      <div class="gp-head"><b style="color:var(--t${gu.tier})">T${gu.tier}</b> <span class="gp-name">${gu.name}</span> ${myrBadge(gu)}<span class="gp-path">${pathName(gu.daoPath)}</span>${eq ? '<span class="pill">equipped</span>' : ''}</div>
+      <div class="gu-eff">${effectText(gu)}</div>
+      <div class="muted tiny">coef ${gu.coef || 0} · ◇ ${guEssenceCost(gu)}/use</div>
+      ${why ? `<div class="ref-why">${why}</div>` : ''}
+      ${atCap ? '' : `<div class="muted tiny" style="margin-top:6px">⚠ On a failed rank-up, <b style="color:var(--t6)">${shatter}%</b> chance <b>${gu.name}</b> shatters${wards ? ` (−${wards * 10}% from catalysts)` : ' (rises with tier)'}.${showAuto ? ` Auto-Rank forges ${auto.forgeCount} fodder Gu first.` : ''}</div>
+      <div class="myr-cat" style="margin-top:6px"><span class="muted small">Burn Refinement Catalysts (−10% shatter each, ${ownedWards} owned):</span> <span class="row gap">${wardSteps}</span></div>`}
+      <div class="row gap" style="margin-top:8px;flex-wrap:wrap">
+        <button class="${ru.ok ? 'primary' : ''}" ${ru.ok ? '' : 'disabled'} onclick="G.myriadRankUp('${it.uid}',${wards})">${ruLabel}${ru.ok ? ` · ${Math.round(ru.chance * 100)}%` : ''}</button>
+        ${autoBtn}
+        <button onclick="G.myriadSalvage('${it.uid}')">Salvage</button>
+      </div></div></div>`;
+  }).join('');
+}
+function viewMyriad() {
+  if (!arenaUnlocked()) {
+    return pagehead('衍', 'Derivation · 衍蛊', 'Myriad Gu Refining',
+      'Fuse two Gu into a custom, multi-effect artifact — powered by Arena rewards.')
+      + `<div class="killer-block killer-locked" style="max-width:560px">
+        <div class="killer-row"><b>🔒 Myriad Refining locked</b></div>
+        <div class="killer-hint">Its reagents (Derivation Fragments, Arena Merits, path materials, catalysts) come from the <b>Arena</b>, which opens once you beat the tower's first gate:</div>
+        <ul class="km-reqs"><li class="km-req-no">✗ Clear <b>Floor ${ARENA_UNLOCK_FLOOR}</b> — currently at Floor ${S().frontier}</li></ul></div>`;
+  }
+  const sel = myriadSel();
+  const prof = S().myriadProficiency || 0;
+  const lvl = myriadProfLevel(prof);
+  const bonus = Math.round(Math.min(PROF_CAP, PROF_BONUS_PER_LEVEL * lvl) * 100);
+  // progress within the CURRENT level (points banked since this level → points needed for the next)
+  const curBase = profPointsForLevel(lvl), nextBase = profPointsForLevel(lvl + 1);
+  const lvlPct = lvl >= PROF_MAX_LEVEL ? 100 : Math.max(4, Math.min(100, ((prof - curBase) / Math.max(1, nextBase - curBase)) * 100));
+  // next still-locked tier, gated by LEVEL
+  let nextT = 0; for (let t = 2; t <= MYRIAD_TIER_CAP; t++) if ((PROF_REQ[t] || 0) > lvl) { nextT = t; break; }
+  return `${pagehead('衍', 'Derivation · 衍蛊', 'Myriad Gu Refining',
+    'Select a <b>dominant</b> + a <b>support</b> Gu (same rank) to forge a custom multi-effect <b>[myriad]</b> Gu. The dominant sets the path &amp; takes the larger share of the power budget; rarer dominant paths hit harder. Refining is fallible.')}
+  <div class="card myr-strip"><div class="body row gap" style="flex-wrap:wrap;gap:26px;align-items:flex-start">
+    <span class="myr-stat"><b class="stone" style="color:var(--brass)">${fmt(S().derivationFragments || 0)}</b><span class="muted small">Derivation Fragments</span></span>
+    <span class="myr-stat"><b style="color:var(--immstone)">${fmt(S().derivationCatalysts || 0)}</b><span class="muted small">Derivation Catalysts <i class="muted tiny">(fusion +success)</i></span></span>
+    <span class="myr-stat"><b style="color:var(--immstone)">${fmt(S().refinementCatalysts || 0)}</b><span class="muted small">Refinement Catalysts <i class="muted tiny">(rank-up −shatter)</i></span></span>
+    <span class="myr-stat myr-prof"><b>Lv.${lvl}</b><span class="muted small">Refining Proficiency · +${bonus}% success</span>
+      <span class="myr-profbar"><i style="width:${lvlPct}%"></i></span>
+      <span class="muted tiny">${lvl >= PROF_MAX_LEVEL ? 'max proficiency' : `Lv.${lvl + 1} at ${fmt(nextBase)} pts (${fmt(prof)}/${fmt(nextBase)})`}${nextT ? ` · T${nextT} at Lv.${PROF_REQ[nextT]}` : ' · all tiers unlocked'}</span></span>
+  </div></div>
+  <div class="ref-split">
+    <aside class="wk-rail" id="myrRail">${myriadRailHtml()}</aside>
+    <div class="ref-mid">${secHead(1, 'Your Gu', `${myriadInputsAll().length} spare`)}
+      ${myriadMidbar(S().settings.myrView === 'list' ? 'list' : 'grid')}
+      <div class="myr-inputs" id="myrInputs">${myriadInputsHtml()}</div></div>
+    <aside class="ref-desk">${myriadDeskHtml(sel)}</aside>
+  </div>
+  <div style="margin-top:18px">${secHead(2, 'Your Myriad Gu', 'rank up or salvage')}
+    <div class="myr-owned-list">${myriadOwnedHtml()}</div></div>`;
+}
 
 // ---------- shop ----------
 let shopSelId = null; // the resource on the counter (module-level — deliberately not persisted)
@@ -2312,11 +2575,21 @@ export function shopSectionsHtml() {
       <span class="mkt-held">×${fmt(shopOwned(r))}</span>
       <span class="mkt-cost">${fmt(cost)} 石</span></div>`;
   };
-  return chips + RANKS.filter((rk) => byRank[rk]).map((rk) =>
-    `<div class="sec-head" style="margin-top:0"><span class="sec-num" style="color:${rankColor(rk)}">${SEC_NUM[rk] || rk}</span>
+  const tile = (r) => {
+    const cost = resourceCost(r.id);
+    return `<div class="mkt-tile${sel && r.id === sel.id ? ' sel' : ''}${S().stones >= cost ? '' : ' poor'}" style="border-left-color:${rankColor(r.rank)}" onclick="G.shopSelect('${r.id}')">
+      <div class="mt-name">${r.name}</div>
+      <div class="mt-meta">${shopPathTag(r)}</div>
+      <div class="mt-foot"><span class="mt-cost">${fmt(cost)} 石</span><span class="muted tiny">held ×${fmt(shopOwned(r))}</span></div></div>`;
+  };
+  const mode = S().settings.shopView === 'list' ? 'list' : 'grid';
+  return chips + RANKS.filter((rk) => byRank[rk]).map((rk) => {
+    const body = mode === 'list' ? byRank[rk].map(row).join('') : `<div class="mkt-grid">${byRank[rk].map(tile).join('')}</div>`;
+    return `<div class="sec-head" style="margin-top:0"><span class="sec-num" style="color:${rankColor(rk)}">${SEC_NUM[rk] || rk}</span>
       <span class="sec-title" style="color:${rankColor(rk)}">Rank ${rk}</span>
       <span class="sec-meta">${byRank[rk].length} kinds · ${fmt(resourceCost(byRank[rk][0].id))} 石 each</span></div>
-     ${byRank[rk].map(row).join('')}`).join('');
+     ${body}`;
+  }).join('');
 }
 
 // RIGHT — the purchase desk: purse, selected resource, amount, itemized bill, one Buy.
@@ -2362,7 +2635,10 @@ export function viewShop() {
     'Buy crafting resources with Primeval Essence Stones. A resource is stocked only once you have <b>beaten the floor it can drop from</b> and your <b>highest cultivator’s rank</b> reaches its tier — deeper materials stay locked until you grow into them.')}
   <div class="mkt-split">
     <aside class="wk-rail" id="shopRail">${shopRailHtml()}</aside>
-    <div class="mkt-list" id="shopResults">${shopSectionsHtml()}</div>
+    <div class="mkt-list">
+      <div class="myr-midbar">${viewToggle('shopView', S().settings.shopView === 'list' ? 'list' : 'grid')}</div>
+      <div id="shopResults">${shopSectionsHtml()}</div>
+    </div>
     <aside class="mkt-desk" id="shopDesk">${shopDeskHtml()}</aside>
   </div>`;
 }
@@ -2601,6 +2877,11 @@ export function viewFloors() {
 // Player-facing patch notes. Add the newest release to the TOP of this list; each entry is
 // { date, title, items: [[heading, html], …] }. HTML is allowed in the item bodies.
 const WHATS_NEW = [
+  { date: 'Jun 14, 2026', title: 'Myriad Gu Refining', items: [
+    ['Fuse two Gu into one', 'A new <b>衍 Myriad Refining</b> page: pick a <b>dominant</b> + a <b>support</b> Gu (same rank) and fuse them into a custom, multi-effect <b>[myriad]</b> Gu. The dominant sets the path &amp; takes the larger share of the power budget, and <b>rarer dominant paths hit harder</b>. Same- or cross-path (cross is harder).'],
+    ['Fallible &amp; escalating', 'Refining can <b>fail</b> (a failed fuse risks the inputs), and chance falls with rank + fusion depth. Raise it with main-character <b>comprehension</b>, <b>same-path harmonization</b>, <b>refining proficiency</b> (grows as you refine), and burnable <b>Stabilizing Catalysts</b>. Rank a myriad Gu up or <b>salvage</b> it for Fragments.'],
+    ['Powered by the Arena', 'New currencies all come from the <b>Arena</b>: <b>Derivation Fragments</b> (the reagent) + <b>Arena Merits</b> (a new <b>Arena Shop</b> selling per-path materials, catalysts &amp; fragment bundles). Plus <b>daily &amp; weekly ladder rewards</b> by your rank, and catalysts from boss first-clears.'],
+  ] },
   { date: 'Jun 13, 2026', title: 'Gu Refinery', items: [
     ['Auto-Craft', 'Short on materials — or the lower-tier fodder — for a Gu? The Refining Desk now has an <b>⚒ Auto-Craft</b> button: if your <b style="color:var(--stone)">石 Primeval Stones</b> can cover it, it <b>buys the missing resources from the Market</b> and <b>recursively forges the whole lower-tier fodder chain</b>, then crafts the Gu — all in <b>one click</b>. So you can leap <b>straight to a Tier 5 Gu</b> without hand-building the T1→T4 chain first. It spends what you already own first (only buying or forging the shortfall) and shows the <b>total stone cost</b> and exactly what it will do <b>before</b> you commit. Every gate still holds — locked paths, a path’s floor requirement, and the Market’s own roster-rank limit on which materials you can buy.'],
   ] },
@@ -2701,6 +2982,12 @@ function fmtReset(ms) {
   if (m < 1) return 'under a minute';
   const h = Math.floor(m / 60), mm = m % 60;
   return h ? `${h}h ${mm}m` : `${mm}m`;
+}
+// Same idea for spans that can exceed a day (the weekly reset): Nd Xh past 24h, else defer to fmtReset.
+function fmtResetD(ms) {
+  const totalMin = Math.max(0, Math.floor(ms / 60000));
+  if (totalMin >= 1440) { const d = Math.floor(totalMin / 1440), h = Math.floor((totalMin % 1440) / 60); return h ? `${d}d ${h}h` : `${d}d`; }
+  return fmtReset(ms);
 }
 // Seconds-precision clock for short countdowns (e.g. the bounty respawn): M:SS, or H:MM:SS past an hour.
 function fmtCountdown(ms) {
@@ -3194,24 +3481,173 @@ export function closeModal() { const o = $('overlay'); if (o) o.remove(); }
 // every team showing its full defense formation. Ladder data still arrives via main.js → renderArenaList.
 const ARENA_CJK_NUM = ['壹', '貳', '參', '肆', '伍', '陸', '柒', '捌', '玖', '拾'];
 
-function viewPvp() {
-  ensureArenaMeta();
-  // PROGRESSION GATE: the Arena opens only after the player has BEATEN floor 50 (arenaMeta.js
-  // arenaUnlocked / main.js openArena enforce it too — this is the matching locked view).
-  if (!arenaUnlocked()) {
-    return pagehead('擂', 'Asynchronous PvP', 'Arena',
-      'A proving ground for cultivators who have tempered themselves against the tower.')
-      + `<div class="killer-block killer-locked" style="max-width:560px">
-        <div class="killer-row"><b>🔒 Arena locked</b></div>
-        <div class="killer-hint">The Arena is a mid-game proving ground — it opens once you have beaten the tower's first gate:</div>
-        <ul class="km-reqs">
-          <li class="km-req-no">✗ Clear <b>Floor ${ARENA_UNLOCK_FLOOR}</b> — currently at Floor ${S().frontier}</li>
-        </ul>
-      </div>`;
-  }
-  return pagehead('擂', 'Asynchronous PvP', 'Arena',
-    'Register your battle team as a defense, then challenge other cultivators. Fights resolve server-side; climb the ladder by beating stronger opponents.')
-    + `<div class="arena-pvp">
+// The Arena page is a single tab with two SUB-VIEWS toggled in-page: the ladder, and the shop & rewards.
+let arenaSub = 'ladder'; // 'ladder' | 'shop'
+export function setArenaSub(v) { arenaSub = v === 'shop' ? 'shop' : 'ladder'; }
+// Player's last-known ladder standing (set by renderArenaList) so the Rewards sub-view can show the LIVE
+// bracket + exact payout. { rank, n } when ranked, else null (never fetched / unregistered).
+let _myArenaRank = null;
+
+// ---- Arena Shop & Rewards — a SUB-VIEW of the Arena page (toggle), not a separate nav tab ----
+// Claim windows share the daily-quest / bounty reset boundary (systems/reset.js): same local day for the
+// daily reward, same local week (Mon 00:00 → next Mon 00:00) for the weekly one.
+const _myrSameDay = (t) => sameLocalDay(t);
+const _myrSameWeek = (t) => sameLocalWeek(t);
+// responsive card grid (no CSS dependency)
+const _gridOpen = '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(232px,1fr));gap:12px">';
+function arenaShopCard(s) {
+  const merits = S().arenaMerits || 0;
+  const can = merits >= s.price && s.left > 0;
+  const isMat = s.kind === 'dcore' || s.kind === 'rcore';
+  const accent = isMat && s.path ? pathColor(s.path) : 'var(--brass)';
+  const seal = isMat ? pathCjk(s.path) : s.kind === 'fragments' ? '◈' : '✦';
+  return `<div class="card ash-card${s.left <= 0 ? ' sold' : ''}" style="--ash-accent:${accent}"><div class="body">
+      <span class="ash-glyph cjk" style="color:${accent}">${seal}</span>
+      <div class="gp-head ash-name"><span class="gp-name">${s.name}</span></div>
+      <div class="ash-meta muted small"><b>${s.left}</b>/${s.cap} left this week</div>
+      <div class="ash-price"><b style="color:var(--brass)">${s.price}</b><span class="muted tiny">Merits</span></div>
+      <button class="${can ? 'primary ' : ''}wk-wide" ${can ? '' : 'disabled'} onclick="G.arenaShopBuy('${s.id}',1)">${s.left <= 0 ? 'Sold out this week' : merits < s.price ? `Need ${s.price} Merits` : `Buy · ${s.price} M`}</button>
+    </div></div>`;
+}
+// Ladder-reward bracket order + labels for the reference table.
+const ARENA_BRACKETS = [['1', 'Rank 1'], ['2', 'Rank 2'], ['3', 'Rank 3'], ['4', 'Rank 4'], ['5', 'Rank 5'],
+  ['top10', 'Top 10'], ['top50', 'Top 50'], ['top100', 'Top 100'], ['p10', 'Top 10%'], ['p25', 'Top 25%'], ['p50', 'Top 50%'], ['rest', 'Below 50%']];
+function arenaLadderClaimsHtml() {
+  const dc = _myrSameDay(S().arenaDailyClaimedAt), wc = _myrSameWeek(S().arenaWeeklyClaimedAt);
+  const r = _myArenaRank; // {rank,n} or null
+  const curBracket = r ? arenaRankBracket(r.rank, r.n) : null;
+  const payout = (cad) => r ? arenaRankReward(r.rank, r.n, cad) : null;
+  const claimCard = (claimed, title, blurb, reward, on) => {
+    const earn = reward ? `<div class="muted small" style="margin:2px 0 10px">You'd claim <b style="color:var(--brass)">+${reward.merits} Merits</b> · <b class="stone">+${reward.fragments} Fragments</b></div>`
+      : '<div class="muted small" style="margin:2px 0 10px">Open the <b>擂 Ladder</b> tab once to read your live rank.</div>';
+    return `<div class="card ash-claim" style="border-color:var(--brass)44"><div class="body">
+      <div class="gp-head"><span class="gp-name">${title}</span></div>
+      <div class="muted tiny" style="margin:4px 0">${blurb}</div>${earn}
+      <button class="${claimed ? '' : 'primary '}wk-wide" ${claimed ? 'disabled' : ''} onclick="${on}">${claimed ? 'Claimed ✓' : 'Claim'}</button>
+    </div></div>`;
+  };
+  const standing = r ? `Your standing: <b>Rank #${r.rank}</b> of ${r.n} → bracket <b>${(ARENA_BRACKETS.find((b) => b[0] === curBracket) || [, curBracket])[1]}</b>`
+    : 'Register a defense team + open the Ladder to enter the rankings.';
+  // reward bracket reference table (daily + weekly Merits/Fragments per bracket); current bracket highlighted.
+  // Split into two side-by-side tables so it reads wide-and-short instead of one tall narrow column.
+  const rowFor = ([k, label]) => {
+    const d = ARENA_RANK_REWARDS.daily[k], w = ARENA_RANK_REWARDS.weekly[k];
+    const hi = k === curBracket ? ' class="ash-cur"' : '';
+    return `<tr${hi}><td>${label}${k === curBracket ? ' ◄' : ''}</td>
+      <td><span class="num">${d[0]}</span> / ${d[1]}</td>
+      <td><span class="num">${w[0]}</span> / ${w[1]}</td></tr>`;
+  };
+  const tableFor = (slice) => `<table class="ash-table">
+      <tr class="ash-thead"><td>Bracket</td><td>Daily · M/F</td><td>Weekly · M/F</td></tr>
+      ${slice.map(rowFor).join('')}</table>`;
+  const half = Math.ceil(ARENA_BRACKETS.length / 2);
+  return `<div class="muted small" style="margin:2px 0 12px">${standing}</div>
+    ${_gridOpen}
+      ${claimCard(dc, 'Daily Rank Reward', `By your CURRENT standing. ${dc ? `Next claim in ${fmtResetD(msToNextDay())} (00:00).` : 'Resets at 00:00 local, with daily quests + bounties.'}`, payout('daily'), 'G.claimArenaDaily()')}
+      ${claimCard(wc, 'Weekly Season Reward', `A larger lump by your standing. ${wc ? `Next claim in ${fmtResetD(msToNextWeek())} (Mon 00:00).` : 'Resets at the start of the week (Mon 00:00 local).'}`, payout('weekly'), 'G.claimArenaWeekly()')}
+    </div>
+    <div class="card" style="margin-top:12px"><div class="body">
+      <div class="muted small" style="margin-bottom:8px">Rewards by ladder bracket — <b>Merits / Fragments</b> (highest bracket you qualify for only):</div>
+      <div class="ash-bracket-row">${tableFor(ARENA_BRACKETS.slice(0, half))}${tableFor(ARENA_BRACKETS.slice(half))}</div>
+    </div></div>`;
+}
+// Refining-core filters (search + commonality + path) — mirror the Market's resource filters.
+const _isCore = (s) => s.kind === 'dcore' || s.kind === 'rcore';
+function arenaCoresAll() { return arenaShopStock().filter(_isCore); }
+function arenaCoresFiltered() {
+  const st = S().settings;
+  const q = (st.ashSearch || '').trim().toLowerCase();
+  const commF = st.ashComm || 'all', pathF = st.ashPath || 'all';
+  let list = arenaCoresAll();
+  if (commF !== 'all') list = list.filter((s) => (commOf(s.path).key || 'common') === commF);
+  if (pathF !== 'all') list = list.filter((s) => s.path === pathF);
+  if (q) list = list.filter((s) => s.name.toLowerCase().includes(q) || pathName(s.path).toLowerCase().includes(q));
+  return list;
+}
+// LEFT RAIL — search + core paths grouped by commonality (mirrors the Market / Gu Refinery rail).
+function arenaCoresRailHtml() {
+  const st = S().settings;
+  const pathF = st.ashPath || 'all';
+  const all = arenaCoresAll();
+  const present = [...new Set(all.map((s) => s.path))];
+  const buckets = {};
+  present.forEach((p) => { const k = commOf(p).key || 'common'; (buckets[k] = buckets[k] || []).push(p); });
+  const pBtn = (p) => `<button class="ref-pbtn${pathF === p ? ' on' : ''}" onclick="G.setView('ashPath','${p}')">
+      <span style="color:${commOf(p).color}">${pathCjk(p)}</span>${pathName(p)}<i>×${all.filter((s) => s.path === p).length}</i></button>`;
+  const groups = ['common', 'uncommon', 'rare', 'esoteric', 'supreme'].filter((k) => buckets[k]).map((k) =>
+    `<div class="wk-h wk-comm" style="color:${commOf(buckets[k][0]).color}">${commOf(buckets[k][0]).label}</div>
+     ${buckets[k].sort((a, b) => pathName(a).localeCompare(pathName(b))).map(pBtn).join('')}`).join('');
+  return `
+    <input class="searchbox wide" type="text" placeholder="Search cores…" value="${esc(st.ashSearch || '')}" oninput="G.ashSearch(this.value)">
+    <div class="wk-h">Dao Path</div>
+    <button class="ref-pbtn${pathF === 'all' ? ' on' : ''}" onclick="G.setView('ashPath','all')"><span>全</span>All paths<i>×${all.length}</i></button>
+    ${groups}`;
+}
+// MIDDLE toolbar — commonality chips + grid/list toggle + Clear.
+function arenaCoresMidbar(mode) {
+  const st = S().settings;
+  const commF = st.ashComm || 'all';
+  const all = arenaCoresAll();
+  const COMMS = ['common', 'uncommon', 'rare', 'esoteric', 'supreme'];
+  const present = COMMS.filter((k) => all.some((s) => (commOf(s.path).key || 'common') === k));
+  const commChips = `<div class="ref-tiers"><button class="mini${commF === 'all' ? ' primary' : ''}" onclick="G.setView('ashComm','all')">All</button>` +
+    present.map((k) => { const c = commOf(all.find((s) => (commOf(s.path).key || 'common') === k).path); return `<button class="mini${commF === k ? ' primary' : ''}" style="color:${c.color}" onclick="G.setView('ashComm','${k}')">${c.label}</button>`; }).join('') + '</div>';
+  const showClear = (st.ashSearch || '') || commF !== 'all' || (st.ashPath || 'all') !== 'all';
+  return `<div class="myr-midbar">
+    <div class="row gap" style="align-items:center;flex-wrap:wrap">${commChips}${showClear ? '<button class="mini myr-fclear" onclick="G.clearAshFilters()">Clear</button>' : ''}</div>
+    ${viewToggle('ashView', mode)}</div>`;
+}
+// One compact list-mode row for a core (grid mode reuses arenaShopCard).
+function arenaCoreRow(s) {
+  const merits = S().arenaMerits || 0;
+  const can = merits >= s.price && s.left > 0;
+  const accent = s.path ? pathColor(s.path) : 'var(--brass)';
+  return `<div class="ash-corerow${s.left <= 0 ? ' sold' : ''}" style="--ash-accent:${accent}">
+      <span class="acr-seal">${pathCjk(s.path)}</span>
+      <span class="acr-name">${s.name}</span>
+      <span class="acr-left">${s.left}/${s.cap} left</span>
+      <span class="acr-price">${s.price} <span class="muted tiny">M</span></span>
+      <button class="${can ? 'primary' : ''}" ${can ? '' : 'disabled'} onclick="G.arenaShopBuy('${s.id}',1)">${s.left <= 0 ? 'Sold out' : merits < s.price ? `Need ${s.price}` : 'Buy'}</button>
+    </div>`;
+}
+function arenaCoresHtml() {
+  const list = arenaCoresFiltered();
+  if (!list.length) return '<div class="muted" style="padding:14px 2px">No cores match these filters.</div>';
+  const mode = S().settings.ashView === 'list' ? 'list' : 'grid';
+  if (mode === 'list') return `<div class="ash-corelist">${list.map(arenaCoreRow).join('')}</div>`;
+  return `<div class="ash-coregrid">${list.map(arenaShopCard).join('')}</div>`;
+}
+export function renderArenaShopCores() { const h = $('ashCores'); if (h) h.innerHTML = arenaCoresHtml(); }
+
+// The Shop & Rewards SUB-VIEW body (no pagehead — viewPvp owns the header + toggle).
+function arenaShopBody() {
+  const stock = arenaShopStock();
+  const isMat = (s) => s.kind === 'dcore' || s.kind === 'rcore';
+  const supplies = stock.filter((s) => !isMat(s));
+  const mats = stock.filter(isMat);
+  return `<div class="card ash-strip"><div class="body row gap" style="flex-wrap:wrap;gap:28px;align-items:center">
+        <span class="ash-bigstat"><b style="color:var(--brass)">${fmt(S().arenaMerits || 0)}</b> <span class="muted small">Arena Merits</span></span>
+        <span><b class="stone">${fmt(S().derivationFragments || 0)}</b> <span class="muted small">Derivation Fragments</span></span>
+        <span><b style="color:var(--immstone)">${fmt(S().derivationCatalysts || 0)}</b> <span class="muted small">Derivation Catalysts</span></span>
+        <span><b style="color:var(--immstone)">${fmt(S().refinementCatalysts || 0)}</b> <span class="muted small">Refinement Catalysts</span></span>
+      </div></div>
+      ${secHead(1, 'Ladder Rewards', 'paid by your live rank — highest bracket only')}
+      ${arenaLadderClaimsHtml()}
+      <div style="margin-top:18px">${secHead(2, 'Supplies', 'catalysts & fragments')}
+        ${_gridOpen}${supplies.map(arenaShopCard).join('')}</div></div>
+      <div style="margin-top:18px">${secHead(3, 'Refining Cores', `Derivation (fusion) + Refinement (rank-up) cores · ${arenaCoresAll().length} listings`)}
+        <div class="ash-cores-split">
+          <aside class="wk-rail" id="ashCoresRail">${arenaCoresRailHtml()}</aside>
+          <div class="ash-cores-main">
+            ${arenaCoresMidbar(S().settings.ashView === 'list' ? 'list' : 'grid')}
+            <div id="ashCores">${arenaCoresHtml()}</div>
+          </div>
+        </div></div>`;
+}
+
+// The Ladder SUB-VIEW body (the standing panel + the async-populated ladder list).
+function arenaLadderBody() {
+  return `<div class="arena-pvp">
       <aside class="apv-side">
         <div class="apv-ghost" id="arena-myghost">擂</div>
         <div class="apv-h">Your Standing</div>
@@ -3235,6 +3671,34 @@ function viewPvp() {
       </aside>
       <div class="apv-main" id="arena-list"><div class="muted" style="padding:20px 4px">Loading the ladder…</div></div>
     </div>`;
+}
+
+function viewPvp() {
+  ensureArenaMeta();
+  // PROGRESSION GATE: the Arena opens only after the player has BEATEN floor 50 (arenaMeta.js
+  // arenaUnlocked / main.js openArena enforce it too — this is the matching locked view).
+  if (!arenaUnlocked()) {
+    return pagehead('擂', 'Asynchronous PvP', 'Arena',
+      'A proving ground for cultivators who have tempered themselves against the tower.')
+      + `<div class="killer-block killer-locked" style="max-width:560px">
+        <div class="killer-row"><b>🔒 Arena locked</b></div>
+        <div class="killer-hint">The Arena is a mid-game proving ground — it opens once you have beaten the tower's first gate:</div>
+        <ul class="km-reqs">
+          <li class="km-req-no">✗ Clear <b>Floor ${ARENA_UNLOCK_FLOOR}</b> — currently at Floor ${S().frontier}</li>
+        </ul>
+      </div>`;
+  }
+  const onShop = arenaSub === 'shop';
+  const sub = `<div class="arena-subtabs" style="display:flex;gap:8px;margin:0 0 16px">
+      <button class="${onShop ? '' : 'primary'}" onclick="G.arenaSub('ladder')">擂 Ladder</button>
+      <button class="${onShop ? 'primary' : ''}" onclick="G.arenaSub('shop')">兌 Shop &amp; Rewards</button>
+    </div>`;
+  return pagehead('擂', 'Asynchronous PvP', 'Arena',
+    onShop
+      ? 'Spend <b>Arena Merits</b> (earned from bouts &amp; ladder standing) on refining supplies, and claim your daily &amp; weekly rank rewards. <b>Derivation Fragments</b> feed the <b>衍 Myriad Refining</b> bench.'
+      : 'Register your battle team as a defense, then challenge other cultivators. Fights resolve server-side; climb the ladder by beating stronger opponents.')
+    + sub
+    + (onShop ? arenaShopBody() : arenaLadderBody());
 }
 
 // ---- shared formation mini-grid (side preview, podium cards, ladder rows) ----
@@ -3325,6 +3789,7 @@ export function renderArenaList(teams, myId, myName, myPoints) {
   if (nameEl && document.activeElement !== nameEl) nameEl.value = myName || '';
   const rEl = $('arena-myrating'); if (rEl) rEl.textContent = (myPoints == null ? '—' : myPoints);
   const myIdx = (teams || []).findIndex((t) => t.player_id === myId);
+  _myArenaRank = myIdx >= 0 ? { rank: myIdx + 1, n: teams.length } : null; // for the Rewards sub-view
   const posEl = $('arena-mypos');
   if (posEl) posEl.textContent = myIdx >= 0 ? `Rank #${myIdx + 1} of ${teams.length} cultivators` : 'Unranked — register your defense to enter the ladder';
   const recEl = $('arena-myrecord');

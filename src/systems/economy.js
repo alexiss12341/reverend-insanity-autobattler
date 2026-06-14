@@ -8,6 +8,8 @@ import { rarityTier } from '../data/rarities.js';
 import { prestigeGainMult } from './prestige.js';
 import { lineEffects } from '../data/traits.js';
 import { effAttr } from '../data/attributes.js';
+import { pathList, isPathLocked, commOf, pathFloorReq } from '../data/daoPaths.js';
+import { myriadMatId, myriadMatName, refineMatId, refineMatName, DERIVATION_CATALYST, REFINEMENT_CATALYST } from '../data/myriad.js';
 
 // Overall character power for the Fortune tiebreak (mirrors battle.js auraPower: atk+def+hp).
 const charPower = (c) => { const s = effectiveStats(c); return (s.atk || 0) + (s.def || 0) + (s.maxHp || 0); };
@@ -201,4 +203,98 @@ export function buyResource(id, qty = 1) {
   S().stones -= cost;
   addResource(id, qty);
   return { ok: true };
+}
+
+// ---- Myriad Refining economy: the regular Market's Stabilizing Catalyst, the Arena Shop (Merit scrip),
+// and the ranking-bracket payout. All faucet through the Arena (see data/myriad.js / systems/myriad.js).
+
+// The Derivation Catalyst (fusion success boost) is also buyable in the regular Market for primeval stones
+// (steep — it stays a rare trump; the cheap routes are boss first-clears + Arena win drops).
+export const CATALYST_MARKET_PRICE = 250000;
+export function buyCatalyst(qty = 1) {
+  qty = Math.max(1, qty | 0);
+  const cost = CATALYST_MARKET_PRICE * qty;
+  if ((S().stones || 0) < cost) return { ok: false, msg: 'Not enough primeval stones.' };
+  S().stones -= cost;
+  S().derivationCatalysts = (S().derivationCatalysts || 0) + qty;
+  return { ok: true, cost };
+}
+
+// ---- Arena Shop (spend Arena Merits) — always-available, per-week purchase caps ----
+const MAT_MERIT_PRICE = { common: 45, uncommon: 85, rare: 150, esoteric: 250, supreme: 250 };
+const CATALYST_MERIT_PRICE = 180, FRAG_BUNDLE = 50, FRAG_BUNDLE_PRICE = 80;
+const SHOP_CAP = { material: 15, catalyst: 6, fragments: 10 };
+const FRAG_BUNDLE_ID = 'frag_bundle';
+const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+const shopWeekKey = () => Math.floor(Date.now() / WEEK_MS);
+// Reset the weekly purchase-cap counters when the season boundary rolls over.
+function ensureShopWeek() {
+  const s = S(); if (!s) return;
+  if (s._shopWeek !== shopWeekKey()) { s._shopWeek = shopWeekKey(); s.arenaShopBought = {}; }
+}
+// Has the player cleared the floor that gates this path? (mirrors the Market's beaten-drop-floor gate)
+const pathUnlockedForShop = (pid) => (S().frontier - 1) >= pathFloorReq(pid);
+
+export function arenaShopStock() {
+  ensureShopWeek();
+  const bought = S().arenaShopBought || {};
+  const left = (id, cap) => Math.max(0, cap - (bought[id] || 0));
+  const out = [];
+  for (const p of pathList()) {
+    if (isPathLocked(p.id) || !pathUnlockedForShop(p.id)) continue;
+    const price = MAT_MERIT_PRICE[commOf(p.id).key] || 45;
+    // Derivation Core (fusion) + Refinement Core (rank-up) — same per-commonality price.
+    out.push({ id: myriadMatId(p.id), kind: 'dcore', path: p.id, name: myriadMatName(p.id), price, cap: SHOP_CAP.material, left: left(myriadMatId(p.id), SHOP_CAP.material) });
+    out.push({ id: refineMatId(p.id), kind: 'rcore', path: p.id, name: refineMatName(p.id), price, cap: SHOP_CAP.material, left: left(refineMatId(p.id), SHOP_CAP.material) });
+  }
+  // Derivation Catalyst (fusion success) + Refinement Catalyst (rank-up shatter reducer) — same price.
+  out.push({ id: DERIVATION_CATALYST.id, kind: 'dcat', name: DERIVATION_CATALYST.name, price: CATALYST_MERIT_PRICE, cap: SHOP_CAP.catalyst, left: left(DERIVATION_CATALYST.id, SHOP_CAP.catalyst) });
+  out.push({ id: REFINEMENT_CATALYST.id, kind: 'rcat', name: REFINEMENT_CATALYST.name, price: CATALYST_MERIT_PRICE, cap: SHOP_CAP.catalyst, left: left(REFINEMENT_CATALYST.id, SHOP_CAP.catalyst) });
+  out.push({ id: FRAG_BUNDLE_ID, kind: 'fragments', name: `${FRAG_BUNDLE} Derivation Fragments`,
+    price: FRAG_BUNDLE_PRICE, cap: SHOP_CAP.fragments, left: left(FRAG_BUNDLE_ID, SHOP_CAP.fragments) });
+  return out;
+}
+
+export function arenaShopBuy(id, qty = 1) {
+  ensureShopWeek();
+  const stock = arenaShopStock().find((s) => s.id === id);
+  if (!stock) return { ok: false, msg: 'Not available.' };
+  qty = Math.max(1, qty | 0);
+  if (qty > stock.left) return { ok: false, msg: `Weekly limit — ${stock.left} left.` };
+  const cost = stock.price * qty;
+  if ((S().arenaMerits || 0) < cost) return { ok: false, msg: `Need ${cost} Arena Merits.` };
+  S().arenaMerits -= cost;
+  S().arenaShopBought[id] = (S().arenaShopBought[id] || 0) + qty;
+  if (stock.kind === 'dcore') S().myriadMats[stock.path] = (S().myriadMats[stock.path] || 0) + qty;
+  else if (stock.kind === 'rcore') S().refineMats[stock.path] = (S().refineMats[stock.path] || 0) + qty;
+  else if (stock.kind === 'dcat') S().derivationCatalysts = (S().derivationCatalysts || 0) + qty;
+  else if (stock.kind === 'rcat') S().refinementCatalysts = (S().refinementCatalysts || 0) + qty;
+  else if (stock.kind === 'fragments') S().derivationFragments = (S().derivationFragments || 0) + qty * FRAG_BUNDLE;
+  return { ok: true, cost };
+}
+
+// ---- Ranking-bracket payout (Merits + Fragments by ladder standing; highest eligible bracket only) ----
+export const ARENA_RANK_REWARDS = {
+  weekly: { 1: [500, 300], 2: [430, 260], 3: [380, 230], 4: [340, 205], 5: [300, 180],
+    top10: [240, 145], top50: [180, 110], top100: [140, 85], p10: [100, 60], p25: [70, 42], p50: [45, 27], rest: [25, 15] },
+  daily:  { 1: [100, 60], 2: [85, 50], 3: [75, 45], 4: [68, 40], 5: [60, 36],
+    top10: [48, 29], top50: [36, 22], top100: [28, 17], p10: [20, 12], p25: [14, 8], p50: [9, 5], rest: [5, 3] },
+};
+// Absolute ranks 1-5 / Top 10/50/100 take priority (more generous); percentiles only beyond rank 100.
+export function arenaRankBracket(rank, N) {
+  if (rank <= 5) return String(rank);
+  if (rank <= 10) return 'top10';
+  if (rank <= 50) return 'top50';
+  if (rank <= 100) return 'top100';
+  const pct = N > 0 ? rank / N : 1;
+  if (pct <= 0.10) return 'p10';
+  if (pct <= 0.25) return 'p25';
+  if (pct <= 0.50) return 'p50';
+  return 'rest';
+}
+export function arenaRankReward(rank, N, cadence = 'daily') {
+  const tbl = ARENA_RANK_REWARDS[cadence] || ARENA_RANK_REWARDS.daily;
+  const b = arenaRankBracket(rank, N);
+  const [merits, fragments] = tbl[b] || tbl.rest;
+  return { merits, fragments, bracket: b };
 }
