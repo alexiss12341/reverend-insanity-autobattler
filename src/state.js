@@ -5,6 +5,7 @@ import { affinityFor, lineFor } from './data/traits.js';
 import { RESOURCES } from './data/resources.js';
 import { guSlotsOf, IMMORTAL_START } from './data/realms.js';
 import { GU_LIB } from './data/gu.js';
+import { myriadCosts, CATALYST_MAX_STEPS } from './data/myriad.js';
 
 export const SLOT_KEYS = ['xianxia_save_1', 'xianxia_save_2', 'xianxia_save_3'];
 
@@ -88,6 +89,9 @@ export function newGame(slotKey, playerName = 'Fang Yuan', starter = null) {
     // Born-true so a fresh game is never swept by migrateSave's one-time legacy immortal-Gu purge (a new
     // cultivator opens with only a rank-1 starter Gu — nothing immortal to wipe). See migrateSave.
     immGuPurged: true,
+    // Born-true so a fresh game never receives migrateSave's one-time myriad-loss compensation (it can't
+    // have lost a forged myriad Gu to the now-fixed save-strip bug). See migrateSave.
+    myriadLossComp: true,
     // The player has set their Dao affinity + archetype (via the new-game starter pickers or reincarnation).
     // Legacy saves that predate the starter choice are flagged false by migrateSave so they get a one-time
     // re-pick prompt on load (see main.js repickStart). Born-true so a fresh game never re-prompts.
@@ -210,9 +214,11 @@ export function migrateSave(o) {
   if (o.resources) for (const id of Object.keys(o.resources)) if (!RESOURCES[id]) delete o.resources[id];
   // New Gu library uses `gu_*` ids; retire any pre-rework Gu (old single-effect / yin-yang) from the
   // inventory and clear loadout slots that pointed at them, so no character references a dead Gu.
+  // Myriad Gu (systems/myriad.js) carry an INLINE `myriad` def and have NO `guId` — they are valid and
+  // must be preserved (otherwise a forged myriad Gu vanishes on the next load).
   if (Array.isArray(o.guInv)) {
     const valid = new Set();
-    for (const it of o.guInv) if (it && typeof it.guId === 'string' && it.guId.startsWith('gu_')) valid.add(it.uid);
+    for (const it of o.guInv) if (it && (it.myriad || (typeof it.guId === 'string' && it.guId.startsWith('gu_')))) valid.add(it.uid);
     o.guInv = o.guInv.filter((it) => valid.has(it.uid));
     for (const c of (o.roster || [])) if (Array.isArray(c.gu)) c.gu = c.gu.filter((u) => valid.has(u));
   }
@@ -258,6 +264,36 @@ export function migrateSave(o) {
       o.essence = (o.essence || 0) + 2250;                                  // compensation
     }
     o.immGuPurged = true;
+  }
+  // ONE-TIME myriad-loss compensation. A save bug (now fixed) silently stripped every forged myriad Gu on
+  // each load — migrateSave's guInv filter dropped items that carry an inline `myriad` def instead of a
+  // `gu_*` id. We can't tell WHICH Gu a save lost after the fact, so compensate any save that actually
+  // engaged with myriad refining (myriadProficiency > 0 ⇔ it forged ≥1 myriad) with the full resource cost
+  // of ONE T5 myriad Gu: the two T5 base fusion inputs (the player's affinity path, with a fallback) + that
+  // T5 fusion's fragments/essence/Derivation Cores + max Derivation Catalysts so the single fuse is high-odds
+  // (coef-0 fusions cost no stones). Guarded by a one-shot flag (born-true in newGame); a fresh game can't
+  // have lost anything, so it's never paid.
+  if (!o.myriadLossComp) {
+    if ((o.myriadProficiency || 0) > 0) {
+      if (!Array.isArray(o.guInv)) o.guInv = [];
+      const player = (o.roster || []).find((c) => c && c.isPlayer) || (o.roster || [])[0];
+      const aff = player && Array.isArray(player.affinity) ? player.affinity[0] : null;
+      const t5Of = (p) => Object.keys(GU_LIB).filter((id) => GU_LIB[id].daoPath === p && GU_LIB[id].tier === 5);
+      let ids = aff ? t5Of(aff) : [];
+      if (ids.length < 2) {                  // fall back to any path that stocks ≥2 T5 Gu
+        const byPath = {};
+        for (const id of Object.keys(GU_LIB)) { const g = GU_LIB[id]; if (g.tier === 5) (byPath[g.daoPath] = byPath[g.daoPath] || []).push(id); }
+        ids = Object.values(byPath).find((arr) => arr.length >= 2) || ids;
+      }
+      const corePath = ids.length >= 2 ? GU_LIB[ids[0]].daoPath : (aff || 'metal');
+      if (ids.length >= 2) o.guInv.push({ uid: uid('g'), guId: ids[0] }, { uid: uid('g'), guId: ids[1] });
+      const cost = myriadCosts(5, 0, 0, corePath);
+      o.derivationFragments = (o.derivationFragments || 0) + cost.fragments;
+      o.essence = (o.essence || 0) + cost.essence;
+      o.myriadMats[corePath] = (o.myriadMats[corePath] || 0) + cost.material.qty;
+      o.derivationCatalysts = (o.derivationCatalysts || 0) + CATALYST_MAX_STEPS;
+    }
+    o.myriadLossComp = true;
   }
   // Onboarding (First-Steps widget + tab tips) is for genuinely new players only. Any save that predates
   // it already belongs to someone who knows the game — mark it onboarded so nothing pops up for veterans.

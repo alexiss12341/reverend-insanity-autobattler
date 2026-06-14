@@ -1,7 +1,7 @@
 // Myriad Gu Refining — headless suite. Covers data/myriad math + systems/myriad ops + the Arena economy
 // (shop + ranking payout) added to systems/economy.js.
 import { ok, section } from './assert.mjs';
-import { state, newGame, uid } from '../src/state.js';
+import { state, newGame, uid, migrateSave } from '../src/state.js';
 import { GU_LIB, resolveOwned, guTags } from '../src/data/gu.js';
 import { TIER_STONES } from '../src/data/gu.js';
 import { commOf, PATH_AFFINITY } from '../src/data/daoPaths.js';
@@ -145,6 +145,53 @@ grant('gu_fire_atk_t3'); grant('gu_fire_def_t3'); // fodder so the attempt proce
 let seq = [0.999, 0]; const _r = Math.random; Math.random = () => (seq.length ? seq.shift() : 0.999);
 const fail = rankUp(doomed.uid); Math.random = _r;
 ok(fail.ok && !fail.success && fail.shattered && !S().guInv.find((g) => g.uid === doomed.uid), 'a failed rank-up can destroy the myriad Gu (shatter)');
+
+section('myriad: persistence — a forged myriad Gu survives save/load (migrateSave)');
+// Regression: migrateSave retires pre-rework Gu by keeping only `gu_*`-id items. Myriad Gu carry an inline
+// `myriad` def and NO guId, so the filter MUST preserve them or they vanish on the next load.
+fresh();
+const pa = grant('gu_fire_atk_t3'), pb = grant('gu_fire_def_t3');
+const pmyr = withRandom(0, () => fuse(pa, pb)).item;
+S().roster[0].gu = [pmyr.uid]; // equip it too, to prove equipped slots survive as well
+// Faithfully mirror load(): JSON roundtrip the save, then migrate the parsed copy (proves the inline
+// myriad def serializes cleanly AND that the migration no longer strips it).
+const reloaded = migrateSave(JSON.parse(JSON.stringify(S())));
+const survived = reloaded.guInv.find((g) => g.uid === pmyr.uid && g.myriad);
+ok(!!survived, 'forged myriad Gu survives a save/load roundtrip (not stripped as a dead Gu)');
+ok(survived && survived.myriad.name === pmyr.myriad.name, 'the inline myriad def serializes intact');
+ok(reloaded.roster[0].gu.includes(pmyr.uid), 'an equipped myriad Gu stays equipped through save/load');
+
+section('myriad: persistence — one-time T5-myriad loss compensation (migrateSave)');
+// A save that used myriad refining (proficiency > 0) and predates the loss-comp flag is paid the full
+// resource cost of one T5 myriad: two T5 base inputs + the T5 fusion's fragments/essence/cores + catalysts.
+import { myriadCosts as _mc, CATALYST_MAX_STEPS as _cms } from '../src/data/myriad.js';
+fresh();
+{
+  const s = S();
+  s.myriadProficiency = 200;          // engaged with refining → eligible
+  delete s.myriadLossComp;            // simulate a pre-fix save
+  const invBefore = s.guInv.length, fragBefore = s.derivationFragments, essBefore = s.essence, catBefore = s.derivationCatalysts;
+  migrateSave(s);
+  const c = _mc(5, 0, 0, 'metal'); // path-independent for fragments/essence/qty
+  ok(s.myriadLossComp === true, 'compensation flag is set after the migrate');
+  ok(s.guInv.length === invBefore + 2, 'granted two T5 base fusion inputs');
+  ok(s.guInv.slice(-2).every((it) => GU_LIB[it.guId] && GU_LIB[it.guId].tier === 5), 'both granted inputs are real T5 Gu');
+  ok(s.derivationFragments === fragBefore + c.fragments, 'granted the T5 fusion fragment cost');
+  ok(s.essence === essBefore + c.essence, 'granted the T5 fusion essence cost');
+  ok(s.derivationCatalysts === catBefore + _cms, 'granted max Derivation Catalysts');
+  const invAfter = s.guInv.length;
+  migrateSave(s);                     // a second load must NOT pay again
+  ok(s.guInv.length === invAfter, 'compensation is one-shot (no double grant on the next load)');
+}
+fresh();
+{
+  const s = S();
+  s.myriadProficiency = 0;            // never refined → not eligible
+  delete s.myriadLossComp;
+  const invBefore = s.guInv.length;
+  migrateSave(s);
+  ok(s.myriadLossComp === true && s.guInv.length === invBefore, 'a save that never refined gets the flag but no compensation');
+}
 
 section('myriad: economy — Arena Shop + ranking payout');
 ok(arenaRankBracket(3, 100) === '3', 'rank 3 → its own bracket');
